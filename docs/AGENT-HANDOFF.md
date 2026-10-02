@@ -141,3 +141,7 @@ Quiet, native-feeling **nodaysidle** browser on Linux: home page on every **+** 
 - Removed the last latent instance of the same class: `TabManager::close_tab` used `.expect("tab missing")` inside the close-button callback. A panic there unwinds across the GTK FFI trampoline and aborts the whole process (`panic_cannot_unwind`). Now handled with `let Some(idx) = inner.tabs.iter().position(...) else { return; };`.
 - Verified: `cargo build --release` clean; launched via `systemd-run --user --scope --slice=app-graphical.slice` (uwsm-style) — window maps, process stays up, no abort.
 
+## Pending
+
+- **Git remote not configured — push deferred.** `master` has one local commit (`ae08c40`); nothing pushed. When the user says to, add `origin` and push, e.g. `git remote add origin <url> && git push -u origin master`.
+
