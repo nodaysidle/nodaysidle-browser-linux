@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=nodaysidle
+GenericName=Web Browser
+Comment=Quiet WebKit browser for focused browsing
+Exec=%h/.local/bin/nodaysidle-browser %u
+Icon=nodaysidle-browser
+Terminal=false
+Categories=Network;WebBrowser;
+MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
+StartupWMClass=nodaysidle-browser
+Keywords=browser;web;nodaysidle;
