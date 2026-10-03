@@ -149,7 +149,7 @@ impl TabManager {
         }));
     }
 
-    fn open_tab(mgr: &Rc<RefCell<TabManagerInner>>, open: TabOpen, select: bool) {
+    fn open_tab(mgr: &Rc<RefCell<TabManagerInner>>, open: TabOpen, select: bool) -> u32 {
         let (search_engine, stack, tab_strip, next_id) = {
             let mut inner = mgr.borrow_mut();
             let id = inner.next_id;
@@ -237,29 +237,48 @@ impl TabManager {
             mgr.borrow().url_entry.set_text("");
             TabManager::select_tab_id(mgr, tab_id);
         }
+        tab_id
     }
 
-    fn ensure_webview(
+    fn ensure_webview(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32) -> Option<WebView> {
+        let existing = {
+            let inner = mgr.borrow();
+            inner.tabs.iter().find(|tab| tab.id == tab_id)?.webview.clone()
+        };
+        if existing.is_some() {
+            return existing;
+        }
+        TabManager::create_webview(mgr, tab_id, None)
+    }
+
+    fn create_webview(
         mgr: &Rc<RefCell<TabManagerInner>>,
         tab_id: u32,
+        related_view: Option<&WebView>,
     ) -> Option<WebView> {
-        let web_context = mgr.borrow().web_context.clone();
-        let history = mgr.borrow().history.clone();
+        let (web_context, history, page_stack, title_label) = {
+            let inner = mgr.borrow();
+            let tab = inner.tabs.iter().find(|tab| tab.id == tab_id)?;
+            if let Some(view) = &tab.webview {
+                return Some(view.clone());
+            }
+            (
+                inner.web_context.clone(),
+                inner.history.clone(),
+                tab.page_stack.clone(),
+                tab.title_label.clone(),
+            )
+        };
 
-        let mut inner = mgr.borrow_mut();
-        let tab = inner.tabs.iter_mut().find(|t| t.id == tab_id)?;
-        if let Some(view) = tab.webview.clone() {
-            return Some(view);
-        }
-
-        let webview = WebView::with_context(&web_context);
+        let webview = related_view
+            .map(WebView::with_related_view)
+            .unwrap_or_else(|| WebView::with_context(&web_context));
         if let Some(settings) = WebViewExt::settings(&webview) {
             settings.set_enable_javascript(true);
             settings.set_enable_html5_database(true);
             settings.set_enable_html5_local_storage(true);
         }
 
-        let title_label = tab.title_label.clone();
         let mgr_load = mgr.clone();
 
         webview.connect_load_changed(clone!(@strong mgr_load, @strong history, @strong title_label => move |view, ev| {
@@ -283,9 +302,36 @@ impl TabManager {
             mgr_load.borrow().refresh_nav_buttons();
         }));
 
-        tab.page_stack.add_named(&webview, "web");
+        let mgr_create = mgr.clone();
+        webview.connect_create(move |parent, _action| {
+            TabManager::open_related_tab(&mgr_create, parent).map(|view| view.upcast())
+        });
+
+        let mgr_close = mgr.clone();
+        webview.connect_close(move |_| {
+            TabManager::close_tab(&mgr_close, tab_id);
+        });
+
+        webview.connect_ready_to_show(|view| view.show());
+
+        {
+            let mut inner = mgr.borrow_mut();
+            let tab = inner.tabs.iter_mut().find(|tab| tab.id == tab_id)?;
+            tab.webview = Some(webview.clone());
+        }
+        page_stack.add_named(&webview, "web");
         webview.show_all();
-        tab.webview = Some(webview.clone());
+        page_stack.set_visible_child_name("web");
+        Some(webview)
+    }
+
+    fn open_related_tab(
+        mgr: &Rc<RefCell<TabManagerInner>>,
+        related_view: &WebView,
+    ) -> Option<WebView> {
+        let tab_id = TabManager::open_tab(mgr, TabOpen::Home, true);
+        let webview = TabManager::create_webview(mgr, tab_id, Some(related_view))?;
+        TabManager::select_tab_id(mgr, tab_id);
         Some(webview)
     }
 

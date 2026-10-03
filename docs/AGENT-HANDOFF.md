@@ -141,6 +141,10 @@ Quiet, native-feeling **nodaysidle** browser on Linux: home page on every **+** 
 - Closing a background tab now copies the selected tab ID out of the `RefCell` borrow before calling `select_tab_id`. Closing a missing tab returns without panicking.
 - Continue to keep `RefCell` borrows out of calls that can re-enter `TabManager` or emit GTK signals, and avoid panics in GTK callbacks.
 
+### WebKit-created views (X-3)
+- WebKit `create` requests open related views as selected tabs in the existing tab strip.
+- `ready-to-show` shows the view, and `close` closes its tab.
+
 ## Pending
 
 - **Git remote not configured — push deferred.** `master` has one local commit (`ae08c40`); nothing pushed. When the user says to, add `origin` and push, e.g. `git remote add origin <url> && git push -u origin master`.
