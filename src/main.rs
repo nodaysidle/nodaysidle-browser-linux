@@ -1,6 +1,7 @@
 mod history;
 mod home;
 mod downloads;
+mod error_page;
 mod navigation;
 mod permissions;
 mod profile;

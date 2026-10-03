@@ -448,6 +448,11 @@ impl TabManager {
                 return;
             }
             let title = title_for_page(view.title().as_deref(), &uri);
+            if crate::error_page::is_error_page_title(view.title().as_deref()) {
+                // Our own error pages are not visits.
+                sync_view_chrome(&mgr_load, tab_id, view, &title, &uri);
+                return;
+            }
             let schedule_save = history.borrow_mut().record(uri.to_string(), title.clone());
             if schedule_save {
                 // Batch history writes instead of rewriting the file on every
@@ -486,6 +491,35 @@ impl TabManager {
             }
             let title = title_for_page(view.title().as_deref(), &uri);
             sync_view_chrome(&mgr_title, tab_id, view, &title, &uri);
+        });
+
+        // Failed loads get a styled error page with Try again instead of a
+        // blank view (X-21). Cancelled loads and navigations that turned into
+        // downloads are not failures the user needs to see.
+        webview.connect_load_failed(|view, _event, failing_uri, error| {
+            if error.matches(webkit2gtk::NetworkError::Cancelled)
+                || error.matches(webkit2gtk::PolicyError::FrameLoadInterruptedByPolicyChange)
+                || error.matches(webkit2gtk::PluginError::WillHandleLoad)
+            {
+                return false;
+            }
+            let html = crate::error_page::load_failed_html(failing_uri, error.message());
+            view.load_alternate_html(&html, failing_uri, None);
+            true
+        });
+
+        // A crashed or killed web process used to leave a blank, dead tab
+        // (X-27): explain it and offer Reload.
+        webview.connect_web_process_terminated(|view, reason| {
+            let exceeded_memory = match reason {
+                webkit2gtk::WebProcessTerminationReason::TerminatedByApi => return,
+                webkit2gtk::WebProcessTerminationReason::ExceededMemoryLimit => true,
+                _ => false,
+            };
+            let uri = view.uri().unwrap_or_default().to_string();
+            let html = crate::error_page::web_process_ended_html(&uri, exceeded_memory);
+            let content_uri = if uri.is_empty() { "about:blank" } else { uri.as_str() };
+            view.load_alternate_html(&html, content_uri, None);
         });
 
         // Element fullscreen (R-7): only hide or show our chrome and return
