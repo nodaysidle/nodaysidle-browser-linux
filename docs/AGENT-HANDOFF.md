@@ -12,7 +12,7 @@ This document captures **current state**, **known bugs**, and **what was already
 | macOS reference | `/home/arch/dev/nodaysidle/nodaysidle-browser` (SwiftUI + WKWebView) |
 | Binary | `~/.local/bin/nodaysidle-browser` |
 | Desktop entry | `~/.local/share/applications/nodaysidle-browser.desktop` (`Exec=` full path) |
-| Profile data | `~/.local/share/nodaysidle-browser/` (`webkit-data`, `webkit-cache`, `history.json`) |
+| Profile data | `~/.local/share/nodaysidle-browser/` (`webkit-data/cookies.sqlite`, `webkit-cache`, `history.json`) |
 
 **Stack:** Rust, GTK 3 (`gtk` 0.18), WebKitGTK (`webkit2gtk` 2.0 → system `webkit2gtk-4.1`).
 

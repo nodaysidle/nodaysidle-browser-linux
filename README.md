@@ -6,7 +6,7 @@ GTK + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/noday
 
 - Multi-tab browsing (WebKitGTK)
 - URL bar with search / URL rules aligned with the macOS app
-- **Persistent profile** (cookies & site data) under `~/.local/share/nodaysidle-browser/`
+- **Persistent profile** (cookies in `webkit-data/cookies.sqlite` and site data) under `~/.local/share/nodaysidle-browser/`
 - **Local history** at `~/.local/share/nodaysidle-browser/history.json`
 - Desktop entry for the Omarchy app launcher (Super+Space → Apps)
 
