@@ -18,7 +18,6 @@ use std::path::Path;
 use std::rc::Rc;
 use tabs::{build_chrome_layout, TabManager};
 
-pub const START_PAGE: &str = "https://duckduckgo.com/";
 const APP_ID: &str = "com.nodaysidle.Browser";
 
 fn main() -> glib::ExitCode {

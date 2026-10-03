@@ -160,7 +160,7 @@ impl TabManager {
 
         let mgr = self.inner.clone();
         self.inner.borrow().back_btn.connect_clicked(clone!(@strong mgr => move |_| {
-            let view = mgr.borrow().selected_webview();
+            let view = mgr.borrow().selected_tab_view();
             if let Some(view) = view {
                 if view.can_go_back() {
                     view.go_back();
@@ -170,7 +170,7 @@ impl TabManager {
 
         let mgr = self.inner.clone();
         self.inner.borrow().forward_btn.connect_clicked(clone!(@strong mgr => move |_| {
-            let view = mgr.borrow().selected_webview();
+            let view = mgr.borrow().selected_tab_view();
             if let Some(view) = view {
                 if view.can_go_forward() {
                     view.go_forward();
@@ -443,11 +443,16 @@ impl TabManager {
         webview.connect_load_changed(clone!(@strong mgr_load, @strong history => move |view, ev| {
             // TLS information is known from Committed on.
             sync_page_status(&mgr_load, tab_id, view);
+            if view.uri().is_some_and(|uri| is_home_marker(&uri)) {
+                // Refreshes Back/Forward once the Home entry is committed.
+                show_home_surface(&mgr_load, tab_id);
+                return;
+            }
             if ev != LoadEvent::Finished {
                 return;
             }
             let uri = view.uri().unwrap_or_default();
-            if uri.is_empty() || uri == "about:blank" {
+            if uri.is_empty() || uri == "about:blank" || is_home_marker(&uri) {
                 return;
             }
             let title = title_for_page(view.title().as_deref(), &uri);
@@ -468,12 +473,32 @@ impl TabManager {
             sync_view_chrome(&mgr_load, tab_id, view, &title, &uri);
         }));
 
+        // Back/Forward follow the view's history, which can change after
+        // load-changed (e.g. pages restored from the back-forward cache).
+        if let Some(list) = webview.back_forward_list() {
+            let mgr_list = Rc::downgrade(mgr);
+            list.connect_local("changed", false, move |_| {
+                if let Some(mgr) = mgr_list.upgrade() {
+                    let selected = mgr.try_borrow().is_ok_and(|inner| inner.selected == Some(tab_id));
+                    if selected {
+                        refresh_nav(&mgr);
+                    }
+                }
+                None
+            });
+        }
+
         let mgr_uri = mgr.clone();
         webview.connect_notify_local(Some("uri"), move |view, _| {
             let uri = view.uri().unwrap_or_default().to_string();
             if uri.is_empty() {
                 return;
             }
+            if is_home_marker(&uri) {
+                show_home_surface(&mgr_uri, tab_id);
+                return;
+            }
+            show_web_surface(&mgr_uri, tab_id);
             let title = title_for_page(view.title().as_deref(), &uri);
             sync_view_chrome(&mgr_uri, tab_id, view, &title, &uri);
             sync_page_status(&mgr_uri, tab_id, view);
@@ -489,7 +514,7 @@ impl TabManager {
         let mgr_title = mgr.clone();
         webview.connect_notify_local(Some("title"), move |view, _| {
             let uri = view.uri().unwrap_or_default().to_string();
-            if uri.is_empty() {
+            if uri.is_empty() || is_home_marker(&uri) {
                 return;
             }
             let title = title_for_page(view.title().as_deref(), &uri);
@@ -663,7 +688,7 @@ impl TabManager {
         url_entry.set_text(uri);
         if mgr.borrow().selected == Some(tab_id) {
             webview.grab_focus();
-            mgr.borrow().refresh_nav_buttons();
+            refresh_nav(mgr);
         }
     }
 
@@ -674,11 +699,25 @@ impl TabManager {
         }
     }
 
+    /// Home shows the built-in Home page (R-10), not a search engine. On a
+    /// tab that has loaded pages it navigates the view to HOME_MARKER, which
+    /// stops the page and keeps it one Back away.
     fn navigate_home_for_selected(mgr: &Rc<RefCell<TabManagerInner>>) {
-        let selected = { mgr.borrow().selected };
-        if let Some(tab_id) = selected {
-            TabManager::load_uri_tab(mgr, tab_id, crate::START_PAGE);
+        let target = {
+            let inner = mgr.borrow();
+            let on_home = inner.is_selected_on_home();
+            inner
+                .selected_tab()
+                .map(|tab| (tab.id, tab.home_search.clone(), tab.webview.clone(), on_home))
+        };
+        let Some((tab_id, home_search, webview, on_home)) = target else {
+            return;
+        };
+        if let Some(view) = webview.filter(|_| !on_home) {
+            view.load_uri(HOME_MARKER);
+            show_home_surface(mgr, tab_id);
         }
+        home_search.grab_focus();
     }
 
     fn select_tab_id(mgr: &Rc<RefCell<TabManagerInner>>, id: u32) {
@@ -760,7 +799,7 @@ impl TabManager {
                 view.grab_focus();
             }
         }
-        mgr.borrow().refresh_nav_buttons();
+        refresh_nav(mgr);
         if find_visible {
             run_find(mgr);
         }
@@ -845,7 +884,7 @@ impl TabManager {
         if let Some(next_id) = select_after {
             TabManager::select_tab_id(mgr, next_id);
         } else if removed_selected {
-            mgr.borrow().refresh_nav_buttons();
+            refresh_nav(mgr);
         }
     }
 
@@ -1017,10 +1056,17 @@ impl TabManagerInner {
         self.tabs.iter().find(|t| t.id == id)
     }
 
+    /// The selected tab's page, or None while it shows the Home surface.
     fn selected_webview(&self) -> Option<WebView> {
         if self.is_selected_on_home() {
             return None;
         }
+        self.selected_tab_view()
+    }
+
+    /// The selected tab's WebView even while Home is shown over it, for Back
+    /// and Forward (Home is an entry in the tab's history).
+    fn selected_tab_view(&self) -> Option<WebView> {
         self.selected_tab().and_then(|t| t.webview.clone())
     }
 
@@ -1034,20 +1080,7 @@ impl TabManagerInner {
         }
     }
 
-    fn refresh_nav_buttons(&self) {
-        if self.is_selected_on_home() {
-            self.back_btn.set_sensitive(false);
-            self.forward_btn.set_sensitive(false);
-            self.reload_btn.set_sensitive(false);
-            return;
-        }
-        let view = self.selected_tab().and_then(|t| t.webview.clone());
-        let can_back = view.as_ref().map(|v| v.can_go_back()).unwrap_or(false);
-        let can_fwd = view.as_ref().map(|v| v.can_go_forward()).unwrap_or(false);
-        self.back_btn.set_sensitive(can_back);
-        self.forward_btn.set_sensitive(can_fwd);
-        self.reload_btn.set_sensitive(true);
-    }
+
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1150,6 +1183,82 @@ fn open_popup_window(mgr: &Rc<RefCell<TabManagerInner>>, view: &WebView, width: 
 
     window.show_all();
     view.grab_focus();
+}
+
+/// Updates Back/Forward/Reload sensitivity for the selected tab. The state is
+/// read under the borrow and applied after it ends.
+fn refresh_nav(mgr: &Rc<RefCell<TabManagerInner>>) {
+    let Ok(inner) = mgr.try_borrow() else {
+        return;
+    };
+    let view = inner.selected_tab_view();
+    let on_home = inner.is_selected_on_home();
+    let buttons = (
+        inner.back_btn.clone(),
+        inner.forward_btn.clone(),
+        inner.reload_btn.clone(),
+    );
+    drop(inner);
+    let (back_btn, forward_btn, reload_btn) = buttons;
+    back_btn.set_sensitive(view.as_ref().is_some_and(|view| view.can_go_back()));
+    forward_btn.set_sensitive(view.as_ref().is_some_and(|view| view.can_go_forward()));
+    reload_btn.set_sensitive(!on_home);
+}
+
+/// Navigating a tab's WebView here shows the built-in Home page in that tab.
+const HOME_MARKER: &str = "about:blank#nodaysidle-home";
+
+fn is_home_marker(uri: &str) -> bool {
+    uri == HOME_MARKER
+}
+
+/// Shows the Home surface over a tab whose view is at HOME_MARKER.
+fn show_home_surface(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32) {
+    let Some((selected, page_stack, title_label, pill, url_entry, reload_btn)) =
+        tab_widgets(mgr, tab_id)
+    else {
+        return;
+    };
+    page_stack.set_visible_child_name("home");
+    title_label.set_text("New Tab");
+    pill.set_tooltip_text(Some("New Tab"));
+    if selected {
+        if !url_entry.has_focus() {
+            url_entry.set_text("");
+        }
+        apply_page_status(&url_entry, &reload_btn, None);
+        refresh_nav(mgr);
+    }
+}
+
+/// Switches a tab back to its page when its view leaves HOME_MARKER (Back,
+/// Forward or a new load).
+fn show_web_surface(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32) {
+    let Some((selected, page_stack, ..)) = tab_widgets(mgr, tab_id) else {
+        return;
+    };
+    if page_stack.visible_child_name().as_deref() == Some("web") {
+        return;
+    }
+    page_stack.set_visible_child_name("web");
+    if selected {
+        refresh_nav(mgr);
+    }
+}
+
+type TabWidgets = (bool, Stack, Label, GtkBox, gtk::Entry, Button);
+
+fn tab_widgets(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32) -> Option<TabWidgets> {
+    let inner = mgr.try_borrow().ok()?;
+    let tab = inner.tabs.iter().find(|tab| tab.id == tab_id)?;
+    Some((
+        inner.selected == Some(tab_id),
+        tab.page_stack.clone(),
+        tab.title_label.clone(),
+        tab.pill.clone(),
+        inner.url_entry.clone(),
+        inner.reload_btn.clone(),
+    ))
 }
 
 fn sync_view_chrome(
@@ -1441,13 +1550,13 @@ fn run_shortcut(mgr: &Rc<RefCell<TabManagerInner>>, shortcut: Shortcut) {
             }
         }
         Shortcut::Back => {
-            let view = { mgr.borrow().selected_webview() };
+            let view = { mgr.borrow().selected_tab_view() };
             if let Some(view) = view.filter(|view| view.can_go_back()) {
                 view.go_back();
             }
         }
         Shortcut::Forward => {
-            let view = { mgr.borrow().selected_webview() };
+            let view = { mgr.borrow().selected_tab_view() };
             if let Some(view) = view.filter(|view| view.can_go_forward()) {
                 view.go_forward();
             }
