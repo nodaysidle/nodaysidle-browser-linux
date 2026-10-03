@@ -96,7 +96,7 @@ Relevant code: `TabManager::navigate_tab`, `ensure_webview`, `select_tab_id`, `s
 
 ## Other rough edges (lower priority)
 
-- Tab switching / close were improved but user may still see edge cases with many tabs — retest after P0 fix.
+- The tab strip caps title labels and scrolls the selected pill into view (X-4); live visual verification with many tabs remains outstanding.
 - Home layout uses `set_valign`/`set_halign` on inner box — verify centering on all resolutions.
 - `TabOpen::Url` variant unused; history from toolbar vs pill should behave identically.
 - Warnings: dead `tab_scroll` field, unused `TabOpen::Url`.

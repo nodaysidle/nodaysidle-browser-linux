@@ -17,7 +17,6 @@ const TOOLBAR_HEIGHT: i32 = 40;
 pub struct TabChrome {
     pub stack: Stack,
     pub tab_strip: GtkBox,
-    #[allow(dead_code)]
     pub tab_scroll: ScrolledWindow,
     pub url_entry: gtk::Entry,
     pub back_btn: Button,
@@ -51,6 +50,7 @@ pub struct TabManager {
 struct TabManagerInner {
     stack: Stack,
     tab_strip: GtkBox,
+    tab_scroll: ScrolledWindow,
     tabs: Vec<TabEntry>,
     selected: Option<u32>,
     next_id: u32,
@@ -73,6 +73,7 @@ impl TabManager {
         let inner = TabManagerInner {
             stack: chrome.stack,
             tab_strip: chrome.tab_strip,
+            tab_scroll: chrome.tab_scroll,
             tabs: Vec::new(),
             selected: None,
             next_id: 1,
@@ -171,6 +172,9 @@ impl TabManager {
 
         let title_label = Label::new(Some("New Tab"));
         title_label.set_xalign(0.0);
+        title_label.set_width_chars(8);
+        title_label.set_max_width_chars(18);
+        title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         title_label.style_context().add_class("tab-pill-label");
 
         let close_btn = Button::new();
@@ -396,7 +400,7 @@ impl TabManager {
     }
 
     fn select_tab_id(mgr: &Rc<RefCell<TabManagerInner>>, id: u32) {
-        let (stack, url_entry, sync) = {
+        let (stack, url_entry, tab_scroll, tab_strip, sync) = {
             let mut inner = mgr.borrow_mut();
             inner.selected = Some(id);
             let show_close = inner.tabs.len() > 1;
@@ -420,17 +424,25 @@ impl TabManager {
                 .find(|t| t.id == id)
                 .map(|t| {
                     (
+                        t.pill.clone(),
                         t.page_stack.clone(),
                         t.webview.clone(),
                         t.home_search.clone(),
                         t.title_label.clone(),
                     )
                 });
-            (inner.stack.clone(), inner.url_entry.clone(), sync)
+            (
+                inner.stack.clone(),
+                inner.url_entry.clone(),
+                inner.tab_scroll.clone(),
+                inner.tab_strip.clone(),
+                sync,
+            )
         };
 
         stack.set_visible_child_name(&id.to_string());
-        if let Some((page_stack, webview, home_search, title_label)) = sync {
+        if let Some((pill, page_stack, webview, home_search, title_label)) = sync {
+            schedule_scroll_tab_into_view(tab_scroll, tab_strip, pill);
             let on_home = page_stack.visible_child_name().as_deref() == Some("home")
                 || webview.is_none();
             if on_home {
@@ -605,6 +617,37 @@ fn selection_after_close(
     }
 }
 
+fn schedule_scroll_tab_into_view(tab_scroll: ScrolledWindow, tab_strip: GtkBox, pill: GtkBox) {
+    glib::idle_add_local(move || {
+        if let Some((left, _)) = pill.translate_coordinates(&tab_strip, 0, 0) {
+            let width = pill.allocated_width();
+            if width > 0 {
+                let adjustment = tab_scroll.hadjustment();
+                let value = scroll_value_to_reveal(
+                    adjustment.value(),
+                    adjustment.page_size(),
+                    left,
+                    width,
+                );
+                adjustment.set_value(value);
+            }
+        }
+        glib::ControlFlow::Break
+    });
+}
+
+fn scroll_value_to_reveal(current: f64, page_size: f64, left: i32, width: i32) -> f64 {
+    let left = left as f64;
+    let right = left + width as f64;
+    if left < current {
+        left
+    } else if right > current + page_size {
+        right - page_size
+    } else {
+        current
+    }
+}
+
 fn history_row(entry: &crate::history::HistoryEntry) -> ListBoxRow {
     let row = ListBoxRow::new();
     row.set_widget_name(&entry.url);
@@ -719,7 +762,18 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
 
 #[cfg(test)]
 mod tests {
-    use super::selection_after_close;
+    use super::{scroll_value_to_reveal, selection_after_close};
+
+    #[test]
+    fn scroll_value_reveals_pills_outside_the_current_viewport() {
+        assert_eq!(scroll_value_to_reveal(30.0, 100.0, 15, 40), 15.0);
+        assert_eq!(scroll_value_to_reveal(30.0, 100.0, 120, 40), 60.0);
+    }
+
+    #[test]
+    fn scroll_value_stays_put_when_the_pill_is_already_visible() {
+        assert_eq!(scroll_value_to_reveal(20.0, 100.0, 40, 30), 20.0);
+    }
 
     #[test]
     fn closing_a_background_tab_keeps_the_selected_tab() {
