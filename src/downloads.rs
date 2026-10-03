@@ -111,22 +111,40 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     buttons.pack_start(&close_button, false, false, 0);
     content.pack_start(&buttons, false, false, 0);
 
-    let completed = Rc::new(Cell::new(false));
-    let completed_on_destroy = completed.clone();
-    let download_on_destroy = download.clone();
-    dialog.connect_destroy(move |_| {
-        if !completed_on_destroy.get() {
-            download_on_destroy.cancel();
+    // One shared state for every path that can stop the download. WebKit's
+    // cancel is asynchronous (the failed/finished signals arrive later over
+    // IPC), so the old code cancelled twice when Cancel closed the dialog and
+    // the destroy handler cancelled again; the second cancel crashed (N-1).
+    let state = Rc::new(Cell::new(DownloadState::Active));
+
+    // Closing the window with the window manager while the download runs asks
+    // first instead of silently cancelling (R-10b).
+    let state_on_delete = state.clone();
+    let download_on_delete = download.clone();
+    let filename_on_delete = filename.to_string();
+    dialog.connect_delete_event(move |dialog, _| {
+        if state_on_delete.get() != DownloadState::Active {
+            return glib::Propagation::Proceed;
+        }
+        if confirm_cancel(dialog.upcast_ref(), &filename_on_delete) {
+            request_cancel(&download_on_delete, &state_on_delete);
+            glib::Propagation::Proceed
+        } else {
+            glib::Propagation::Stop
         }
     });
 
-    let completed_on_cancel = completed.clone();
+    // The dialog is also destroyed with its parent when the browser quits; an
+    // unfinished download cannot continue without the app, so stop it once.
+    let state_on_destroy = state.clone();
+    let download_on_destroy = download.clone();
+    dialog.connect_destroy(move |_| request_cancel(&download_on_destroy, &state_on_destroy));
+
+    let state_on_cancel = state.clone();
     let download_on_cancel = download.clone();
     let dialog_weak = dialog.downgrade();
     cancel_button.connect_clicked(move |_| {
-        if !completed_on_cancel.get() {
-            download_on_cancel.cancel();
-        }
+        request_cancel(&download_on_cancel, &state_on_cancel);
         if let Some(dialog) = dialog_weak.upgrade() {
             dialog.close();
         }
@@ -140,11 +158,15 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     });
 
     let progress_weak = progress.downgrade();
+    let status_weak = status.downgrade();
     download.connect_notify_local(Some("estimated-progress"), move |download, _| {
         if let Some(progress) = progress_weak.upgrade() {
             let fraction = download.estimated_progress().clamp(0.0, 1.0);
             progress.set_fraction(fraction);
             progress.set_text(Some(&format!("{:.0}%", fraction * 100.0)));
+        }
+        if let Some(status) = status_weak.upgrade() {
+            status.set_text("Downloading… (closing this window cancels the download)");
         }
     });
 
@@ -152,9 +174,13 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     let status_weak = status.downgrade();
     let cancel_weak = cancel_button.downgrade();
     let close_weak = close_button.downgrade();
-    let completed_on_finish = completed.clone();
+    let state_on_finish = state.clone();
     download.connect_finished(move |_| {
-        completed_on_finish.set(true);
+        let failed = state_on_finish.get() == DownloadState::Failed;
+        state_on_finish.set(state_on_finish.get().finish());
+        if failed {
+            return;
+        }
         if let Some(progress) = progress_weak.upgrade() {
             progress.set_fraction(1.0);
             progress.set_text(Some("100%"));
@@ -173,11 +199,15 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     let status_weak = status.downgrade();
     let cancel_weak = cancel_button.downgrade();
     let close_weak = close_button.downgrade();
-    let completed_on_failure = completed;
-    download.connect_failed(move |_, _| {
-        completed_on_failure.set(true);
+    let state_on_failure = state;
+    download.connect_failed(move |_, error| {
+        state_on_failure.set(DownloadState::Failed);
         if let Some(status) = status_weak.upgrade() {
-            status.set_text("Download failed");
+            if error.matches(webkit2gtk::DownloadError::CancelledByUser) {
+                status.set_text("Download cancelled");
+            } else {
+                status.set_text(&format!("Download failed: {}", error.message()));
+            }
         }
         if let Some(cancel) = cancel_weak.upgrade() {
             cancel.hide();
@@ -189,6 +219,61 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
 
     dialog.show_all();
     close_button.hide();
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DownloadState {
+    Active,
+    /// `webkit_download_cancel` was called; WebKit has not reported back yet.
+    Cancelling,
+    Failed,
+    Finished,
+}
+
+impl DownloadState {
+    /// Returns the next state and whether `cancel()` must be called now.
+    fn cancel(self) -> (Self, bool) {
+        match self {
+            DownloadState::Active => (DownloadState::Cancelling, true),
+            other => (other, false),
+        }
+    }
+
+    fn finish(self) -> Self {
+        match self {
+            DownloadState::Failed => DownloadState::Failed,
+            _ => DownloadState::Finished,
+        }
+    }
+}
+
+/// Cancels at most once, and never after WebKit reported the end of the
+/// download.
+fn request_cancel(download: &Download, state: &Cell<DownloadState>) {
+    let (next, call_cancel) = state.get().cancel();
+    state.set(next);
+    if call_cancel {
+        download.cancel();
+    }
+}
+
+fn confirm_cancel(parent: &gtk::Window, filename: &str) -> bool {
+    let dialog = gtk::MessageDialog::new(
+        Some(parent),
+        gtk::DialogFlags::MODAL | gtk::DialogFlags::DESTROY_WITH_PARENT,
+        gtk::MessageType::Question,
+        gtk::ButtonsType::None,
+        "Cancel this download?",
+    );
+    dialog.set_secondary_text(Some(&format!(
+        "Closing this window stops the download of \u{201c}{filename}\u{201d}."
+    )));
+    dialog.add_button("_Keep Downloading", gtk::ResponseType::Reject);
+    dialog.add_button("_Cancel Download", gtk::ResponseType::Accept);
+    dialog.set_default_response(gtk::ResponseType::Reject);
+    let response = dialog.run();
+    dialog.close();
+    response == gtk::ResponseType::Accept
 }
 
 fn safe_suggested_filename(suggested: &str) -> String {
@@ -207,7 +292,27 @@ fn safe_suggested_filename(suggested: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_suggested_filename;
+    use super::{safe_suggested_filename, DownloadState};
+
+    #[test]
+    fn a_download_is_cancelled_at_most_once() {
+        let (state, call) = DownloadState::Active.cancel();
+        assert_eq!(state, DownloadState::Cancelling);
+        assert!(call);
+        // Cancel button followed by the dialog's destroy handler (N-1).
+        let (state, call) = state.cancel();
+        assert_eq!(state, DownloadState::Cancelling);
+        assert!(!call);
+    }
+
+    #[test]
+    fn finished_or_failed_downloads_are_never_cancelled() {
+        assert!(!DownloadState::Finished.cancel().1);
+        assert!(!DownloadState::Failed.cancel().1);
+        assert_eq!(DownloadState::Failed.finish(), DownloadState::Failed);
+        assert_eq!(DownloadState::Active.finish(), DownloadState::Finished);
+        assert_eq!(DownloadState::Cancelling.finish(), DownloadState::Finished);
+    }
 
     #[test]
     fn suggested_download_names_cannot_escape_the_chosen_directory() {
