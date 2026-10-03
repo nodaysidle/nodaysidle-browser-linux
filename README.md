@@ -95,16 +95,36 @@ cargo test --release   # GTK tests run only when a display is available
 This builds a release binary and installs:
 
 - `~/.local/bin/nodaysidle-browser`
-- `~/.local/share/applications/com.nodaysidle.Browser.desktop`: the tracked
-  `desktop/com.nodaysidle.Browser.desktop` with only `Exec=` pointing at the installed binary (quoted)
-- `~/.local/share/icons/hicolor/scalable/apps/nodaysidle-browser.svg`, plus 48/128/256 px PNGs when
+- `${XDG_DATA_HOME:-~/.local/share}/applications/com.nodaysidle.Browser.desktop`: the tracked
+  `desktop/com.nodaysidle.Browser.desktop` with only `Exec=` pointing at the installed binary (quoted only
+  when the path contains characters that need it, because `xdg-settings` cannot handle a quoted `Exec=`)
+- `${XDG_DATA_HOME:-~/.local/share}/icons/hicolor/scalable/apps/nodaysidle-browser.svg`, plus 48/128/256 px PNGs when
   `rsvg-convert` is installed
 
 The desktop file is named after the application ID `com.nodaysidle.Browser`, which the browser also uses as
 its Wayland app_id and X11 window class (`StartupWMClass`). Hyprland window rules therefore match
-`class:^(com\.nodaysidle\.Browser)$` (older builds used `nodaysidle-browser`). The script removes the
-`nodaysidle-browser.desktop` that older versions installed, if it is the generated one. Run
+`class:^(com\.nodaysidle\.Browser)$` (older builds used `nodaysidle-browser`). Run
 `update-desktop-database ~/.local/share/applications` if the app does not appear immediately.
+
+### Upgrading from `nodaysidle-browser.desktop`
+
+Versions before the rename installed `~/.local/share/applications/nodaysidle-browser.desktop`. Running the
+script again:
+
+- rewrites `nodaysidle-browser.desktop` to `com.nodaysidle.Browser.desktop` in every entry of
+  `${XDG_CONFIG_HOME:-~/.config}/mimeapps.list`, `${XDG_CONFIG_HOME:-~/.config}/*-mimeapps.list` and the
+  legacy `applications/mimeapps.list` that lists it (default browser, `x-scheme-handler/http(s)`,
+  `text/html`, added associations). Other entries and lines are left byte-for-byte as they were; a changed file
+  is first copied to `mimeapps.list.nodaysidle-backup`, and a symlinked file is edited at its target;
+- if `xdg-settings get default-web-browser` reported `nodaysidle-browser.desktop`, runs
+  `xdg-settings set default-web-browser com.nodaysidle.Browser.desktop` (which also updates desktops that keep
+  the setting outside mimeapps.list, where xdg-settings supports them); if that fails it prints the command;
+- removes the old launcher from both `~/.local/share/applications` and `$XDG_DATA_HOME/applications`.
+
+All of this happens only for the launcher the script generated (`Name=nodaysidle`,
+`StartupWMClass=nodaysidle-browser`). If a `nodaysidle-browser.desktop` you wrote yourself is there, it is
+kept and so are the associations that use it. Hyprland rules matching `class:^(nodaysidle-browser)$` must be
+changed by hand to `class:^(com\.nodaysidle\.Browser)$`.
 
 ## Notes
 
