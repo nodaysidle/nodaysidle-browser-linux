@@ -1,6 +1,8 @@
 mod history;
 mod home;
+mod downloads;
 mod navigation;
+mod permissions;
 mod profile;
 mod tabs;
 mod theme;
@@ -63,6 +65,7 @@ fn get_or_insert_manager<T: Clone>(slot: &RefCell<Option<T>>, build: impl FnOnce
 fn build_ui(app: &Application) -> TabManager {
     let data_dir = app_data_dir();
     let web_context = persistent_web_context(&data_dir);
+    downloads::wire(&web_context);
     let history = Rc::new(RefCell::new(HistoryStore::load(data_dir.join("history.json"))));
 
     let window = ApplicationWindow::builder()

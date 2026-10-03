@@ -271,6 +271,7 @@ impl TabManager {
             settings.set_enable_html5_database(true);
             settings.set_enable_html5_local_storage(true);
         }
+        crate::permissions::wire(&webview);
 
         let mgr_load = mgr.clone();
 

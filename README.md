@@ -9,6 +9,8 @@ GTK + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/noday
 - **Persistent profile** (cookies in `webkit-data/cookies.sqlite` and site data) under `~/.local/share/nodaysidle-browser/`
 - **Local history** at `~/.local/share/nodaysidle-browser/history.json`
 - Open HTTP(S) URLs and local HTML files passed by other applications or the command line
+- Downloads prompt for a save location and show progress with cancel support
+- Site requests for location, camera, microphone, notifications, and pointer lock require explicit approval
 - Desktop entry for the Omarchy app launcher (Super+Space → Apps)
 
 ## Requirements (Arch / Omarchy)
