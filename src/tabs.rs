@@ -433,6 +433,8 @@ impl TabManager {
         let mgr_load = mgr.clone();
 
         webview.connect_load_changed(clone!(@strong mgr_load, @strong history => move |view, ev| {
+            // TLS information is known from Committed on.
+            sync_page_status(&mgr_load, tab_id, view);
             if ev != LoadEvent::Finished {
                 return;
             }
@@ -461,6 +463,7 @@ impl TabManager {
             }
             let title = title_for_page(view.title().as_deref(), &uri);
             sync_view_chrome(&mgr_uri, tab_id, view, &title, &uri);
+            sync_page_status(&mgr_uri, tab_id, view);
         });
 
         let mgr_title = mgr.clone();
@@ -696,11 +699,13 @@ impl TabManager {
                 page_stack.set_visible_child_name("home");
                 url_entry.set_text("");
                 title_label.set_text("New Tab");
+                apply_page_status(&url_entry, None);
                 home_search.grab_focus();
             } else if let Some(view) = webview {
                 page_stack.set_visible_child_name("web");
                 let uri = view.uri().unwrap_or_default();
                 url_entry.set_text(&uri);
+                apply_page_status(&url_entry, Some(&view));
                 view.grab_focus();
             }
         }
@@ -1070,6 +1075,91 @@ fn sync_view_chrome(
     back_btn.set_sensitive(view.can_go_back());
     forward_btn.set_sensitive(view.can_go_forward());
     reload_btn.set_sensitive(true);
+}
+
+/// Refreshes the address bar's connection indicator for `tab_id` if it is the
+/// selected tab.
+fn sync_page_status(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32, view: &WebView) {
+    let url_entry = {
+        let Ok(inner) = mgr.try_borrow() else {
+            return;
+        };
+        if inner.selected != Some(tab_id) {
+            return;
+        }
+        inner.url_entry.clone()
+    };
+    apply_page_status(&url_entry, Some(view));
+}
+
+/// `view` is None for the built-in Home page.
+fn apply_page_status(url_entry: &gtk::Entry, view: Option<&WebView>) {
+    let security = view.map_or(Security::None, |view| {
+        let uri = view.uri().unwrap_or_default();
+        let tls_errors = view.tls_info().map(|(_, errors)| !errors.is_empty());
+        security_state(&uri, tls_errors)
+    });
+    let (icon, tooltip, class) = match security {
+        Security::Secure => (
+            Some("channel-secure-symbolic"),
+            Some("Secure connection (HTTPS)"),
+            Some("secure"),
+        ),
+        Security::Insecure => (
+            Some("channel-insecure-symbolic"),
+            Some("Not secure: this page does not use a valid HTTPS connection"),
+            Some("insecure"),
+        ),
+        Security::None => (None, None, None),
+    };
+    url_entry.set_icon_from_icon_name(gtk::EntryIconPosition::Primary, icon);
+    url_entry.set_icon_tooltip_text(gtk::EntryIconPosition::Primary, tooltip);
+    let style = url_entry.style_context();
+    style.remove_class("secure");
+    style.remove_class("insecure");
+    if let Some(class) = class {
+        style.add_class(class);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Security {
+    /// HTTPS with a certificate WebKit accepted without errors.
+    Secure,
+    /// Plain HTTP to a remote host, or HTTPS with certificate errors.
+    Insecure,
+    /// Local, file:, about: and other pages: no indicator.
+    None,
+}
+
+/// `tls_errors` is WebKit's TLS info for the page: None when it has none,
+/// Some(true) when the certificate had errors (X-20).
+fn security_state(uri: &str, tls_errors: Option<bool>) -> Security {
+    let Ok(parsed) = url::Url::parse(uri) else {
+        return Security::None;
+    };
+    match parsed.scheme() {
+        "https" => match tls_errors {
+            Some(false) => Security::Secure,
+            Some(true) => Security::Insecure,
+            // Not committed yet: say nothing rather than guess.
+            None => Security::None,
+        },
+        "http" => {
+            let local = match parsed.host() {
+                Some(url::Host::Domain(host)) => host == "localhost" || host.ends_with(".localhost"),
+                Some(url::Host::Ipv4(address)) => address.is_loopback(),
+                Some(url::Host::Ipv6(address)) => address.is_loopback(),
+                None => true,
+            };
+            if local {
+                Security::None
+            } else {
+                Security::Insecure
+            }
+        }
+        _ => Security::None,
+    }
 }
 
 fn url_bar_sync_value(is_focused: bool, uri: &str) -> Option<&str> {
@@ -1737,6 +1827,7 @@ mod tests {
         scroll_value_to_reveal, selection_after_close, shortcut_for, truncate, url_bar_sync_value,
         FindStatus, LastTab, Shortcut,
     };
+    use super::{security_state, Security};
     use gdk::keys::constants as key;
     use gdk::ModifierType as M;
 
@@ -1821,6 +1912,20 @@ mod tests {
     #[test]
     fn scroll_value_stays_put_when_the_pill_is_already_visible() {
         assert_eq!(scroll_value_to_reveal(20.0, 100.0, 40, 30), 20.0);
+    }
+
+    #[test]
+    fn the_address_bar_marks_https_secure_and_remote_http_not_secure() {
+        assert_eq!(security_state("https://example.com/", Some(false)), Security::Secure);
+        assert_eq!(security_state("https://expired.example/", Some(true)), Security::Insecure);
+        assert_eq!(security_state("https://example.com/", None), Security::None);
+        assert_eq!(security_state("http://example.com/", None), Security::Insecure);
+        assert_eq!(security_state("http://192.168.1.1/", None), Security::Insecure);
+        assert_eq!(security_state("http://localhost:3000/", None), Security::None);
+        assert_eq!(security_state("http://127.0.0.1:8011/", None), Security::None);
+        assert_eq!(security_state("http://[::1]/", None), Security::None);
+        assert_eq!(security_state("file:///etc/hostname", None), Security::None);
+        assert_eq!(security_state("about:blank", None), Security::None);
     }
 
     #[test]

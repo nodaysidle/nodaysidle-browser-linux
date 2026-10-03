@@ -110,6 +110,14 @@ window {
   font-size: 13px;
 }
 
+.url-bar.secure image.left {
+  color: #7fc8a0;
+}
+
+.url-bar.insecure image.left {
+  color: #e5a46a;
+}
+
 .url-bar:focus {
   border-color: #75aaff;
   box-shadow: 0 0 0 1px rgba(117, 170, 255, 0.55);
