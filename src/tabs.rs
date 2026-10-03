@@ -319,6 +319,9 @@ impl TabManager {
         // order and never keeps focus after a click.
         close_btn.set_can_focus(false);
         close_btn.set_focus_on_click(false);
+        // Visibility is managed by refresh_close_buttons; window.show_all()
+        // must not reveal the close button of a lone, untouched Home tab.
+        close_btn.set_no_show_all(true);
 
         let title_hit = EventBox::new();
         title_hit.add(&title_label);
