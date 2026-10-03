@@ -1581,12 +1581,15 @@ fn history_row(entry: &crate::history::HistoryEntry) -> ListBoxRow {
     row
 }
 
+/// Shortens a tab title to at most `MAX` characters (not bytes: a 15-letter
+/// Cyrillic title is 29 bytes and used to get an ellipsis) (X-19).
 fn truncate(title: &str) -> String {
     const MAX: usize = 28;
-    if title.len() <= MAX {
+    if title.chars().count() <= MAX {
         title.to_string()
     } else {
-        format!("{}…", title.chars().take(MAX - 1).collect::<String>())
+        let kept: String = title.chars().take(MAX - 1).collect();
+        format!("{}…", kept.trim_end())
     }
 }
 
@@ -1731,7 +1734,7 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
 mod tests {
     use super::{
         find_status_text, is_sized_popup, last_tab_action, next_tab_id, pill_is_visible,
-        scroll_value_to_reveal, selection_after_close, shortcut_for, url_bar_sync_value,
+        scroll_value_to_reveal, selection_after_close, shortcut_for, truncate, url_bar_sync_value,
         FindStatus, LastTab, Shortcut,
     };
     use gdk::keys::constants as key;
@@ -1818,6 +1821,21 @@ mod tests {
     #[test]
     fn scroll_value_stays_put_when_the_pill_is_already_visible() {
         assert_eq!(scroll_value_to_reveal(20.0, 100.0, 40, 30), 20.0);
+    }
+
+    #[test]
+    fn tab_titles_are_truncated_by_characters_not_bytes() {
+        // 15 characters, 29 bytes: short enough to show in full.
+        assert_eq!(truncate("Новости Украины"), "Новости Украины");
+        // 13 characters, 39 bytes.
+        assert_eq!(truncate("维基百科，自由的百科全书"), "维基百科，自由的百科全书");
+        let exact = "a".repeat(28);
+        assert_eq!(truncate(&exact), exact);
+        let long = "Википедия — свободная энциклопедия";
+        let short = truncate(long);
+        assert_eq!(short.chars().count(), 28);
+        assert!(short.ends_with('…'));
+        assert!(long.starts_with(short.trim_end_matches('…')));
     }
 
     #[test]
