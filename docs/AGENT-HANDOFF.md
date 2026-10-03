@@ -160,6 +160,12 @@ Quiet, native-feeling **nodaysidle** browser on Linux: home page on every **+** 
 ### Empty page titles (X-16)
 - Pages without a nonempty document title use a URL-derived tab and history title.
 
+### Navigation state and fullscreen (X-8 / X-11 / X-12 / X-18)
+- URI and title property changes keep the selected tab's URL bar, title, and Back/Forward buttons current, including same-document SPA navigation.
+- The Home button navigates the current WebView to `START_PAGE`, preserving browser history; new tabs continue to use the built-in home surface.
+- WebKit fullscreen requests hide the tab bar and toolbar and fullscreen the window. Leaving fullscreen restores the chrome.
+- URI notifications do not replace text while the URL bar has focus.
+
 ## Pending
 
 - **Git remote not configured — push deferred.** `master` has one local commit (`ae08c40`); nothing pushed. When the user says to, add `origin` and push, e.g. `git remote add origin <url> && git push -u origin master`.

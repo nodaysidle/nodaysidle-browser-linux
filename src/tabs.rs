@@ -16,8 +16,12 @@ const TOOLBAR_HEIGHT: i32 = 40;
 
 pub struct TabChrome {
     pub stack: Stack,
+    pub tab_bar: GtkBox,
     pub tab_strip: GtkBox,
     pub tab_scroll: ScrolledWindow,
+    pub tab_separator: Separator,
+    pub toolbar: GtkBox,
+    pub toolbar_separator: Separator,
     pub url_entry: gtk::Entry,
     pub back_btn: Button,
     pub forward_btn: Button,
@@ -48,8 +52,12 @@ pub struct TabManager {
 
 struct TabManagerInner {
     stack: Stack,
+    tab_bar: GtkBox,
     tab_strip: GtkBox,
     tab_scroll: ScrolledWindow,
+    tab_separator: Separator,
+    toolbar: GtkBox,
+    toolbar_separator: Separator,
     tabs: Vec<TabEntry>,
     selected: Option<u32>,
     next_id: u32,
@@ -71,8 +79,12 @@ impl TabManager {
     ) -> Self {
         let inner = TabManagerInner {
             stack: chrome.stack,
+            tab_bar: chrome.tab_bar,
             tab_strip: chrome.tab_strip,
             tab_scroll: chrome.tab_scroll,
+            tab_separator: chrome.tab_separator,
+            toolbar: chrome.toolbar,
+            toolbar_separator: chrome.toolbar_separator,
             tabs: Vec::new(),
             selected: None,
             next_id: 1,
@@ -108,7 +120,7 @@ impl TabManager {
 
         let mgr = self.inner.clone();
         self.inner.borrow().home_btn.connect_clicked(clone!(@strong mgr => move |_| {
-            TabManager::show_home_for_selected(&mgr);
+            TabManager::navigate_home_for_selected(&mgr);
         }));
 
         let mgr = self.inner.clone();
@@ -249,7 +261,7 @@ impl TabManager {
         tab_id: u32,
         related_view: Option<&WebView>,
     ) -> Option<WebView> {
-        let (web_context, history, page_stack, title_label) = {
+        let (web_context, history, page_stack) = {
             let inner = mgr.borrow();
             let tab = inner.tabs.iter().find(|tab| tab.id == tab_id)?;
             if let Some(view) = &tab.webview {
@@ -259,7 +271,6 @@ impl TabManager {
                 inner.web_context.clone(),
                 inner.history.clone(),
                 tab.page_stack.clone(),
-                tab.title_label.clone(),
             )
         };
 
@@ -275,7 +286,7 @@ impl TabManager {
 
         let mgr_load = mgr.clone();
 
-        webview.connect_load_changed(clone!(@strong mgr_load, @strong history, @strong title_label => move |view, ev| {
+        webview.connect_load_changed(clone!(@strong mgr_load, @strong history => move |view, ev| {
             if ev != LoadEvent::Finished {
                 return;
             }
@@ -283,15 +294,73 @@ impl TabManager {
             if uri.is_empty() || uri == "about:blank" {
                 return;
             }
-                let title = title_for_page(view.title().as_deref(), &uri);
+            let title = title_for_page(view.title().as_deref(), &uri);
             history.borrow_mut().record(uri.to_string(), title.clone());
-            title_label.set_text(&truncate(&title));
-
-            if mgr_load.borrow().selected == Some(tab_id) {
-                mgr_load.borrow().url_entry.set_text(&uri);
-            }
-            mgr_load.borrow().refresh_nav_buttons();
+            sync_view_chrome(&mgr_load, tab_id, view, &title, &uri);
         }));
+
+        let mgr_uri = mgr.clone();
+        webview.connect_notify_local(Some("uri"), move |view, _| {
+            let uri = view.uri().unwrap_or_default().to_string();
+            if uri.is_empty() {
+                return;
+            }
+            let title = title_for_page(view.title().as_deref(), &uri);
+            sync_view_chrome(&mgr_uri, tab_id, view, &title, &uri);
+        });
+
+        let mgr_title = mgr.clone();
+        webview.connect_notify_local(Some("title"), move |view, _| {
+            let uri = view.uri().unwrap_or_default().to_string();
+            if uri.is_empty() {
+                return;
+            }
+            let title = title_for_page(view.title().as_deref(), &uri);
+            sync_view_chrome(&mgr_title, tab_id, view, &title, &uri);
+        });
+
+        let (tab_bar, tab_separator, toolbar, toolbar_separator) = {
+            let inner = mgr.borrow();
+            (
+                inner.tab_bar.clone(),
+                inner.tab_separator.clone(),
+                inner.toolbar.clone(),
+                inner.toolbar_separator.clone(),
+            )
+        };
+        let tab_bar_on_enter = tab_bar.clone();
+        let tab_separator_on_enter = tab_separator.clone();
+        let toolbar_on_enter = toolbar.clone();
+        let toolbar_separator_on_enter = toolbar_separator.clone();
+        webview.connect_enter_fullscreen(move |view| {
+            let Some(window) = view
+                .toplevel()
+                .and_then(|widget| widget.downcast::<gtk::Window>().ok())
+            else {
+                return false;
+            };
+            tab_bar_on_enter.hide();
+            tab_separator_on_enter.hide();
+            toolbar_on_enter.hide();
+            toolbar_separator_on_enter.hide();
+            window.fullscreen();
+            true
+        });
+
+        webview.connect_leave_fullscreen(move |view| {
+            let Some(window) = view
+                .toplevel()
+                .and_then(|widget| widget.downcast::<gtk::Window>().ok())
+            else {
+                return false;
+            };
+            window.unfullscreen();
+            tab_bar.show();
+            tab_separator.show();
+            toolbar.show();
+            toolbar_separator.show();
+            true
+        });
 
         let mgr_create = mgr.clone();
         webview.connect_create(move |parent, _action| {
@@ -367,27 +436,11 @@ impl TabManager {
         }
     }
 
-    fn show_home_for_selected(mgr: &Rc<RefCell<TabManagerInner>>) {
-        let (page_stack, url_entry, home_search, title_label) = {
-            let inner = mgr.borrow();
-            let tab = inner.selected_tab();
-            if tab.is_none() {
-                return;
-            }
-            let tab = tab.unwrap();
-            (
-                tab.page_stack.clone(),
-                inner.url_entry.clone(),
-                tab.home_search.clone(),
-                tab.title_label.clone(),
-            )
-        };
-        page_stack.set_visible_child_name("home");
-        url_entry.set_text("");
-        title_label.set_text("New Tab");
-        home_search.set_text("");
-        home_search.grab_focus();
-        mgr.borrow().refresh_nav_buttons();
+    fn navigate_home_for_selected(mgr: &Rc<RefCell<TabManagerInner>>) {
+        let selected = { mgr.borrow().selected };
+        if let Some(tab_id) = selected {
+            TabManager::load_uri_tab(mgr, tab_id, crate::START_PAGE);
+        }
     }
 
     fn select_tab_id(mgr: &Rc<RefCell<TabManagerInner>>, id: u32) {
@@ -609,6 +662,45 @@ impl TabManagerInner {
     }
 }
 
+fn sync_view_chrome(
+    mgr: &Rc<RefCell<TabManagerInner>>,
+    tab_id: u32,
+    view: &WebView,
+    title: &str,
+    uri: &str,
+) {
+    let (selected, url_entry, title_label, back_btn, forward_btn, reload_btn) = {
+        let inner = mgr.borrow();
+        let Some(tab) = inner.tabs.iter().find(|tab| tab.id == tab_id) else {
+            return;
+        };
+        (
+            inner.selected == Some(tab_id),
+            inner.url_entry.clone(),
+            tab.title_label.clone(),
+            inner.back_btn.clone(),
+            inner.forward_btn.clone(),
+            inner.reload_btn.clone(),
+        )
+    };
+
+    title_label.set_text(&truncate(title));
+    if !selected {
+        return;
+    }
+
+    if let Some(uri) = url_bar_sync_value(url_entry.has_focus(), uri) {
+        url_entry.set_text(uri);
+    }
+    back_btn.set_sensitive(view.can_go_back());
+    forward_btn.set_sensitive(view.can_go_forward());
+    reload_btn.set_sensitive(true);
+}
+
+fn url_bar_sync_value(is_focused: bool, uri: &str) -> Option<&str> {
+    (!is_focused).then_some(uri)
+}
+
 fn selection_after_close(
     remaining_ids: &[u32],
     selected: Option<u32>,
@@ -745,8 +837,12 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
 
     let chrome = TabChrome {
         stack,
+        tab_bar,
         tab_strip,
         tab_scroll,
+        tab_separator: sep1,
+        toolbar,
+        toolbar_separator: sep2,
         url_entry,
         back_btn,
         forward_btn,
@@ -769,7 +865,7 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
 
 #[cfg(test)]
 mod tests {
-    use super::{scroll_value_to_reveal, selection_after_close};
+    use super::{scroll_value_to_reveal, selection_after_close, url_bar_sync_value};
 
     #[test]
     fn scroll_value_reveals_pills_outside_the_current_viewport() {
@@ -791,5 +887,14 @@ mod tests {
     fn closing_the_selected_tab_selects_the_next_available_tab() {
         assert_eq!(selection_after_close(&[1, 3], Some(2), 2, 1), Some(3));
         assert_eq!(selection_after_close(&[1, 2], Some(3), 3, 2), Some(2));
+    }
+
+    #[test]
+    fn uri_updates_preserve_text_while_the_url_bar_is_focused() {
+        assert_eq!(url_bar_sync_value(true, "https://example.com"), None);
+        assert_eq!(
+            url_bar_sync_value(false, "https://example.com"),
+            Some("https://example.com")
+        );
     }
 }
