@@ -29,7 +29,23 @@ pub struct TabChrome {
     pub forward_btn: Button,
     pub reload_btn: Button,
     pub home_btn: Button,
+    pub find_bar: FindBar,
 }
+
+/// In-window find bar. It never stores a `FindController`: WebKit's controller
+/// keeps a raw, non-owning pointer to its WebView, so every action looks up the
+/// controller of the currently selected tab's view afresh (R-1).
+#[derive(Clone)]
+pub struct FindBar {
+    bar: GtkBox,
+    entry: gtk::Entry,
+    status: Label,
+    previous: Button,
+    next: Button,
+    close: Button,
+}
+
+const FIND_MAX_MATCHES: u32 = 1_000;
 
 enum TabOpen {
     Home,
@@ -71,6 +87,7 @@ struct TabManagerInner {
     forward_btn: Button,
     reload_btn: Button,
     home_btn: Button,
+    find_bar: FindBar,
 }
 
 impl TabManager {
@@ -98,6 +115,7 @@ impl TabManager {
             forward_btn: chrome.forward_btn,
             reload_btn: chrome.reload_btn,
             home_btn: chrome.home_btn,
+            find_bar: chrome.find_bar,
         };
         Self {
             inner: Rc::new(RefCell::new(inner)),
@@ -161,6 +179,46 @@ impl TabManager {
             let text = entry.text().to_string();
             TabManager::navigate_selected(&mgr, &text);
         }));
+
+        self.wire_find_bar();
+    }
+
+    fn wire_find_bar(&self) {
+        let find_bar = self.inner.borrow().find_bar.clone();
+
+        let mgr = self.inner.clone();
+        find_bar.entry.connect_changed(move |_| run_find(&mgr));
+
+        let mgr = self.inner.clone();
+        find_bar
+            .entry
+            .connect_activate(move |_| find_step(&mgr, false));
+
+        let mgr = self.inner.clone();
+        find_bar.previous.connect_clicked(move |_| find_step(&mgr, true));
+
+        let mgr = self.inner.clone();
+        find_bar.next.connect_clicked(move |_| find_step(&mgr, false));
+
+        let mgr = self.inner.clone();
+        find_bar.close.connect_clicked(move |_| hide_find_bar(&mgr));
+
+        let mgr = self.inner.clone();
+        find_bar.entry.connect_key_press_event(move |_, event| {
+            let key = event.keyval();
+            if key == gdk::keys::constants::Escape {
+                hide_find_bar(&mgr);
+                glib::Propagation::Stop
+            } else if (key == gdk::keys::constants::Return
+                || key == gdk::keys::constants::KP_Enter)
+                && event.state().contains(gdk::ModifierType::SHIFT_MASK)
+            {
+                find_step(&mgr, true);
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
     }
 
     pub fn wire_keyboard(&self, window: &gtk::ApplicationWindow) {
@@ -227,13 +285,12 @@ impl TabManager {
         );
 
         let mgr = self.inner.clone();
-        let window_for_find = window.clone();
         group.connect_accel_group(
             *gdk::keys::constants::f,
             gdk::ModifierType::CONTROL_MASK,
             gtk::AccelFlags::VISIBLE,
             move |_, _, _, _| {
-                show_find_dialog(&mgr, &window_for_find);
+                show_find_bar(&mgr);
                 true
             },
         );
@@ -397,6 +454,7 @@ impl TabManager {
             settings.set_enable_html5_local_storage(true);
         }
         crate::permissions::wire(&webview);
+        wire_find_feedback(mgr, tab_id, &webview);
 
         let mgr_load = mgr.clone();
 
@@ -558,6 +616,21 @@ impl TabManager {
     }
 
     fn select_tab_id(mgr: &Rc<RefCell<TabManagerInner>>, id: u32) {
+        // Clear find highlights on the tab we are leaving while it is still alive;
+        // the find bar is retargeted to the new tab below.
+        let (find_visible, previous_view) = {
+            let inner = mgr.borrow();
+            let previous_view = (inner.selected != Some(id))
+                .then(|| inner.selected_tab().and_then(|tab| tab.webview.clone()))
+                .flatten();
+            (inner.find_bar.bar.is_visible(), previous_view)
+        };
+        if find_visible {
+            if let Some(controller) = previous_view.and_then(|view| view.find_controller()) {
+                controller.search_finish();
+            }
+        }
+
         let (stack, url_entry, tab_scroll, tab_strip, sync) = {
             let mut inner = mgr.borrow_mut();
             inner.selected = Some(id);
@@ -616,6 +689,9 @@ impl TabManager {
             }
         }
         mgr.borrow().refresh_nav_buttons();
+        if find_visible {
+            run_find(mgr);
+        }
     }
 
     fn close_tab(mgr: &Rc<RefCell<TabManagerInner>>, id: u32) {
@@ -840,91 +916,139 @@ fn next_tab_id(ids: &[u32], selected: Option<u32>, reverse: bool) -> Option<u32>
     Some(ids[next_index])
 }
 
-fn show_find_dialog(mgr: &Rc<RefCell<TabManagerInner>>, window: &gtk::ApplicationWindow) {
-    let view = { mgr.borrow().selected_webview() };
+/// The WebView currently shown in the selected tab, if any. Looked up on every
+/// find action so no stale view or controller is ever used (R-1).
+fn find_target(mgr: &Rc<RefCell<TabManagerInner>>) -> (FindBar, Option<WebView>) {
+    let inner = mgr.borrow();
+    (inner.find_bar.clone(), inner.selected_webview())
+}
+
+fn show_find_bar(mgr: &Rc<RefCell<TabManagerInner>>) {
+    let find_bar = { mgr.borrow().find_bar.clone() };
+    find_bar.bar.show();
+    find_bar.entry.grab_focus();
+    find_bar.entry.select_region(0, -1);
+    run_find(mgr);
+}
+
+fn hide_find_bar(mgr: &Rc<RefCell<TabManagerInner>>) {
+    let (find_bar, view) = find_target(mgr);
+    if let Some(controller) = view.as_ref().and_then(|view| view.find_controller()) {
+        controller.search_finish();
+    }
+    find_bar.bar.hide();
+    set_find_status(&find_bar, FindStatus::Idle);
+    if let Some(view) = view {
+        view.grab_focus();
+    }
+}
+
+fn run_find(mgr: &Rc<RefCell<TabManagerInner>>) {
+    let (find_bar, view) = find_target(mgr);
+    if !find_bar.bar.is_visible() {
+        return;
+    }
+    let text = find_bar.entry.text();
+    let Some(controller) = view.and_then(|view| view.find_controller()) else {
+        set_find_status(
+            &find_bar,
+            if text.is_empty() {
+                FindStatus::Idle
+            } else {
+                FindStatus::NoPage
+            },
+        );
+        return;
+    };
+    if text.is_empty() {
+        controller.search_finish();
+        set_find_status(&find_bar, FindStatus::Idle);
+    } else {
+        controller.search(text.as_str(), find_options(), FIND_MAX_MATCHES);
+    }
+}
+
+fn find_step(mgr: &Rc<RefCell<TabManagerInner>>, backwards: bool) {
+    let (find_bar, view) = find_target(mgr);
+    let text = find_bar.entry.text();
     let Some(controller) = view.and_then(|view| view.find_controller()) else {
         return;
     };
+    if text.is_empty() {
+        return;
+    }
+    if controller.search_text().as_deref() != Some(text.as_str()) {
+        controller.search(text.as_str(), find_options(), FIND_MAX_MATCHES);
+    } else if backwards {
+        controller.search_previous();
+    } else {
+        controller.search_next();
+    }
+}
 
-    let dialog = gtk::Dialog::with_buttons(
-        Some("Find in page"),
-        Some(window.upcast_ref::<gtk::Window>()),
-        gtk::DialogFlags::DESTROY_WITH_PARENT,
-        &[],
-    );
-    dialog.set_modal(false);
+fn find_options() -> u32 {
+    (FindOptions::CASE_INSENSITIVE | FindOptions::WRAP_AROUND).bits()
+}
 
-    let content = dialog.content_area();
-    let entry = gtk::Entry::new();
-    entry.set_placeholder_text(Some("Find text"));
-    entry.set_margin_top(12);
-    entry.set_margin_start(12);
-    entry.set_margin_end(12);
-    content.pack_start(&entry, false, false, 0);
-
-    let buttons = GtkBox::new(Orientation::Horizontal, 6);
-    buttons.set_halign(gtk::Align::End);
-    buttons.set_margin_top(8);
-    buttons.set_margin_bottom(12);
-    buttons.set_margin_start(12);
-    buttons.set_margin_end(12);
-    let previous = Button::with_label("Previous");
-    let next = Button::with_label("Next");
-    let close = Button::with_label("Close");
-    buttons.pack_start(&previous, false, false, 0);
-    buttons.pack_start(&next, false, false, 0);
-    buttons.pack_start(&close, false, false, 0);
-    content.pack_start(&buttons, false, false, 0);
-
-    let find_on_change = controller.clone();
-    entry.connect_changed(move |entry| {
-        let text = entry.text();
-        if text.is_empty() {
-            find_on_change.search_finish();
-        } else {
-            find_on_change.search(
-                text.as_str(),
-                (FindOptions::CASE_INSENSITIVE | FindOptions::WRAP_AROUND).bits(),
-                1_000,
-            );
+/// Per-view find feedback. The handlers live on the view's own controller, so
+/// they disappear with the view; they only touch the bar when that view's tab
+/// is still the selected one.
+fn wire_find_feedback(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32, view: &WebView) {
+    let Some(controller) = view.find_controller() else {
+        return;
+    };
+    let mgr_found = Rc::downgrade(mgr);
+    controller.connect_found_text(move |_, count| {
+        if let Some(find_bar) = selected_find_bar(&mgr_found, tab_id) {
+            set_find_status(&find_bar, FindStatus::Found(count));
         }
     });
-
-    let find_on_activate = controller.clone();
-    entry.connect_activate(move |_| find_on_activate.search_next());
-
-    let find_previous = controller.clone();
-    previous.connect_clicked(move |_| find_previous.search_previous());
-
-    let find_next = controller.clone();
-    next.connect_clicked(move |_| find_next.search_next());
-
-    let dialog_weak = dialog.downgrade();
-    close.connect_clicked(move |_| {
-        if let Some(dialog) = dialog_weak.upgrade() {
-            dialog.close();
+    let mgr_failed = Rc::downgrade(mgr);
+    controller.connect_failed_to_find_text(move |_| {
+        if let Some(find_bar) = selected_find_bar(&mgr_failed, tab_id) {
+            set_find_status(&find_bar, FindStatus::NotFound);
         }
     });
+}
 
-    let finish_on_destroy = controller.clone();
-    dialog.connect_destroy(move |_| finish_on_destroy.search_finish());
+fn selected_find_bar(
+    mgr: &std::rc::Weak<RefCell<TabManagerInner>>,
+    tab_id: u32,
+) -> Option<FindBar> {
+    let mgr = mgr.upgrade()?;
+    let inner = mgr.try_borrow().ok()?;
+    (inner.selected == Some(tab_id)).then(|| inner.find_bar.clone())
+}
 
-    let dialog_weak = dialog.downgrade();
-    let finish_on_escape = controller;
-    entry.connect_key_press_event(move |_, event| {
-        if event.keyval() == gdk::keys::constants::Escape {
-            finish_on_escape.search_finish();
-            if let Some(dialog) = dialog_weak.upgrade() {
-                dialog.close();
-            }
-            glib::Propagation::Stop
-        } else {
-            glib::Propagation::Proceed
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FindStatus {
+    Idle,
+    NoPage,
+    NotFound,
+    Found(u32),
+}
+
+fn find_status_text(status: FindStatus) -> String {
+    match status {
+        FindStatus::Idle => String::new(),
+        FindStatus::NoPage => "No page to search".to_string(),
+        FindStatus::NotFound => "No matches".to_string(),
+        FindStatus::Found(1) => "1 match".to_string(),
+        FindStatus::Found(count) if count > FIND_MAX_MATCHES => {
+            format!("{FIND_MAX_MATCHES}+ matches")
         }
-    });
+        FindStatus::Found(count) => format!("{count} matches"),
+    }
+}
 
-    dialog.show_all();
-    entry.grab_focus();
+fn set_find_status(find_bar: &FindBar, status: FindStatus) {
+    find_bar.status.set_text(&find_status_text(status));
+    let style = find_bar.entry.style_context();
+    if matches!(status, FindStatus::NotFound | FindStatus::NoPage) {
+        style.add_class("find-none");
+    } else {
+        style.remove_class("find-none");
+    }
 }
 
 fn set_browser_chrome_visible(mgr: &Rc<RefCell<TabManagerInner>>, visible: bool) {
@@ -1073,6 +1197,9 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     sep2.style_context().add_class("chrome-separator");
     root.pack_start(&sep2, false, false, 0);
 
+    let find_bar = build_find_bar();
+    root.pack_start(&find_bar.bar, false, false, 0);
+
     let stack = Stack::new();
     stack.style_context().add_class("void");
     stack.set_vexpand(true);
@@ -1091,9 +1218,47 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
         forward_btn,
         reload_btn,
         home_btn,
+        find_bar,
     };
 
     (chrome, new_tab_btn)
+}
+
+fn build_find_bar() -> FindBar {
+    let bar = GtkBox::new(Orientation::Horizontal, 6);
+    bar.style_context().add_class("chrome");
+    bar.style_context().add_class("find-bar");
+
+    let entry = gtk::Entry::new();
+    entry.set_placeholder_text(Some("Find in page"));
+    entry.set_width_chars(24);
+    entry.style_context().add_class("find-entry");
+    let status = Label::new(None);
+    status.style_context().add_class("find-status");
+    let previous = icon_button("go-up-symbolic", "Previous match (Shift+Enter)");
+    let next = icon_button("go-down-symbolic", "Next match (Enter)");
+    let close = icon_button("window-close-symbolic", "Close find bar (Escape)");
+
+    bar.pack_start(&entry, false, false, 0);
+    bar.pack_start(&previous, false, false, 0);
+    bar.pack_start(&next, false, false, 0);
+    bar.pack_start(&status, false, false, 0);
+    bar.pack_end(&close, false, false, 0);
+    for child in bar.children() {
+        child.show_all();
+    }
+    // Hidden until Ctrl+F; `window.show_all()` must not reveal it.
+    bar.set_no_show_all(true);
+    bar.hide();
+
+    FindBar {
+        bar,
+        entry,
+        status,
+        previous,
+        next,
+        close,
+    }
 }
 
 fn icon_button(icon_name: &str, tooltip: &str) -> Button {
@@ -1109,8 +1274,18 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
 #[cfg(test)]
 mod tests {
     use super::{
-        next_tab_id, scroll_value_to_reveal, selection_after_close, url_bar_sync_value,
+        find_status_text, next_tab_id, scroll_value_to_reveal, selection_after_close,
+        url_bar_sync_value, FindStatus,
     };
+
+    #[test]
+    fn find_status_reports_match_counts_and_misses() {
+        assert_eq!(find_status_text(FindStatus::Idle), "");
+        assert_eq!(find_status_text(FindStatus::Found(1)), "1 match");
+        assert_eq!(find_status_text(FindStatus::Found(3)), "3 matches");
+        assert_eq!(find_status_text(FindStatus::Found(u32::MAX)), "1000+ matches");
+        assert_eq!(find_status_text(FindStatus::NotFound), "No matches");
+    }
 
     #[test]
     fn scroll_value_reveals_pills_outside_the_current_viewport() {

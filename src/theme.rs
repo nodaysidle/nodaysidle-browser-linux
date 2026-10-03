@@ -130,6 +130,31 @@ window {
   padding: 4px 16px;
 }
 
+.find-bar {
+  padding: 4px 10px;
+}
+
+.find-entry {
+  background-color: #202022;
+  color: #e8e8ec;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  padding: 4px 10px;
+}
+
+.find-entry:focus {
+  border-color: #75aaff;
+}
+
+.find-entry.find-none {
+  border-color: #e06c75;
+}
+
+.find-status {
+  color: #949499;
+  font-size: 12px;
+}
+
 .home-search-entry {
   background: transparent;
   border: none;
