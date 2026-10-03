@@ -2271,3 +2271,85 @@ mod tests {
         assert_eq!(next_tab_id(&[], None, false), None);
     }
 }
+
+/// Everything that needs a real GTK display lives in this one test: GTK may
+/// only be used from the thread that initialised it, and the test harness
+/// runs each test on its own thread. Skipped when no display is available.
+#[cfg(test)]
+mod gtk_tests {
+    use super::{build_chrome_layout, TabManager, TabOpen};
+    use crate::history::HistoryStore;
+    use gtk::prelude::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use webkit2gtk::WebContextExt;
+
+    fn pump() {
+        while gtk::events_pending() {
+            gtk::main_iteration();
+        }
+    }
+
+    #[test]
+    fn gtk_tab_manager_and_web_context() {
+        // WebKit creates GTK widgets while building a WebContext; without an
+        // initialised display, GTK dereferences NULL settings and segfaults.
+        if gtk::init().is_err() {
+            eprintln!("skipping: no display available for GTK");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "nodaysidle-browser-gtk-test-{}",
+            std::process::id()
+        ));
+        let web_context = crate::profile::persistent_web_context(&dir);
+        assert!(web_context.is_sandbox_enabled());
+
+        // X-1 regression: closing tabs re-enters TabManager (selection,
+        // close buttons, focus). A RefCell borrow held across that panics
+        // inside a GLib callback, which aborts this test process.
+        let window = gtk::ApplicationWindow::builder().build();
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let (chrome, new_tab_btn) = build_chrome_layout(&root);
+        let history = Rc::new(RefCell::new(HistoryStore::load(dir.join("history.json"))));
+        let manager = TabManager::new(&window, chrome, web_context, history);
+        manager.wire_toolbar(&new_tab_btn);
+        let mgr = &manager.inner;
+        for _ in 0..3 {
+            TabManager::open_tab(mgr, TabOpen::Home, true);
+        }
+        pump();
+        assert_eq!(mgr.borrow().selected, Some(3));
+
+        // Background tab: the selection must not move.
+        TabManager::close_tab(mgr, 1);
+        pump();
+        assert_eq!(mgr.borrow().selected, Some(3));
+        assert_eq!(mgr.borrow().tabs.len(), 2);
+
+        // Selected tab: the neighbour is selected.
+        TabManager::close_tab(mgr, 3);
+        pump();
+        assert_eq!(mgr.borrow().selected, Some(2));
+
+        // The last, untouched Home tab stays (N-2).
+        TabManager::close_tab(mgr, 2);
+        pump();
+        assert_eq!(mgr.borrow().tabs.len(), 1);
+        assert_eq!(mgr.borrow().selected, Some(2));
+
+        // Through the real button handler too.
+        new_tab_btn.clicked();
+        pump();
+        assert_eq!(mgr.borrow().selected, Some(4));
+        let close_btn = mgr.borrow().tabs[0].close_btn.clone();
+        close_btn.clicked();
+        pump();
+        assert_eq!(mgr.borrow().selected, Some(4));
+        assert_eq!(mgr.borrow().tabs.len(), 1);
+
+        unsafe { window.destroy() };
+        pump();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

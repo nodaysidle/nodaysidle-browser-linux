@@ -87,30 +87,10 @@ fn data_dir_from(data_local: Option<PathBuf>, home: Option<PathBuf>, temp: PathB
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{
-        data_dir_from, ensure_private_cookie_file, ensure_private_dir, persistent_web_context,
-    };
+    use super::{data_dir_from, ensure_private_cookie_file, ensure_private_dir};
     use std::path::PathBuf;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use webkit2gtk::WebContextExt;
-
-    #[test]
-    fn shared_web_context_enables_the_web_process_sandbox() {
-        // WebKit creates GTK widgets while building a WebContext; without an
-        // initialised display, GTK dereferences NULL settings and segfaults.
-        if gtk::init().is_err() {
-            eprintln!("skipping: no display available for GTK");
-            return;
-        }
-        let dir = std::env::temp_dir().join(format!(
-            "nodaysidle-browser-sandbox-test-{}",
-            std::process::id()
-        ));
-        let web_context = persistent_web_context(&dir);
-        assert!(web_context.is_sandbox_enabled());
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
 
     #[test]
     fn profile_directory_is_always_absolute() {
