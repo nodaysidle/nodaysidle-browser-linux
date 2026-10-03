@@ -733,15 +733,15 @@ impl TabManager {
         if owns_fullscreen {
             end_element_fullscreen_unless(mgr, None);
         }
-        let (removed_selected, select_after) = {
+        // Only take the entry out while borrowed. Removing widgets emits GTK
+        // signals and dropping the last reference to a WebView runs WebKit
+        // teardown, so both happen after the borrow ends (X-28).
+        let (tab, stack, tab_strip, removed_selected, select_after) = {
             let mut inner = mgr.borrow_mut();
             let Some(idx) = inner.tabs.iter().position(|t| t.id == id) else {
                 return;
             };
             let tab = inner.tabs.remove(idx);
-            inner.stack.remove(&tab.page_stack);
-            inner.tab_strip.remove(&tab.pill);
-            inner.refresh_close_buttons();
             let was_selected = inner.selected == Some(id);
             let remaining_ids = inner.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>();
             let selected_after = selection_after_close(&remaining_ids, inner.selected, id, idx);
@@ -751,8 +751,32 @@ impl TabManager {
             } else {
                 None
             };
-            (was_selected, select_after)
+            (
+                tab,
+                inner.stack.clone(),
+                inner.tab_strip.clone(),
+                was_selected,
+                select_after,
+            )
         };
+
+        stack.remove(&tab.page_stack);
+        tab_strip.remove(&tab.pill);
+        mgr.borrow().refresh_close_buttons();
+        let TabEntry { page_stack, .. } = tab;
+        // Destroy the tab's page (and with it its WebView) explicitly instead
+        // of relying on the last reference going away: signal closures, pop-up
+        // openers or pending callbacks can keep a view alive, and a closed tab
+        // must stop running its page (R-2). Deferred to an idle so no handler of
+        // this view is still on the stack.
+        glib::idle_add_local_once(move || {
+            // SAFETY: the page stack is no longer in the widget tree or in
+            // TabManager, nothing looks it or its WebView up again (every
+            // handler resolves its tab by id, which is gone), and destroy()
+            // only disposes the widgets; remaining references stay valid
+            // GObjects.
+            unsafe { page_stack.destroy() };
+        });
 
         if let Some(next_id) = select_after {
             TabManager::select_tab_id(mgr, next_id);
