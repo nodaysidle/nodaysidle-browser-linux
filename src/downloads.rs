@@ -159,13 +159,18 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     let download_on_destroy = download.clone();
     dialog.connect_destroy(move |_| request_cancel(&download_on_destroy, &state_on_destroy));
 
+    // Cancel keeps the window open: WebKit confirms asynchronously with
+    // `failed` (CancelledByUser), which shows "Download cancelled" and a Close
+    // button (V-10). If the transfer completed before the cancel arrived,
+    // `finished` reports it as complete instead.
     let state_on_cancel = state.clone();
     let download_on_cancel = download.clone();
-    let dialog_weak = dialog.downgrade();
-    cancel_button.connect_clicked(move |_| {
+    let status_weak = status.downgrade();
+    cancel_button.connect_clicked(move |button| {
         request_cancel(&download_on_cancel, &state_on_cancel);
-        if let Some(dialog) = dialog_weak.upgrade() {
-            dialog.close();
+        button.set_sensitive(false);
+        if let Some(status) = status_weak.upgrade() {
+            status.set_text("Cancelling…");
         }
     });
 
@@ -178,14 +183,18 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
 
     let progress_weak = progress.downgrade();
     let status_weak = status.downgrade();
+    let state_on_progress = state.clone();
     download.connect_notify_local(Some("estimated-progress"), move |download, _| {
+        if state_on_progress.get() != DownloadState::Active {
+            return;
+        }
         if let Some(progress) = progress_weak.upgrade() {
             let fraction = download.estimated_progress().clamp(0.0, 1.0);
             progress.set_fraction(fraction);
             progress.set_text(Some(&format!("{:.0}%", fraction * 100.0)));
         }
         if let Some(status) = status_weak.upgrade() {
-            status.set_text("Downloading… (closing this window cancels the download)");
+            status.set_text("Downloading… (closing this window asks before cancelling)");
         }
     });
 
