@@ -1,5 +1,6 @@
 mod history;
 mod home;
+mod icon;
 mod downloads;
 mod error_page;
 mod navigation;
@@ -21,12 +22,20 @@ pub const START_PAGE: &str = "https://duckduckgo.com/";
 const APP_ID: &str = "com.nodaysidle.Browser";
 
 fn main() -> glib::ExitCode {
+    // WM_CLASS on X11 comes from the program name: keep it equal to the
+    // desktop file's StartupWMClass however the binary is invoked. On Wayland
+    // the app_id is APP_ID, which matches com.nodaysidle.Browser.desktop (X-26).
+    glib::set_prgname(Some("nodaysidle-browser"));
+    glib::set_application_name("nodaysidle");
     let app = Application::builder()
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::HANDLES_OPEN)
         .build();
     let tab_manager = Rc::new(RefCell::new(None::<TabManager>));
-    app.connect_startup(|_| theme::install());
+    app.connect_startup(|_| {
+        theme::install();
+        icon::install_default_icon();
+    });
     let manager_for_shutdown = tab_manager.clone();
     app.connect_shutdown(move |_| {
         let manager = { manager_for_shutdown.borrow().clone() };

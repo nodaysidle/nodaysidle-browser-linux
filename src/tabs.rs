@@ -1305,9 +1305,13 @@ fn show_about_dialog(parent: &gtk::ApplicationWindow) {
         .program_name("nodaysidle")
         .version(env!("CARGO_PKG_VERSION"))
         .comments("A quiet WebKitGTK browser for Linux.")
-        .logo_icon_name("nodaysidle-browser")
         .license_type(gtk::License::MitX11)
         .build();
+    if crate::icon::theme_has_icon() {
+        dialog.set_logo_icon_name(Some(crate::icon::ICON_NAME));
+    } else if let Some(logo) = crate::icon::embedded_icon(128) {
+        dialog.set_logo(Some(&logo));
+    }
     dialog.connect_response(|dialog, _| dialog.close());
     dialog.show();
 }
