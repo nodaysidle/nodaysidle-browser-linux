@@ -702,6 +702,7 @@ dependencies = [
  "gio",
  "glib",
  "gtk",
+ "idna",
  "serde",
  "serde_json",
  "url",

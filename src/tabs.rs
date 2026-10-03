@@ -200,6 +200,16 @@ impl TabManager {
             TabManager::navigate_selected(&mgr, &text);
         }));
 
+        self.inner.borrow().url_entry.connect_changed(|entry| {
+            if entry.is_focus() {
+                entry.set_icon_from_icon_name(gtk::EntryIconPosition::Primary, None);
+                entry.set_icon_tooltip_text(gtk::EntryIconPosition::Primary, None);
+                let style = entry.style_context();
+                style.remove_class("secure");
+                style.remove_class("insecure");
+            }
+        });
+
         self.wire_find_bar();
     }
 
@@ -468,6 +478,10 @@ impl TabManager {
                 schedule_history_save(history.clone(), delay);
             }
             sync_view_chrome(&mgr_load, tab_id, view, &title, &uri);
+            let is_selected_tab = mgr_load.borrow().selected == Some(tab_id);
+            if is_selected_tab {
+                run_find(&mgr_load);
+            }
         }));
 
         // Back/Forward follow the view's history, which can change after
@@ -656,7 +670,7 @@ impl TabManager {
         webview.load_uri(uri);
         webview.show();
         page_stack.set_visible_child_name("web");
-        url_entry.set_text(uri);
+        url_entry.set_text(&crate::navigation::format_url_for_display(uri));
         if mgr.borrow().selected == Some(tab_id) {
             webview.grab_focus();
             refresh_nav(mgr);
@@ -705,6 +719,8 @@ impl TabManager {
             if let Some(controller) = previous_view.and_then(|view| view.find_controller()) {
                 controller.search_finish();
             }
+            let find_bar = mgr.borrow().find_bar.clone();
+            set_find_status(&find_bar, FindStatus::Idle);
         }
 
         end_element_fullscreen_unless(mgr, Some(id));
@@ -769,7 +785,7 @@ impl TabManager {
             } else if let Some(view) = webview {
                 page_stack.set_visible_child_name("web");
                 let uri = view.uri().unwrap_or_default();
-                url_entry.set_text(&uri);
+                url_entry.set_text(&crate::navigation::format_url_for_display(&uri));
                 apply_page_status(&url_entry, &reload_btn, Some(&view));
                 view.grab_focus();
             }
@@ -1329,13 +1345,13 @@ fn sync_view_chrome(
 
     title_label.set_text(&truncate(title));
     // The pill shows a shortened title; the tooltip has all of it (X-23).
-    pill.set_tooltip_text(Some(&tab_tooltip(title, uri)));
+    pill.set_tooltip_text(Some(&tab_tooltip(title, &crate::navigation::format_url_for_display(uri))));
     if !selected {
         return;
     }
 
     if let Some(uri) = url_bar_sync_value(url_entry.is_focus(), uri) {
-        url_entry.set_text(uri);
+        url_entry.set_text(&crate::navigation::format_url_for_display(uri));
     }
     back_btn.set_sensitive(view.can_go_back());
     forward_btn.set_sensitive(view.can_go_forward());
@@ -1697,7 +1713,9 @@ fn run_find(mgr: &Rc<RefCell<TabManagerInner>>) {
         controller.search_finish();
         set_find_status(&find_bar, FindStatus::Idle);
     } else {
+        set_find_status(&find_bar, FindStatus::Idle);
         controller.search(text.as_str(), find_options(), FIND_MAX_MATCHES);
+        controller.count_matches(text.as_str(), find_options(), FIND_MAX_MATCHES);
     }
 }
 
@@ -1711,7 +1729,9 @@ fn find_step(mgr: &Rc<RefCell<TabManagerInner>>, backwards: bool) {
         return;
     }
     if controller.search_text().as_deref() != Some(text.as_str()) {
+        set_find_status(&find_bar, FindStatus::Idle);
         controller.search(text.as_str(), find_options(), FIND_MAX_MATCHES);
+        controller.count_matches(text.as_str(), find_options(), FIND_MAX_MATCHES);
     } else if backwards {
         controller.search_previous();
     } else {
@@ -1730,10 +1750,14 @@ fn wire_find_feedback(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32, view: &We
     let Some(controller) = view.find_controller() else {
         return;
     };
-    let mgr_found = Rc::downgrade(mgr);
-    controller.connect_found_text(move |_, count| {
-        if let Some(find_bar) = selected_find_bar(&mgr_found, tab_id) {
-            set_find_status(&find_bar, FindStatus::Found(count));
+    let mgr_counted = Rc::downgrade(mgr);
+    controller.connect_counted_matches(move |_, count| {
+        if let Some(find_bar) = selected_find_bar(&mgr_counted, tab_id) {
+            if count == 0 {
+                set_find_status(&find_bar, FindStatus::NotFound);
+            } else {
+                set_find_status(&find_bar, FindStatus::Found(count));
+            }
         }
     });
     let mgr_failed = Rc::downgrade(mgr);
@@ -2110,9 +2134,13 @@ fn build_find_bar() -> FindBar {
 
     let entry = gtk::Entry::new();
     entry.set_placeholder_text(Some("Find in page"));
-    entry.set_width_chars(24);
+    entry.set_width_chars(10);
+    entry.set_max_width_chars(32);
     entry.style_context().add_class("find-entry");
     let status = Label::new(None);
+    status.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    status.set_width_chars(6);
+    status.set_max_width_chars(24);
     status.style_context().add_class("find-status");
     let previous = icon_button("go-up-symbolic", "Previous match (Shift+Enter)");
     let next = icon_button("go-down-symbolic", "Next match (Enter)");

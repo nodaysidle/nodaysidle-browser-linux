@@ -1,8 +1,91 @@
 use gio::prelude::*;
 use gtk::prelude::*;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+
+#[derive(Clone)]
+struct ActiveDownload {
+    id: usize,
+    filename: String,
+    state: Rc<Cell<DownloadState>>,
+    download: Download,
+}
+
+thread_local! {
+    static ACTIVE_DOWNLOADS: RefCell<Vec<ActiveDownload>> = const { RefCell::new(Vec::new()) };
+    static NEXT_DOWNLOAD_ID: Cell<usize> = const { Cell::new(1) };
+}
+
+fn unregister_download(id: usize) {
+    ACTIVE_DOWNLOADS.with(|d| {
+        d.borrow_mut().retain(|item| item.id != id);
+    });
+}
+
+pub fn has_active_downloads() -> bool {
+    active_download_count() > 0
+}
+
+pub fn active_download_count() -> usize {
+    ACTIVE_DOWNLOADS.with(|d| {
+        d.borrow()
+            .iter()
+            .filter(|item| item.state.get() == DownloadState::Active)
+            .count()
+    })
+}
+
+pub fn cancel_all_active() {
+    let list = ACTIVE_DOWNLOADS.with(|d| d.borrow().clone());
+    for item in list {
+        request_cancel(&item.download, &item.state);
+    }
+}
+
+pub fn confirm_quit(parent: &gtk::Window) -> bool {
+    let (count, filename) = ACTIVE_DOWNLOADS.with(|d| {
+        let borrowed = d.borrow();
+        let active: Vec<_> = borrowed
+            .iter()
+            .filter(|item| item.state.get() == DownloadState::Active)
+            .collect();
+        (active.len(), active.first().map(|item| item.filename.clone()))
+    });
+    if count == 0 {
+        return true;
+    }
+    let (primary, secondary) = quit_confirmation_text(count, filename.as_deref());
+    let dialog = gtk::MessageDialog::builder()
+        .transient_for(parent)
+        .modal(true)
+        .message_type(gtk::MessageType::Question)
+        .buttons(gtk::ButtonsType::None)
+        .text(&primary)
+        .secondary_text(&secondary)
+        .build();
+    dialog.add_button("_Continue downloading", gtk::ResponseType::No);
+    dialog.add_button("_Cancel download and quit", gtk::ResponseType::Yes);
+    dialog.set_default_response(gtk::ResponseType::No);
+    let confirmed = dialog.run() == gtk::ResponseType::Yes;
+    dialog.close();
+    confirmed
+}
+
+pub(crate) fn quit_confirmation_text(count: usize, first_filename: Option<&str>) -> (String, String) {
+    if count <= 1 {
+        let name = first_filename.unwrap_or("file");
+        (
+            format!("Cancel download of “{name}” and quit?"),
+            "Closing the window will cancel the download in progress.".to_string(),
+        )
+    } else {
+        (
+            format!("Cancel {count} downloads and quit?"),
+            "Closing the window will cancel all downloads in progress.".to_string(),
+        )
+    }
+}
 use webkit2gtk::{Download, DownloadExt, WebContext, WebContextExt};
 
 pub fn wire(web_context: &WebContext) {
@@ -135,6 +218,19 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     // the destroy handler cancelled again; the second cancel crashed (N-1).
     let state = Rc::new(Cell::new(DownloadState::Active));
 
+    let download_id = NEXT_DOWNLOAD_ID.with(|id| {
+        let next = id.get();
+        id.set(next + 1);
+        next
+    });
+    ACTIVE_DOWNLOADS.with(|d| {
+        d.borrow_mut().push(ActiveDownload {
+            id: download_id,
+            filename: filename.to_string(),
+            state: state.clone(),
+            download: download.clone(),
+        });
+    });
     // Closing the window with the window manager while the download runs asks
     // first instead of silently cancelling (R-10b).
     let state_on_delete = state.clone();
@@ -157,8 +253,10 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     // the app, so stop it once.
     let state_on_destroy = state.clone();
     let download_on_destroy = download.clone();
-    dialog.connect_destroy(move |_| request_cancel(&download_on_destroy, &state_on_destroy));
-
+    dialog.connect_destroy(move |_| {
+        unregister_download(download_id);
+        request_cancel(&download_on_destroy, &state_on_destroy);
+    });
     // Cancel keeps the window open: WebKit confirms asynchronously with
     // `failed` (CancelledByUser), which shows "Download cancelled" and a Close
     // button (V-10). If the transfer completed before the cancel arrived,
@@ -167,6 +265,7 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     let download_on_cancel = download.clone();
     let status_weak = status.downgrade();
     cancel_button.connect_clicked(move |button| {
+        unregister_download(download_id);
         request_cancel(&download_on_cancel, &state_on_cancel);
         button.set_sensitive(false);
         if let Some(status) = status_weak.upgrade() {
@@ -204,6 +303,7 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     let close_weak = close_button.downgrade();
     let state_on_finish = state.clone();
     download.connect_finished(move |_| {
+        unregister_download(download_id);
         let failed = state_on_finish.get() == DownloadState::Failed;
         state_on_finish.set(state_on_finish.get().finish());
         if failed {
@@ -229,6 +329,7 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
     let close_weak = close_button.downgrade();
     let state_on_failure = state;
     download.connect_failed(move |_, error| {
+        unregister_download(download_id);
         state_on_failure.set(DownloadState::Failed);
         if let Some(status) = status_weak.upgrade() {
             if error.matches(webkit2gtk::DownloadError::CancelledByUser) {
@@ -320,7 +421,18 @@ fn safe_suggested_filename(suggested: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{safe_suggested_filename, DownloadState};
+    use super::{quit_confirmation_text, safe_suggested_filename, DownloadState};
+
+    #[test]
+    fn quit_confirmation_wording_distinguishes_single_and_multiple_downloads() {
+        let (single, sub) = quit_confirmation_text(1, Some("archive.tar.gz"));
+        assert!(single.contains("archive.tar.gz"));
+        assert!(sub.contains("cancel the download"));
+
+        let (multiple, sub_mult) = quit_confirmation_text(3, None);
+        assert!(multiple.contains("3 downloads"));
+        assert!(sub_mult.contains("all downloads"));
+    }
 
     #[test]
     fn a_download_is_cancelled_at_most_once() {

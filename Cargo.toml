@@ -15,6 +15,7 @@ gdk = "0.18"
 gtk = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+idna = "1"
 url = "2"
 webkit2gtk = { version = "2.0", features = ["v2_40"] }
 

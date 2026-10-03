@@ -87,7 +87,7 @@ done
 
 old_default_browser=""
 if (( migrate_defaults )) && command -v xdg-settings >/dev/null 2>&1; then
-  old_default_browser="$(xdg-settings get default-web-browser 2>/dev/null || true)"
+  old_default_browser="$(env -u BROWSER xdg-settings get default-web-browser 2>/dev/null || true)"
 fi
 
 # Rewrites OLD_NAME to NEW_NAME in the values of one mimeapps.list. Only
@@ -183,7 +183,7 @@ fi
 # via gio) are updated through xdg-settings, but only if nodaysidle was the
 # default before.
 if [[ "${old_default_browser}" == "${OLD_NAME}" ]]; then
-  if xdg-settings set default-web-browser "${NEW_NAME}" 2>/dev/null; then
+  if env -u BROWSER xdg-settings set default-web-browser "${NEW_NAME}" 2>/dev/null; then
     echo "Default web browser: ${OLD_NAME} -> ${NEW_NAME}"
   else
     echo "Could not update the default web browser; run:"

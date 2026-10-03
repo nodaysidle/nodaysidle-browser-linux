@@ -167,21 +167,92 @@ fn is_plausible_tld(tld: &str) -> bool {
         && !NON_TLD_SUFFIXES.contains(&tld)
 }
 
+pub fn format_url_for_display(uri: &str) -> String {
+    let mut working = uri.to_string();
+    if let Ok(parsed) = url::Url::parse(uri) {
+        if let Some(host) = parsed.host_str() {
+            if host.contains("xn--") {
+                let (unicode, _) = idna::domain_to_unicode(host);
+                if let Some(pos) = working.find(host) {
+                    working.replace_range(pos..pos + host.len(), &unicode);
+                }
+            }
+        }
+    }
+    decode_utf8_percent_encoded(&working)
+}
+
+/// Decodes percent-encoded UTF-8 byte sequences where the decoded bytes form
+/// valid non-ASCII UTF-8 characters. ASCII characters and delimiters (such as
+/// `%20`, `%2F`, `%3F`, `%26`, `%23`, etc.) remain safely percent-encoded.
+fn decode_utf8_percent_encoded(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let mut decoded_bytes = [0u8; 4];
+            let mut byte_count = 0;
+            let mut idx = i;
+            let mut decoded_char = None;
+            let mut consumed = 0;
+
+            while idx + 2 < bytes.len() && bytes[idx] == b'%' && byte_count < 4 {
+                let hex = &bytes[idx + 1..idx + 3];
+                let Ok(hex_str) = std::str::from_utf8(hex) else { break; };
+                let Ok(b) = u8::from_str_radix(hex_str, 16) else { break; };
+                if b < 0x80 {
+                    // Keep ASCII characters and delimiters percent-encoded
+                    break;
+                }
+                decoded_bytes[byte_count] = b;
+                byte_count += 1;
+                idx += 3;
+
+                if let Ok(s) = std::str::from_utf8(&decoded_bytes[..byte_count]) {
+                    let mut chars = s.chars();
+                    if let Some(ch) = chars.next() {
+                        if chars.next().is_none() && !ch.is_control() {
+                            decoded_char = Some(ch);
+                            consumed = idx - i;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(ch) = decoded_char {
+                out.push(ch);
+                i += consumed;
+                continue;
+            }
+        }
+        let ch = input[i..].chars().next().unwrap();
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    out
+}
+
 pub fn title_for_url(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
         if let Some(host) = parsed.host_str() {
             if !host.is_empty() {
+                if host.contains("xn--") {
+                    let (unicode, _) = idna::domain_to_unicode(host);
+                    return unicode;
+                }
                 return host.to_string();
             }
         }
         if !parsed.path().is_empty() {
-            return parsed.to_string();
+            return format_url_for_display(url);
         }
     }
     if url.is_empty() {
         "New Tab".to_string()
     } else {
-        url.to_string()
+        format_url_for_display(url)
     }
 }
 
@@ -209,7 +280,7 @@ fn percent_encode_query(query: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_with_home, title_for_page, SearchEngine};
+    use super::{format_url_for_display, resolve_with_home, title_for_page, SearchEngine};
     use std::path::Path;
 
     fn resolve(input: &str) -> String {
@@ -319,5 +390,26 @@ mod tests {
             title_for_page(Some(" Page title "), "https://example.com"),
             "Page title"
         );
+    }
+
+    #[test]
+    fn non_english_urls_decode_to_human_readable_text() {
+        assert_eq!(
+            format_url_for_display("https://zh.wikipedia.org/wiki/%E7%BB%B4%E5%9F%BA%E7%99%BE%E7%A7%91"),
+            "https://zh.wikipedia.org/wiki/维基百科"
+        );
+        assert_eq!(
+            format_url_for_display("https://de.wikipedia.org/wiki/M%C3%BCnchen?q=test%20space%26more"),
+            "https://de.wikipedia.org/wiki/München?q=test%20space%26more"
+        );
+        assert_eq!(
+            format_url_for_display("file:///home/%E6%96%87%E6%A1%A3/test.html"),
+            "file:///home/文档/test.html"
+        );
+        assert_eq!(
+            format_url_for_display("https://xn--e1afmkfd.xn--80akhbyknj4f/wiki/%E7%BB%B4%E5%9F%BA%E7%99%BE%E7%A7%91"),
+            "https://пример.испытание/wiki/维基百科"
+        );
+        assert_eq!(format_url_for_display("about:blank"), "about:blank");
     }
 }

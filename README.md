@@ -20,8 +20,8 @@ GTK 3 + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/nod
 - Find in page (Ctrl+F) as a bar under the toolbar
 - Downloads ask where to save and show progress in a window that belongs to the main browser window (closing a
   pop-up that started a download does not stop it). Cancel stops the download and the window then shows
-  "Download cancelled" with a Close button; closing the progress window while a download runs asks before
-  cancelling it. Quitting the browser stops unfinished downloads.
+  "Download cancelled" with a Close button; closing the progress window or the browser window while a download
+  runs asks for confirmation before cancelling.
 - Site requests for location, camera, microphone, notifications and pointer lock need an explicit Allow; the
   answer is remembered per site until the browser exits
 - Failed loads and crashed pages show a built-in error page with a Try again / Reload button

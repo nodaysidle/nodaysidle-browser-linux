@@ -109,8 +109,8 @@ Modules:
   download. Cancel calls `webkit_download_cancel` at most once (it is asynchronous and the download
   emits `failed` afterwards); the window stays open, shows "Cancelling…", then "Download cancelled"
   with a Close button. Closing the progress window while a download runs asks whether to cancel; a
-  finished, failed or cancelled download's window closes freely. The progress window is destroyed
-  with the main window, so quitting stops unfinished downloads without asking.
+  finished, failed or cancelled download's window closes freely. Closing the main browser window while
+  downloads run also asks for confirmation; confirmed quits stop unfinished downloads.
 - **Permissions:** location, camera, microphone, notifications and pointer lock show
   "<top-level origin> (or a site embedded in it) requests …" (WebKitGTK 4.1 does not expose the
   requesting frame's origin) and require Allow. Allow/Deny is remembered per origin and permission
@@ -121,7 +121,7 @@ Modules:
   turning into Stop while loading. The URL bar does not overwrite text while focused.
 - **History:** recorded when a load finishes and written in batches: the first unsaved visit arms
   one 2 s timer (later visits join that batch), a failed write is retried after 5 s, doubling up to
-  60 s, and the app flushes on exit. Writes go through a `0600` temp file + fsync + rename. An
+  60 s, and the app flushes on exit and on termination signals (SIGTERM, SIGINT, SIGHUP). Writes go through a `0600` temp file + fsync + rename. An
   unreadable file is renamed to `history.json.corrupt-<time>` instead of being overwritten.
 - **Cookies** persist in `webkit-data/cookies.sqlite` (created `0600`).
 

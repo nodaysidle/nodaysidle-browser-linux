@@ -159,6 +159,7 @@ window.browser-window {
 
 .find-bar {
   padding: 4px 10px;
+  min-width: 0;
 }
 
 .find-entry {
@@ -167,6 +168,7 @@ window.browser-window {
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 8px;
   padding: 4px 10px;
+  min-width: 0;
 }
 
 .find-entry:focus {
@@ -180,6 +182,7 @@ window.browser-window {
 .find-status {
   color: #949499;
   font-size: 12px;
+  min-width: 0;
 }
 
 .home-search-entry,

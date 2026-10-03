@@ -45,6 +45,17 @@ fn main() -> glib::ExitCode {
             manager.flush_history();
         }
     });
+    for &sig in &[1, 2, 15] {
+        let manager_for_sig = tab_manager.clone();
+        let app_for_sig = app.clone();
+        glib::unix_signal_add_local(sig, move || {
+            if let Some(manager) = manager_for_sig.borrow().clone() {
+                manager.flush_history();
+            }
+            app_for_sig.quit();
+            glib::ControlFlow::Break
+        });
+    }
     let manager_for_activate = tab_manager.clone();
     app.connect_activate(move |app| {
         // A second launch activates the primary instance: bring its window
@@ -140,6 +151,18 @@ fn build_ui(app: &Application) -> TabManager {
         .default_width(1_200)
         .default_height(800)
         .build();
+    window.connect_delete_event(|window, _| {
+        if downloads::has_active_downloads() {
+            if downloads::confirm_quit(window.upcast_ref()) {
+                downloads::cancel_all_active();
+                glib::Propagation::Proceed
+            } else {
+                glib::Propagation::Stop
+            }
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
 
     window.style_context().add_class("browser-window");
     let root = GtkBox::new(Orientation::Vertical, 0);
