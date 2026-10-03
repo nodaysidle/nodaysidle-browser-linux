@@ -25,7 +25,6 @@ pub struct TabChrome {
     pub home_btn: Button,
 }
 
-#[allow(dead_code)]
 enum TabOpen {
     Home,
     Url(String),
@@ -151,16 +150,11 @@ impl TabManager {
     }
 
     fn open_tab(mgr: &Rc<RefCell<TabManagerInner>>, open: TabOpen, select: bool) -> u32 {
-        let (search_engine, stack, tab_strip, next_id) = {
+        let (stack, tab_strip, next_id) = {
             let mut inner = mgr.borrow_mut();
             let id = inner.next_id;
             inner.next_id += 1;
-            (
-                inner.search_engine,
-                inner.stack.clone(),
-                inner.tab_strip.clone(),
-                id,
-            )
+            (inner.stack.clone(), inner.tab_strip.clone(), id)
         };
 
         let (home_page, home_search) = build_home_surface();
@@ -228,18 +222,13 @@ impl TabManager {
             close_btn,
         });
 
-        match open {
-            TabOpen::Home => {}
-            TabOpen::Url(url) => {
-                if let Some(resolved) = resolve(&url, search_engine) {
-                    TabManager::navigate_tab(mgr, tab_id, &resolved);
-                }
-            }
-        }
-
         if select {
             mgr.borrow().url_entry.set_text("");
             TabManager::select_tab_id(mgr, tab_id);
+        }
+        match open {
+            TabOpen::Home => {}
+            TabOpen::Url(uri) => TabManager::load_uri_tab(mgr, tab_id, &uri),
         }
         tab_id
     }
@@ -347,6 +336,10 @@ impl TabManager {
         let Some(url) = resolve(trimmed, mgr.borrow().search_engine) else {
             return;
         };
+        TabManager::load_uri_tab(mgr, tab_id, &url);
+    }
+
+    fn load_uri_tab(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32, uri: &str) {
         let Some(webview) = TabManager::ensure_webview(mgr, tab_id) else {
             return;
         };
@@ -359,10 +352,10 @@ impl TabManager {
             let tab = tab.unwrap();
             (tab.page_stack.clone(), inner.url_entry.clone())
         };
-        webview.load_uri(&url);
+        webview.load_uri(uri);
         webview.show();
         page_stack.set_visible_child_name("web");
-        url_entry.set_text(&url);
+        url_entry.set_text(uri);
         if mgr.borrow().selected == Some(tab_id) {
             webview.grab_focus();
             mgr.borrow().refresh_nav_buttons();
@@ -501,6 +494,22 @@ impl TabManager {
 
     pub fn navigate_from_bar_public(&self, raw: &str) {
         TabManager::navigate_selected(&self.inner, raw);
+    }
+
+    pub fn open_external_uri(&self, uri: &str) {
+        let selected_home = {
+            let inner = self.inner.borrow();
+            if inner.is_selected_on_home() {
+                inner.selected
+            } else {
+                None
+            }
+        };
+        if let Some(tab_id) = selected_home {
+            TabManager::load_uri_tab(&self.inner, tab_id, uri);
+            return;
+        }
+        TabManager::open_tab(&self.inner, TabOpen::Url(uri.to_string()), true);
     }
 
     pub fn wire_history(&self, history: Rc<RefCell<HistoryStore>>) {

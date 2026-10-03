@@ -145,6 +145,10 @@ Quiet, native-feeling **nodaysidle** browser on Linux: home page on every **+** 
 - WebKit `create` requests open related views as selected tabs in the existing tab strip.
 - `ready-to-show` shows the view, and `close` closes its tab.
 
+### External URI handling (X-5)
+- The GApplication `open` handler accepts HTTP, HTTPS, and file URIs and opens each in a tab. Unsupported schemes are ignored.
+- When the selected tab is still on its home page, the first external URI reuses that tab.
+
 ## Pending
 
 - **Git remote not configured — push deferred.** `master` has one local commit (`ae08c40`); nothing pushed. When the user says to, add `origin` and push, e.g. `git remote add origin <url> && git push -u origin master`.

@@ -8,6 +8,7 @@ GTK + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/noday
 - URL bar with search / URL rules aligned with the macOS app
 - **Persistent profile** (cookies in `webkit-data/cookies.sqlite` and site data) under `~/.local/share/nodaysidle-browser/`
 - **Local history** at `~/.local/share/nodaysidle-browser/history.json`
+- Open HTTP(S) URLs and local HTML files passed by other applications or the command line
 - Desktop entry for the Omarchy app launcher (Super+Space → Apps)
 
 ## Requirements (Arch / Omarchy)
