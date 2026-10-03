@@ -118,6 +118,15 @@ window {
   color: #e5a46a;
 }
 
+.url-bar progress {
+  background-color: transparent;
+  background-image: none;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  border-bottom: 2px solid #75aaff;
+}
+
 .url-bar:focus {
   border-color: #75aaff;
   box-shadow: 0 0 0 1px rgba(117, 170, 255, 0.55);

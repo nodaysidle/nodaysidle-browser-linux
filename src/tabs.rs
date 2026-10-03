@@ -185,7 +185,12 @@ impl TabManager {
             }
             let view = mgr.borrow().selected_webview();
             if let Some(view) = view {
-                view.reload();
+                // The button turns into Stop while the page loads (X-22).
+                if view.is_loading() {
+                    view.stop_loading();
+                } else {
+                    view.reload();
+                }
             }
         }));
 
@@ -466,6 +471,13 @@ impl TabManager {
             sync_page_status(&mgr_uri, tab_id, view);
         });
 
+        for property in ["estimated-load-progress", "is-loading"] {
+            let mgr_progress = mgr.clone();
+            webview.connect_notify_local(Some(property), move |view, _| {
+                sync_page_status(&mgr_progress, tab_id, view);
+            });
+        }
+
         let mgr_title = mgr.clone();
         webview.connect_notify_local(Some("title"), move |view, _| {
             let uri = view.uri().unwrap_or_default().to_string();
@@ -650,7 +662,7 @@ impl TabManager {
 
         end_element_fullscreen_unless(mgr, Some(id));
 
-        let (stack, url_entry, tab_scroll, tab_strip, reveal, sync) = {
+        let (stack, url_entry, reload_btn, tab_scroll, tab_strip, reveal, sync) = {
             let mut inner = mgr.borrow_mut();
             inner.selected = Some(id);
             inner.refresh_close_buttons();
@@ -683,6 +695,7 @@ impl TabManager {
             (
                 inner.stack.clone(),
                 inner.url_entry.clone(),
+                inner.reload_btn.clone(),
                 inner.tab_scroll.clone(),
                 inner.tab_strip.clone(),
                 inner.reveal.clone(),
@@ -699,13 +712,13 @@ impl TabManager {
                 page_stack.set_visible_child_name("home");
                 url_entry.set_text("");
                 title_label.set_text("New Tab");
-                apply_page_status(&url_entry, None);
+                apply_page_status(&url_entry, &reload_btn, None);
                 home_search.grab_focus();
             } else if let Some(view) = webview {
                 page_stack.set_visible_child_name("web");
                 let uri = view.uri().unwrap_or_default();
                 url_entry.set_text(&uri);
-                apply_page_status(&url_entry, Some(&view));
+                apply_page_status(&url_entry, &reload_btn, Some(&view));
                 view.grab_focus();
             }
         }
@@ -1080,20 +1093,34 @@ fn sync_view_chrome(
 /// Refreshes the address bar's connection indicator for `tab_id` if it is the
 /// selected tab.
 fn sync_page_status(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32, view: &WebView) {
-    let url_entry = {
+    let (url_entry, reload_btn) = {
         let Ok(inner) = mgr.try_borrow() else {
             return;
         };
         if inner.selected != Some(tab_id) {
             return;
         }
-        inner.url_entry.clone()
+        (inner.url_entry.clone(), inner.reload_btn.clone())
     };
-    apply_page_status(&url_entry, Some(view));
+    apply_page_status(&url_entry, &reload_btn, Some(view));
 }
 
-/// `view` is None for the built-in Home page.
-fn apply_page_status(url_entry: &gtk::Entry, view: Option<&WebView>) {
+/// Connection indicator, load progress and Reload/Stop for the selected
+/// page; `view` is None for the built-in Home page.
+fn apply_page_status(url_entry: &gtk::Entry, reload_btn: &Button, view: Option<&WebView>) {
+    let loading = view.is_some_and(|view| view.is_loading());
+    let progress = view.map_or(0.0, |view| view.estimated_load_progress());
+    url_entry.set_progress_fraction(progress_fraction(loading, progress));
+    let (icon, tooltip) = if loading {
+        ("process-stop-symbolic", "Stop")
+    } else {
+        ("view-refresh-symbolic", "Reload")
+    };
+    if let Some(image) = reload_btn.image().and_then(|image| image.downcast::<Image>().ok()) {
+        image.set_from_icon_name(Some(icon), gtk::IconSize::Button);
+    }
+    reload_btn.set_tooltip_text(Some(tooltip));
+
     let security = view.map_or(Security::None, |view| {
         let uri = view.uri().unwrap_or_default();
         let tls_errors = view.tls_info().map(|(_, errors)| !errors.is_empty());
@@ -1159,6 +1186,16 @@ fn security_state(uri: &str, tls_errors: Option<bool>) -> Security {
             }
         }
         _ => Security::None,
+    }
+}
+
+/// Progress shown in the address bar: nothing when idle, and always a sliver
+/// once loading has started so a slow first byte is still visible.
+fn progress_fraction(loading: bool, estimated: f64) -> f64 {
+    if loading {
+        estimated.clamp(0.05, 1.0)
+    } else {
+        0.0
     }
 }
 
@@ -1827,7 +1864,7 @@ mod tests {
         scroll_value_to_reveal, selection_after_close, shortcut_for, truncate, url_bar_sync_value,
         FindStatus, LastTab, Shortcut,
     };
-    use super::{security_state, Security};
+    use super::{progress_fraction, security_state, Security};
     use gdk::keys::constants as key;
     use gdk::ModifierType as M;
 
@@ -1926,6 +1963,14 @@ mod tests {
         assert_eq!(security_state("http://[::1]/", None), Security::None);
         assert_eq!(security_state("file:///etc/hostname", None), Security::None);
         assert_eq!(security_state("about:blank", None), Security::None);
+    }
+
+    #[test]
+    fn load_progress_is_visible_only_while_loading() {
+        assert_eq!(progress_fraction(false, 0.6), 0.0);
+        assert_eq!(progress_fraction(true, 0.0), 0.05);
+        assert_eq!(progress_fraction(true, 0.6), 0.6);
+        assert_eq!(progress_fraction(true, 1.0), 1.0);
     }
 
     #[test]
