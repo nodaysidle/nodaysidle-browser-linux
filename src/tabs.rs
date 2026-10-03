@@ -739,13 +739,14 @@ impl TabManager {
 
         stack.set_visible_child_name(&id.to_string());
         if let Some((pill, page_stack, webview, home_search, title_label)) = sync {
-            request_tab_reveal(&tab_scroll, &tab_strip, &reveal, pill);
+            request_tab_reveal(&tab_scroll, &tab_strip, &reveal, pill.clone());
             let on_home = page_stack.visible_child_name().as_deref() == Some("home")
                 || webview.is_none();
             if on_home {
                 page_stack.set_visible_child_name("home");
                 url_entry.set_text("");
                 title_label.set_text("New Tab");
+                pill.set_tooltip_text(Some("New Tab"));
                 apply_page_status(&url_entry, &reload_btn, None);
                 home_search.grab_focus();
             } else if let Some(view) = webview {
@@ -877,6 +878,64 @@ impl TabManager {
             return;
         }
         TabManager::open_tab(&self.inner, TabOpen::Url(uri.to_string()), true);
+    }
+
+    /// Main menu at the end of the toolbar (X-23).
+    pub fn wire_app_menu(&self) {
+        let menu_btn = gtk::MenuButton::new();
+        let img = Image::from_icon_name(Some("open-menu-symbolic"), gtk::IconSize::Button);
+        menu_btn.set_image(Some(&img));
+        menu_btn.set_tooltip_text(Some("Menu"));
+        menu_btn.style_context().add_class("ghost-btn");
+        menu_btn.set_relief(gtk::ReliefStyle::None);
+        menu_btn.set_focus_on_click(false);
+
+        let menu = gtk::Menu::new();
+        let items: [(&str, Option<(gdk::keys::Key, gdk::ModifierType)>, Option<Shortcut>); 4] = [
+            (
+                "New Tab",
+                Some((gdk::keys::constants::t, gdk::ModifierType::CONTROL_MASK)),
+                Some(Shortcut::NewTab),
+            ),
+            (
+                "Find in Page…",
+                Some((gdk::keys::constants::f, gdk::ModifierType::CONTROL_MASK)),
+                Some(Shortcut::Find),
+            ),
+            (
+                "Full Screen",
+                Some((gdk::keys::constants::F11, gdk::ModifierType::empty())),
+                Some(Shortcut::ToggleFullscreen),
+            ),
+            ("About nodaysidle", None, None),
+        ];
+        for (index, (label, accel, shortcut)) in items.into_iter().enumerate() {
+            if index == 3 {
+                menu.append(&gtk::SeparatorMenuItem::new());
+            }
+            let item = gtk::MenuItem::with_label(label);
+            if let (Some((key, mods)), Some(accel_label)) = (
+                accel,
+                item.child().and_then(|child| child.downcast::<gtk::AccelLabel>().ok()),
+            ) {
+                accel_label.set_accel(*key, mods);
+            }
+            let mgr = self.inner.clone();
+            item.connect_activate(move |_| match shortcut {
+                Some(shortcut) => run_shortcut(&mgr, shortcut),
+                None => {
+                    let window = { mgr.borrow().window.clone() };
+                    show_about_dialog(&window);
+                }
+            });
+            menu.append(&item);
+        }
+        menu.show_all();
+        menu_btn.set_popup(Some(&menu));
+
+        let toolbar = { self.inner.borrow().toolbar.clone() };
+        toolbar.pack_end(&menu_btn, false, false, 0);
+        menu_btn.show_all();
     }
 
     pub fn wire_history(&self, history: Rc<RefCell<HistoryStore>>) {
@@ -1096,7 +1155,7 @@ fn sync_view_chrome(
     title: &str,
     uri: &str,
 ) {
-    let (selected, url_entry, title_label, back_btn, forward_btn, reload_btn) = {
+    let (selected, url_entry, title_label, pill, back_btn, forward_btn, reload_btn) = {
         let inner = mgr.borrow();
         let Some(tab) = inner.tabs.iter().find(|tab| tab.id == tab_id) else {
             return;
@@ -1105,6 +1164,7 @@ fn sync_view_chrome(
             inner.selected == Some(tab_id),
             inner.url_entry.clone(),
             tab.title_label.clone(),
+            tab.pill.clone(),
             inner.back_btn.clone(),
             inner.forward_btn.clone(),
             inner.reload_btn.clone(),
@@ -1112,6 +1172,8 @@ fn sync_view_chrome(
     };
 
     title_label.set_text(&truncate(title));
+    // The pill shows a shortened title; the tooltip has all of it (X-23).
+    pill.set_tooltip_text(Some(&tab_tooltip(title, uri)));
     if !selected {
         return;
     }
@@ -1230,6 +1292,28 @@ fn progress_fraction(loading: bool, estimated: f64) -> f64 {
         estimated.clamp(0.05, 1.0)
     } else {
         0.0
+    }
+}
+
+fn show_about_dialog(parent: &gtk::ApplicationWindow) {
+    let dialog = gtk::AboutDialog::builder()
+        .transient_for(parent)
+        .modal(true)
+        .program_name("nodaysidle")
+        .version(env!("CARGO_PKG_VERSION"))
+        .comments("A quiet WebKitGTK browser for Linux.")
+        .logo_icon_name("nodaysidle-browser")
+        .license_type(gtk::License::MitX11)
+        .build();
+    dialog.connect_response(|dialog, _| dialog.close());
+    dialog.show();
+}
+
+fn tab_tooltip(title: &str, uri: &str) -> String {
+    if title == uri || uri.is_empty() {
+        title.to_string()
+    } else {
+        format!("{title}\n{uri}")
     }
 }
 
@@ -1898,7 +1982,7 @@ mod tests {
         scroll_value_to_reveal, selection_after_close, shortcut_for, truncate, url_bar_sync_value,
         FindStatus, LastTab, Shortcut,
     };
-    use super::{progress_fraction, security_state, Security};
+    use super::{progress_fraction, security_state, tab_tooltip, Security};
     use gdk::keys::constants as key;
     use gdk::ModifierType as M;
 
@@ -1997,6 +2081,16 @@ mod tests {
         assert_eq!(security_state("http://[::1]/", None), Security::None);
         assert_eq!(security_state("file:///etc/hostname", None), Security::None);
         assert_eq!(security_state("about:blank", None), Security::None);
+    }
+
+    #[test]
+    fn tab_tooltips_show_the_full_title_and_the_url() {
+        let title = "A very long page title that the tab pill has to shorten";
+        assert_eq!(
+            tab_tooltip(title, "https://example.com/a"),
+            format!("{title}\nhttps://example.com/a")
+        );
+        assert_eq!(tab_tooltip("example.com", "example.com"), "example.com");
     }
 
     #[test]

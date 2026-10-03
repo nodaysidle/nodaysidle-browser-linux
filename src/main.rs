@@ -133,6 +133,7 @@ fn build_ui(app: &Application) -> TabManager {
     let tab_manager = TabManager::new(&window, chrome, web_context, history.clone());
     tab_manager.wire_toolbar(&new_tab_btn);
     tab_manager.wire_keyboard(&window);
+    tab_manager.wire_app_menu();
     tab_manager.wire_history(history);
 
     tab_manager.open_initial_home();
