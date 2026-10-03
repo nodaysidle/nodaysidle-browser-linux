@@ -231,89 +231,21 @@ impl TabManager {
     }
 
     pub fn wire_keyboard(&self, window: &gtk::ApplicationWindow) {
-        let group = gtk::AccelGroup::new();
-        window.add_accel_group(&group);
-
+        // Shortcuts are handled in the window's own key-press-event, which runs
+        // before GTK's accelerators, focus-widget propagation and the WebView.
+        // GtkAccelGroup could not carry Ctrl+Tab at all (Tab and ISO_Left_Tab
+        // are not valid accelerator keys), and Shift+Tab arrives as
+        // ISO_Left_Tab (N-3, R-5).
         let mgr = self.inner.clone();
-        group.connect_accel_group(
-            *gdk::keys::constants::t,
-            gdk::ModifierType::CONTROL_MASK,
-            gtk::AccelFlags::VISIBLE,
-            move |_, _, _, _| {
-                TabManager::open_tab(&mgr, TabOpen::Home, true);
-                true
-            },
-        );
-
-        let mgr = self.inner.clone();
-        group.connect_accel_group(
-            *gdk::keys::constants::w,
-            gdk::ModifierType::CONTROL_MASK,
-            gtk::AccelFlags::VISIBLE,
-            move |_, _, _, _| {
-                let selected = { mgr.borrow().selected };
-                if let Some(tab_id) = selected {
-                    TabManager::close_tab(&mgr, tab_id);
+        window.connect_key_press_event(move |_, event| {
+            match shortcut_for(&event.keyval(), event.state()) {
+                Some(shortcut) => {
+                    run_shortcut(&mgr, shortcut);
+                    glib::Propagation::Stop
                 }
-                true
-            },
-        );
-
-        let url_entry = self.inner.borrow().url_entry.clone();
-        group.connect_accel_group(
-            *gdk::keys::constants::l,
-            gdk::ModifierType::CONTROL_MASK,
-            gtk::AccelFlags::VISIBLE,
-            move |_, _, _, _| {
-                url_entry.grab_focus();
-                url_entry.select_region(0, -1);
-                true
-            },
-        );
-
-        let mgr = self.inner.clone();
-        group.connect_accel_group(
-            *gdk::keys::constants::Tab,
-            gdk::ModifierType::CONTROL_MASK,
-            gtk::AccelFlags::VISIBLE,
-            move |_, _, _, _| {
-                cycle_selected_tab(&mgr, false);
-                true
-            },
-        );
-
-        let mgr = self.inner.clone();
-        group.connect_accel_group(
-            *gdk::keys::constants::Tab,
-            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
-            gtk::AccelFlags::VISIBLE,
-            move |_, _, _, _| {
-                cycle_selected_tab(&mgr, true);
-                true
-            },
-        );
-
-        let mgr = self.inner.clone();
-        group.connect_accel_group(
-            *gdk::keys::constants::f,
-            gdk::ModifierType::CONTROL_MASK,
-            gtk::AccelFlags::VISIBLE,
-            move |_, _, _, _| {
-                show_find_bar(&mgr);
-                true
-            },
-        );
-
-        let mgr = self.inner.clone();
-        group.connect_accel_group(
-            *gdk::keys::constants::F11,
-            gdk::ModifierType::empty(),
-            gtk::AccelFlags::VISIBLE,
-            move |_, _, _, _| {
-                toggle_user_fullscreen(&mgr);
-                true
-            },
-        );
+                None => glib::Propagation::Proceed,
+            }
+        });
 
         // The window manager can leave fullscreen on its own (e.g. a compositor
         // keybinding); keep the F11 state and the chrome in sync with it.
@@ -915,6 +847,132 @@ fn url_bar_sync_value(is_focused: bool, uri: &str) -> Option<&str> {
     (!is_focused).then_some(uri)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Shortcut {
+    NewTab,
+    CloseTab,
+    FocusLocation,
+    NextTab,
+    PreviousTab,
+    /// Ctrl+1..Ctrl+8 select a tab by position; Ctrl+9 selects the last tab.
+    SelectTab(usize),
+    LastTab,
+    Find,
+    ToggleFullscreen,
+    Reload,
+    Back,
+    Forward,
+}
+
+fn shortcut_for(keyval: &gdk::keys::Key, state: gdk::ModifierType) -> Option<Shortcut> {
+    use gdk::keys::constants as key;
+    use gdk::ModifierType as M;
+
+    let mods = state & (M::CONTROL_MASK | M::SHIFT_MASK | M::MOD1_MASK | M::SUPER_MASK);
+    let ctrl = mods == M::CONTROL_MASK;
+    let ctrl_shift = mods == M::CONTROL_MASK | M::SHIFT_MASK;
+    let alt = mods == M::MOD1_MASK;
+    let none = mods.is_empty();
+    let keyval = keyval.to_lower();
+
+    if (ctrl && (keyval == key::Tab || keyval == key::Page_Down || keyval == key::KP_Page_Down))
+        || (ctrl_shift && keyval == key::Page_Down)
+    {
+        return Some(Shortcut::NextTab);
+    }
+    if (ctrl_shift && (keyval == key::ISO_Left_Tab || keyval == key::Tab))
+        || (ctrl && (keyval == key::ISO_Left_Tab || keyval == key::Page_Up || keyval == key::KP_Page_Up))
+    {
+        return Some(Shortcut::PreviousTab);
+    }
+    if ctrl {
+        let digit = [
+            key::_1, key::_2, key::_3, key::_4, key::_5, key::_6, key::_7, key::_8,
+        ]
+        .iter()
+        .position(|candidate| *candidate == keyval);
+        if let Some(index) = digit {
+            return Some(Shortcut::SelectTab(index));
+        }
+        if keyval == key::_9 {
+            return Some(Shortcut::LastTab);
+        }
+    }
+    let shortcut = if ctrl && keyval == key::t {
+        Shortcut::NewTab
+    } else if ctrl && (keyval == key::w || keyval == key::F4) {
+        Shortcut::CloseTab
+    } else if (ctrl && keyval == key::l) || (alt && keyval == key::d) || (none && keyval == key::F6) {
+        Shortcut::FocusLocation
+    } else if ctrl && keyval == key::f {
+        Shortcut::Find
+    } else if none && keyval == key::F11 {
+        Shortcut::ToggleFullscreen
+    } else if (ctrl && keyval == key::r) || (none && keyval == key::F5) {
+        Shortcut::Reload
+    } else if alt && (keyval == key::Left || keyval == key::KP_Left) {
+        Shortcut::Back
+    } else if alt && (keyval == key::Right || keyval == key::KP_Right) {
+        Shortcut::Forward
+    } else {
+        return None;
+    };
+    Some(shortcut)
+}
+
+fn run_shortcut(mgr: &Rc<RefCell<TabManagerInner>>, shortcut: Shortcut) {
+    match shortcut {
+        Shortcut::NewTab => {
+            TabManager::open_tab(mgr, TabOpen::Home, true);
+        }
+        Shortcut::CloseTab => {
+            let selected = { mgr.borrow().selected };
+            if let Some(tab_id) = selected {
+                TabManager::close_tab(mgr, tab_id);
+            }
+        }
+        Shortcut::FocusLocation => {
+            let url_entry = { mgr.borrow().url_entry.clone() };
+            url_entry.grab_focus();
+            url_entry.select_region(0, -1);
+        }
+        Shortcut::NextTab => cycle_selected_tab(mgr, false),
+        Shortcut::PreviousTab => cycle_selected_tab(mgr, true),
+        Shortcut::SelectTab(index) => {
+            let tab_id = { mgr.borrow().tabs.get(index).map(|tab| tab.id) };
+            if let Some(tab_id) = tab_id {
+                TabManager::select_tab_id(mgr, tab_id);
+            }
+        }
+        Shortcut::LastTab => {
+            let tab_id = { mgr.borrow().tabs.last().map(|tab| tab.id) };
+            if let Some(tab_id) = tab_id {
+                TabManager::select_tab_id(mgr, tab_id);
+            }
+        }
+        Shortcut::Find => show_find_bar(mgr),
+        Shortcut::ToggleFullscreen => toggle_user_fullscreen(mgr),
+        Shortcut::Reload => {
+            let view = { mgr.borrow().selected_webview() };
+            if let Some(view) = view {
+                view.reload();
+            }
+        }
+        Shortcut::Back => {
+            let view = { mgr.borrow().selected_webview() };
+            if let Some(view) = view.filter(|view| view.can_go_back()) {
+                view.go_back();
+            }
+        }
+        Shortcut::Forward => {
+            let view = { mgr.borrow().selected_webview() };
+            if let Some(view) = view.filter(|view| view.can_go_forward()) {
+                view.go_forward();
+            }
+        }
+    }
+}
+
 fn cycle_selected_tab(mgr: &Rc<RefCell<TabManagerInner>>, reverse: bool) {
     let next = {
         let inner = mgr.borrow();
@@ -1371,8 +1429,52 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
 mod tests {
     use super::{
         find_status_text, next_tab_id, scroll_value_to_reveal, selection_after_close,
-        url_bar_sync_value, FindStatus,
+        shortcut_for, url_bar_sync_value, FindStatus, Shortcut,
     };
+    use gdk::keys::constants as key;
+    use gdk::ModifierType as M;
+
+    #[test]
+    fn tab_cycling_shortcuts_match_the_keyvals_gtk_reports() {
+        assert_eq!(shortcut_for(&key::Tab, M::CONTROL_MASK), Some(Shortcut::NextTab));
+        assert_eq!(
+            shortcut_for(&key::Page_Down, M::CONTROL_MASK),
+            Some(Shortcut::NextTab)
+        );
+        // GTK3 reports Shift+Tab as ISO_Left_Tab with Shift still in the state.
+        assert_eq!(
+            shortcut_for(&key::ISO_Left_Tab, M::CONTROL_MASK | M::SHIFT_MASK),
+            Some(Shortcut::PreviousTab)
+        );
+        assert_eq!(
+            shortcut_for(&key::Page_Up, M::CONTROL_MASK),
+            Some(Shortcut::PreviousTab)
+        );
+        // Plain Tab must keep moving keyboard focus.
+        assert_eq!(shortcut_for(&key::Tab, M::empty()), None);
+        assert_eq!(shortcut_for(&key::ISO_Left_Tab, M::SHIFT_MASK), None);
+    }
+
+    #[test]
+    fn shortcuts_ignore_lock_modifiers_and_letter_case() {
+        // Num Lock (MOD2) and Caps Lock must not break shortcuts.
+        let locks = M::MOD2_MASK | M::LOCK_MASK;
+        assert_eq!(shortcut_for(&key::w, M::CONTROL_MASK | locks), Some(Shortcut::CloseTab));
+        assert_eq!(shortcut_for(&key::T, M::CONTROL_MASK | locks), Some(Shortcut::NewTab));
+        assert_eq!(shortcut_for(&key::F11, locks), Some(Shortcut::ToggleFullscreen));
+        // Ctrl+Shift+T and plain letters are not ours.
+        assert_eq!(shortcut_for(&key::t, M::CONTROL_MASK | M::SHIFT_MASK), None);
+        assert_eq!(shortcut_for(&key::t, M::empty()), None);
+    }
+
+    #[test]
+    fn number_shortcuts_select_tabs_by_position() {
+        assert_eq!(shortcut_for(&key::_1, M::CONTROL_MASK), Some(Shortcut::SelectTab(0)));
+        assert_eq!(shortcut_for(&key::_8, M::CONTROL_MASK), Some(Shortcut::SelectTab(7)));
+        assert_eq!(shortcut_for(&key::_9, M::CONTROL_MASK), Some(Shortcut::LastTab));
+        assert_eq!(shortcut_for(&key::Left, M::MOD1_MASK), Some(Shortcut::Back));
+        assert_eq!(shortcut_for(&key::l, M::CONTROL_MASK), Some(Shortcut::FocusLocation));
+    }
 
     #[test]
     fn find_status_reports_match_counts_and_misses() {
