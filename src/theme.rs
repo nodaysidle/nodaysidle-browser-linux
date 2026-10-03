@@ -120,11 +120,13 @@ window {
 
 .url-bar progress {
   background-color: transparent;
-  background-image: none;
+  background-image: linear-gradient(to top, #75aaff 2px, transparent 2px);
   border: none;
   border-radius: 0;
   box-shadow: none;
-  border-bottom: 2px solid #75aaff;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
 }
 
 .url-bar:focus {
@@ -146,6 +148,11 @@ window {
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 999px;
   padding: 4px 16px;
+}
+
+.home-search-pill.focused {
+  border-color: #75aaff;
+  box-shadow: 0 0 0 1px rgba(117, 170, 255, 0.55);
 }
 
 .find-bar {
@@ -173,9 +180,11 @@ window {
   font-size: 12px;
 }
 
-.home-search-entry {
+.home-search-entry,
+.home-search-entry:focus {
   background: transparent;
   border: none;
+  box-shadow: none;
   color: #e8e8ec;
   font-size: 14px;
 }

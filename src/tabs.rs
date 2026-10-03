@@ -1888,6 +1888,8 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     let url_entry = gtk::Entry::new();
     url_entry.set_hexpand(true);
     url_entry.set_placeholder_text(Some("Search or type a URL…"));
+    // Keep the window's minimum width small (X-24).
+    url_entry.set_width_chars(8);
     url_entry.style_context().add_class("url-bar");
     toolbar.pack_start(&url_entry, true, true, 0);
 
