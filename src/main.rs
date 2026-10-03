@@ -135,6 +135,7 @@ fn build_ui(app: &Application) -> TabManager {
         .default_height(800)
         .build();
 
+    window.style_context().add_class("browser-window");
     let root = GtkBox::new(Orientation::Vertical, 0);
     window.add(&root);
 

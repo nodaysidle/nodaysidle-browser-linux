@@ -1098,6 +1098,7 @@ fn open_popup_window(mgr: &Rc<RefCell<TabManagerInner>>, view: &WebView, width: 
     }
     window.set_default_size(width.clamp(200, 4_096), height.clamp(150, 4_096));
     window.set_title("Pop-up");
+    window.style_context().add_class("browser-window");
 
     let root = GtkBox::new(Orientation::Vertical, 0);
     let address = gtk::Entry::new();

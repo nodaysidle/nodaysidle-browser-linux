@@ -2,7 +2,9 @@ use gtk::prelude::*;
 use gtk::{CssProvider, StyleContext};
 
 const STYLESHEET: &str = r#"
-window {
+/* Only the browser's own windows are dark; dialogs (permissions, downloads,
+   About, file chooser) keep the GTK theme's colours (R-9, I-3). */
+window.browser-window {
   background-color: #151518;
 }
 
