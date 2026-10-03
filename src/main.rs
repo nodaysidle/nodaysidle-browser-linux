@@ -26,6 +26,13 @@ fn main() -> glib::ExitCode {
         .build();
     let tab_manager = Rc::new(RefCell::new(None::<TabManager>));
     app.connect_startup(|_| theme::install());
+    let manager_for_shutdown = tab_manager.clone();
+    app.connect_shutdown(move |_| {
+        let manager = { manager_for_shutdown.borrow().clone() };
+        if let Some(manager) = manager {
+            manager.flush_history();
+        }
+    });
     let manager_for_activate = tab_manager.clone();
     app.connect_activate(move |app| {
         // A second launch activates the primary instance: bring its window

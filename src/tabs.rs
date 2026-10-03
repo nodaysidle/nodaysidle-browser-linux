@@ -441,7 +441,15 @@ impl TabManager {
                 return;
             }
             let title = title_for_page(view.title().as_deref(), &uri);
-            history.borrow_mut().record(uri.to_string(), title.clone());
+            let schedule_save = history.borrow_mut().record(uri.to_string(), title.clone());
+            if schedule_save {
+                // Batch history writes instead of rewriting the file on every
+                // load (X-17); the app also flushes on shutdown.
+                let history = history.clone();
+                glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
+                    history.borrow_mut().flush();
+                });
+            }
             sync_view_chrome(&mgr_load, tab_id, view, &title, &uri);
         }));
 
@@ -788,6 +796,12 @@ impl TabManager {
     /// Raises the browser window (second launch, external open). GTK uses the
     /// startup-notification / activation token GApplication received from the
     /// launcher, so compositors with focus-stealing prevention accept it.
+    /// Writes pending history to disk (called on application shutdown).
+    pub fn flush_history(&self) {
+        let history = { self.inner.borrow().history.clone() };
+        history.borrow_mut().flush();
+    }
+
     pub fn present(&self) {
         let window = { self.inner.borrow().window.clone() };
         window.present();
