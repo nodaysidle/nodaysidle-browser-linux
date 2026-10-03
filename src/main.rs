@@ -47,13 +47,17 @@ fn get_or_build_ui(
     app: &Application,
     manager_slot: &Rc<RefCell<Option<TabManager>>>,
 ) -> TabManager {
-    let existing = { manager_slot.borrow().clone() };
-    if let Some(manager) = existing {
-        return manager;
+    get_or_insert_manager(manager_slot, || build_ui(app))
+}
+
+fn get_or_insert_manager<T: Clone>(slot: &RefCell<Option<T>>, build: impl FnOnce() -> T) -> T {
+    let existing = { slot.borrow().clone() };
+    if let Some(value) = existing {
+        return value;
     }
-    let manager = build_ui(app);
-    *manager_slot.borrow_mut() = Some(manager.clone());
-    manager
+    let value = build();
+    *slot.borrow_mut() = Some(value.clone());
+    value
 }
 
 fn build_ui(app: &Application) -> TabManager {
@@ -92,6 +96,26 @@ fn external_uri_to_open(uri: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::external_uri_to_open;
+    use super::get_or_insert_manager;
+    use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn repeated_application_activation_reuses_the_existing_manager() {
+        let slot = RefCell::new(None);
+        let builds = Cell::new(0);
+        let first = get_or_insert_manager(&slot, || {
+            builds.set(builds.get() + 1);
+            7
+        });
+        let second = get_or_insert_manager(&slot, || {
+            builds.set(builds.get() + 1);
+            9
+        });
+
+        assert_eq!(first, 7);
+        assert_eq!(second, 7);
+        assert_eq!(builds.get(), 1);
+    }
 
     #[test]
     fn external_http_https_and_html_file_uris_are_accepted() {

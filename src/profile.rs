@@ -18,6 +18,7 @@ pub fn persistent_web_context(data_root: &Path) -> WebContext {
         .build();
 
     let web_context = WebContext::with_website_data_manager(&manager);
+    web_context.set_sandbox_enabled(true);
     let cookie_path = data_dir.join("cookies.sqlite");
     if let Err(err) = ensure_private_cookie_file(&cookie_path) {
         eprintln!("Could not prepare persistent cookie storage: {err}");
