@@ -136,12 +136,11 @@ Quiet, native-feeling **nodaysidle** browser on Linux: home page on every **+** 
   5. Silenced dead code warnings for `tab_scroll` and `TabOpen::Url`.
 - **Status**: Verified build (`cargo check` and `cargo build --release` with 0 warnings) and re-installed binary via `./scripts/install-desktop.sh`.
 
-### Hardening: no panic reachable from a GTK signal handler
-- The earlier "instant crash on first tab" (a `RefCell` reborrow inside the `Notebook`/`switch_page` callback) is already gone: the current tree has no `Notebook`, `switch_page`, or `add_tab`; tabs live on a `Stack` with restored borrow structure.
-- Removed the last latent instance of the same class: `TabManager::close_tab` used `.expect("tab missing")` inside the close-button callback. A panic there unwinds across the GTK FFI trampoline and aborts the whole process (`panic_cannot_unwind`). Now handled with `let Some(idx) = inner.tabs.iter().position(...) else { return; };`.
-- Verified: `cargo build --release` clean; launched via `systemd-run --user --scope --slice=app-graphical.slice` (uwsm-style) — window maps, process stays up, no abort.
+### GTK callback borrow safety
+- A panic in a GTK callback can cross an FFI boundary and abort the process; the earlier blanket claim that no panic was reachable from a signal handler was incorrect.
+- Closing a background tab now copies the selected tab ID out of the `RefCell` borrow before calling `select_tab_id`. Closing a missing tab returns without panicking.
+- Continue to keep `RefCell` borrows out of calls that can re-enter `TabManager` or emit GTK signals, and avoid panics in GTK callbacks.
 
 ## Pending
 
 - **Git remote not configured — push deferred.** `master` has one local commit (`ae08c40`); nothing pushed. When the user says to, add `origin` and push, e.g. `git remote add origin <url> && git push -u origin master`.
-

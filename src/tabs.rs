@@ -415,10 +415,11 @@ impl TabManager {
             inner.stack.remove(&tab.page_stack);
             inner.tab_strip.remove(&tab.pill);
             let was_selected = inner.selected == Some(id);
+            let remaining_ids = inner.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>();
+            let selected_after = selection_after_close(&remaining_ids, inner.selected, id, idx);
             let select_after = if was_selected {
-                let new_idx = idx.min(inner.tabs.len() - 1);
                 inner.selected = None;
-                Some(inner.tabs[new_idx].id)
+                selected_after
             } else {
                 None
             };
@@ -431,7 +432,8 @@ impl TabManager {
             // Refresh close buttons visibility
             let mgr2 = mgr.clone();
             glib::idle_add_local(move || {
-                if let Some(id) = mgr2.borrow().selected {
+                let selected = { mgr2.borrow().selected };
+                if let Some(id) = selected {
                     TabManager::select_tab_id(&mgr2, id);
                 }
                 glib::ControlFlow::Break
@@ -539,6 +541,21 @@ impl TabManagerInner {
         self.back_btn.set_sensitive(can_back);
         self.forward_btn.set_sensitive(can_fwd);
         self.reload_btn.set_sensitive(true);
+    }
+}
+
+fn selection_after_close(
+    remaining_ids: &[u32],
+    selected: Option<u32>,
+    closed_id: u32,
+    closed_index: usize,
+) -> Option<u32> {
+    if selected == Some(closed_id) {
+        remaining_ids
+            .get(closed_index.min(remaining_ids.len().saturating_sub(1)))
+            .copied()
+    } else {
+        selected.filter(|id| remaining_ids.contains(id))
     }
 }
 
@@ -652,4 +669,20 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
     btn.style_context().add_class("ghost-btn");
     btn.set_relief(gtk::ReliefStyle::None);
     btn
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selection_after_close;
+
+    #[test]
+    fn closing_a_background_tab_keeps_the_selected_tab() {
+        assert_eq!(selection_after_close(&[1, 3], Some(3), 2, 1), Some(3));
+    }
+
+    #[test]
+    fn closing_the_selected_tab_selects_the_next_available_tab() {
+        assert_eq!(selection_after_close(&[1, 3], Some(2), 2, 1), Some(3));
+        assert_eq!(selection_after_close(&[1, 2], Some(3), 3, 2), Some(2));
+    }
 }
