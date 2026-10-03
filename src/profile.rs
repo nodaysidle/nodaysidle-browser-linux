@@ -53,9 +53,27 @@ pub fn app_data_dir() -> PathBuf {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::ensure_private_cookie_file;
+    use super::{ensure_private_cookie_file, persistent_web_context};
     use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use webkit2gtk::WebContextExt;
+
+    #[test]
+    fn shared_web_context_enables_the_web_process_sandbox() {
+        // WebKit creates GTK widgets while building a WebContext; without an
+        // initialised display, GTK dereferences NULL settings and segfaults.
+        if gtk::init().is_err() {
+            eprintln!("skipping: no display available for GTK");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "nodaysidle-browser-sandbox-test-{}",
+            std::process::id()
+        ));
+        let web_context = persistent_web_context(&dir);
+        assert!(web_context.is_sandbox_enabled());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn cookie_file_permissions_are_restricted_to_the_current_user() {
