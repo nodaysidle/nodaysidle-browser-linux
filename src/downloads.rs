@@ -9,11 +9,7 @@ pub fn wire(web_context: &WebContext) {
     web_context.connect_download_started(|_, download| {
         download.connect_decide_destination(|download, suggested_filename| {
             let filename = safe_suggested_filename(suggested_filename);
-            let Some(parent) = download
-                .web_view()
-                .and_then(|view| view.toplevel())
-                .and_then(|widget| widget.downcast::<gtk::Window>().ok())
-            else {
+            let Some(parent) = browser_window_for(download) else {
                 download.cancel();
                 return true;
             };
@@ -30,6 +26,28 @@ pub fn wire(web_context: &WebContext) {
             true
         });
     });
+}
+
+/// The main browser window to parent download dialogs to. A download can
+/// start in a pop-up window (X-3) that closes itself right after, often via
+/// window.close(); a progress dialog parented to it with DESTROY_WITH_PARENT
+/// would be destroyed and cancel the download without asking (V-2). Pop-ups
+/// are transient for the browser window, so follow that chain to the top;
+/// fall back to the application's windows if the view is already gone.
+fn browser_window_for(download: &Download) -> Option<gtk::Window> {
+    let from_view = download
+        .web_view()
+        .and_then(|view| view.toplevel())
+        .and_then(|widget| widget.downcast::<gtk::Window>().ok())
+        .filter(|window| window.is_toplevel());
+    if let Some(mut window) = from_view {
+        while let Some(parent) = window.transient_for() {
+            window = parent;
+        }
+        return Some(window);
+    }
+    let app = gio::Application::default()?.downcast::<gtk::Application>().ok()?;
+    app.active_window().or_else(|| app.windows().into_iter().next())
 }
 
 fn choose_destination(parent: &gtk::Window, filename: &str) -> Option<PathBuf> {
@@ -134,8 +152,9 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
         }
     });
 
-    // The dialog is also destroyed with its parent when the browser quits; an
-    // unfinished download cannot continue without the app, so stop it once.
+    // The dialog is also destroyed with its parent, the main browser window,
+    // when the browser quits; an unfinished download cannot continue without
+    // the app, so stop it once.
     let state_on_destroy = state.clone();
     let download_on_destroy = download.clone();
     dialog.connect_destroy(move |_| request_cancel(&download_on_destroy, &state_on_destroy));
