@@ -1222,7 +1222,7 @@ fn show_home_surface(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32) {
     title_label.set_text("New Tab");
     pill.set_tooltip_text(Some("New Tab"));
     if selected {
-        if !url_entry.has_focus() {
+        if !url_entry.is_focus() {
             url_entry.set_text("");
         }
         apply_page_status(&url_entry, &reload_btn, None);
@@ -1290,7 +1290,7 @@ fn sync_view_chrome(
         return;
     }
 
-    if let Some(uri) = url_bar_sync_value(url_entry.has_focus(), uri) {
+    if let Some(uri) = url_bar_sync_value(url_entry.is_focus(), uri) {
         url_entry.set_text(uri);
     }
     back_btn.set_sensitive(view.can_go_back());
