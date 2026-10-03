@@ -27,7 +27,9 @@ fn main() -> glib::ExitCode {
     app.connect_startup(|_| theme::install());
     let manager_for_activate = tab_manager.clone();
     app.connect_activate(move |app| {
-        get_or_build_ui(app, &manager_for_activate);
+        // A second launch activates the primary instance: bring its window
+        // to the front instead of doing nothing visible (R-4).
+        get_or_build_ui(app, &manager_for_activate).present();
     });
     app.connect_open(move |app, files, _hint| {
         let uris = files
@@ -35,12 +37,10 @@ fn main() -> glib::ExitCode {
             .filter_map(|file| external_uri_to_open(file.uri().as_str()))
             .collect::<Vec<_>>();
         let manager = get_or_build_ui(app, &tab_manager);
-        if uris.is_empty() {
-            return;
-        }
         for uri in uris {
             manager.open_external_uri(&uri);
         }
+        manager.present();
     });
     app.run()
 }

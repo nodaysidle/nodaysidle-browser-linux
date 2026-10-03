@@ -700,6 +700,14 @@ impl TabManager {
         }
     }
 
+    /// Raises the browser window (second launch, external open). GTK uses the
+    /// startup-notification / activation token GApplication received from the
+    /// launcher, so compositors with focus-stealing prevention accept it.
+    pub fn present(&self) {
+        let window = { self.inner.borrow().window.clone() };
+        window.present();
+    }
+
     pub fn navigate_from_bar_public(&self, raw: &str) {
         TabManager::navigate_selected(&self.inner, raw);
     }
