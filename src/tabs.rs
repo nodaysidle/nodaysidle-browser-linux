@@ -93,6 +93,9 @@ struct TabManagerInner {
     fullscreen_owner: Option<u32>,
     /// Window fullscreen requested by the user with F11.
     user_fullscreen: bool,
+    /// Pill waiting to be scrolled into view. Kept outside the RefCell'd state
+    /// so size-allocate and adjustment handlers never borrow the manager.
+    reveal: Rc<RefCell<Option<GtkBox>>>,
 }
 
 impl TabManager {
@@ -125,7 +128,9 @@ impl TabManager {
             window: window.clone(),
             fullscreen_owner: None,
             user_fullscreen: false,
+            reveal: Rc::new(RefCell::new(None)),
         };
+        wire_tab_reveal(&inner.tab_scroll, &inner.tab_strip, &inner.reveal);
         Self {
             inner: Rc::new(RefCell::new(inner)),
         }
@@ -304,13 +309,18 @@ impl TabManager {
         close_btn.set_image(Some(&close_icon));
         close_btn.style_context().add_class("tab-close");
         close_btn.set_relief(gtk::ReliefStyle::None);
+        // Ctrl+W closes the focused tab; the close button stays out of the Tab
+        // order and never keeps focus after a click.
         close_btn.set_can_focus(false);
+        close_btn.set_focus_on_click(false);
 
         let title_hit = EventBox::new();
         title_hit.add(&title_label);
         title_hit.add_events(gdk::EventMask::BUTTON_PRESS_MASK);
         title_hit.set_can_focus(true);
-        title_hit.set_focus_on_click(true);
+        // Selecting a tab with the mouse moves focus into its page, so a click
+        // must not leave the keyboard focus tint on the pill (R-6).
+        title_hit.set_focus_on_click(false);
         title_hit.style_context().add_class("tab-focusable");
 
         let pill = GtkBox::new(Orientation::Horizontal, 0);
@@ -583,7 +593,7 @@ impl TabManager {
 
         end_element_fullscreen_unless(mgr, Some(id));
 
-        let (stack, url_entry, tab_scroll, tab_strip, sync) = {
+        let (stack, url_entry, tab_scroll, tab_strip, reveal, sync) = {
             let mut inner = mgr.borrow_mut();
             inner.selected = Some(id);
             let show_close = inner.tabs.len() > 1;
@@ -619,13 +629,14 @@ impl TabManager {
                 inner.url_entry.clone(),
                 inner.tab_scroll.clone(),
                 inner.tab_strip.clone(),
+                inner.reveal.clone(),
                 sync,
             )
         };
 
         stack.set_visible_child_name(&id.to_string());
         if let Some((pill, page_stack, webview, home_search, title_label)) = sync {
-            schedule_scroll_tab_into_view(tab_scroll, tab_strip, pill);
+            request_tab_reveal(&tab_scroll, &tab_strip, &reveal, pill);
             let on_home = page_stack.visible_child_name().as_deref() == Some("home")
                 || webview.is_none();
             if on_home {
@@ -716,6 +727,7 @@ impl TabManager {
         history_btn.set_tooltip_text(Some("History"));
         history_btn.style_context().add_class("ghost-btn");
         history_btn.set_relief(gtk::ReliefStyle::None);
+        history_btn.set_focus_on_click(false);
 
         if let Some(toolbar) = self
             .inner
@@ -1236,23 +1248,89 @@ fn selection_after_close(
     }
 }
 
-fn schedule_scroll_tab_into_view(tab_scroll: ScrolledWindow, tab_strip: GtkBox, pill: GtkBox) {
-    glib::idle_add_local(move || {
-        if let Some((left, _)) = pill.translate_coordinates(&tab_strip, 0, 0) {
-            let width = pill.allocated_width();
-            if width > 0 {
-                let adjustment = tab_scroll.hadjustment();
-                let value = scroll_value_to_reveal(
-                    adjustment.value(),
-                    adjustment.page_size(),
-                    left,
-                    width,
-                );
-                adjustment.set_value(value);
-            }
+/// Scrolls the selected pill into view once GTK has really laid it out (R-3).
+/// A new pill still has GTK's placeholder allocation (x = -1, width = 1) right
+/// after it is packed, and the scrolled window's adjustment learns the new
+/// strip width only in a later size-allocate, so a one-shot idle could scroll
+/// to the start. The request stays pending and is retried on every strip
+/// allocation and adjustment change until the pill is actually visible.
+fn request_tab_reveal(
+    tab_scroll: &ScrolledWindow,
+    tab_strip: &GtkBox,
+    reveal: &Rc<RefCell<Option<GtkBox>>>,
+    pill: GtkBox,
+) {
+    *reveal.borrow_mut() = Some(pill);
+    if !try_reveal_tab(tab_scroll, tab_strip, reveal) {
+        tab_strip.queue_resize();
+    }
+}
+
+fn wire_tab_reveal(
+    tab_scroll: &ScrolledWindow,
+    tab_strip: &GtkBox,
+    reveal: &Rc<RefCell<Option<GtkBox>>>,
+) {
+    let scroll = tab_scroll.downgrade();
+    let reveal_on_allocate = reveal.clone();
+    tab_strip.connect_size_allocate(move |strip, _| {
+        if let Some(scroll) = scroll.upgrade() {
+            try_reveal_tab(&scroll, strip, &reveal_on_allocate);
         }
-        glib::ControlFlow::Break
     });
+
+    let scroll = tab_scroll.downgrade();
+    let strip = tab_strip.downgrade();
+    let reveal_on_change = reveal.clone();
+    tab_scroll.hadjustment().connect_changed(move |_| {
+        if let (Some(scroll), Some(strip)) = (scroll.upgrade(), strip.upgrade()) {
+            try_reveal_tab(&scroll, &strip, &reveal_on_change);
+        }
+    });
+}
+
+/// Returns true once the pending pill (if any) is fully visible.
+fn try_reveal_tab(
+    tab_scroll: &ScrolledWindow,
+    tab_strip: &GtkBox,
+    reveal: &Rc<RefCell<Option<GtkBox>>>,
+) -> bool {
+    let Some(pill) = reveal.borrow().clone() else {
+        return true;
+    };
+    if pill.parent().as_ref() != Some(tab_strip.upcast_ref::<gtk::Widget>()) {
+        // The tab was closed before it could be revealed.
+        reveal.borrow_mut().take();
+        return true;
+    }
+    let allocation = pill.allocation();
+    let Some((left, _)) = pill.translate_coordinates(tab_strip, 0, 0) else {
+        return false;
+    };
+    if !pill.is_mapped() || allocation.width() <= 1 || left < 0 {
+        return false;
+    }
+    let adjustment = tab_scroll.hadjustment();
+    let page_size = adjustment.page_size();
+    if page_size <= 0.0 {
+        return false;
+    }
+    let width = allocation.width();
+    let wanted = scroll_value_to_reveal(adjustment.value(), page_size, left, width);
+    if (adjustment.value() - wanted).abs() > f64::EPSILON {
+        adjustment.set_value(wanted);
+    }
+    let visible = pill_is_visible(adjustment.value(), page_size, left, width);
+    if visible {
+        reveal.borrow_mut().take();
+    }
+    visible
+}
+
+fn pill_is_visible(value: f64, page_size: f64, left: i32, width: i32) -> bool {
+    let left = left as f64;
+    let right = left + width as f64;
+    left >= value - 0.5 && right <= value + page_size + 0.5
 }
 
 fn scroll_value_to_reveal(current: f64, page_size: f64, left: i32, width: i32) -> f64 {
@@ -1307,6 +1385,8 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     tab_scroll.set_can_focus(false);
 
     let tab_strip = GtkBox::new(Orientation::Horizontal, 4);
+    // Keyboard focus moving onto a clipped pill scrolls it into view (R-6).
+    tab_strip.set_focus_hadjustment(&tab_scroll.hadjustment());
     tab_scroll.add(&tab_strip);
     tab_bar.pack_start(&tab_scroll, true, true, 0);
 
@@ -1316,6 +1396,7 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     new_tab_btn.set_tooltip_text(Some("New Tab"));
     new_tab_btn.style_context().add_class("tab-new-btn");
     new_tab_btn.set_relief(gtk::ReliefStyle::None);
+    new_tab_btn.set_focus_on_click(false);
     tab_bar.pack_start(&new_tab_btn, false, false, 0);
 
     root.pack_start(&tab_bar, false, false, 0);
@@ -1422,13 +1503,18 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
     btn.set_tooltip_text(Some(tooltip));
     btn.style_context().add_class("ghost-btn");
     btn.set_relief(gtk::ReliefStyle::None);
+    // Buttons take focus on click in GTK3, which left the :focus tint stuck on
+    // Back/Forward/Reload after a mouse click (R-6). Keyboard users still
+    // reach them with Tab.
+    btn.set_focus_on_click(false);
     btn
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        find_status_text, next_tab_id, scroll_value_to_reveal, selection_after_close,
+        find_status_text, next_tab_id, pill_is_visible, scroll_value_to_reveal,
+        selection_after_close,
         shortcut_for, url_bar_sync_value, FindStatus, Shortcut,
     };
     use gdk::keys::constants as key;
@@ -1489,6 +1575,15 @@ mod tests {
     fn scroll_value_reveals_pills_outside_the_current_viewport() {
         assert_eq!(scroll_value_to_reveal(30.0, 100.0, 15, 40), 15.0);
         assert_eq!(scroll_value_to_reveal(30.0, 100.0, 120, 40), 60.0);
+    }
+
+    #[test]
+    fn a_reveal_is_complete_only_when_the_whole_pill_is_inside_the_page() {
+        assert!(pill_is_visible(0.0, 100.0, 10, 40));
+        assert!(!pill_is_visible(0.0, 100.0, 90, 40));
+        // Adjustment upper not yet grown: set_value was clamped short.
+        let clamped_value = 60.0;
+        assert!(!pill_is_visible(clamped_value, 100.0, 180, 40));
     }
 
     #[test]

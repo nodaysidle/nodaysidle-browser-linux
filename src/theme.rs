@@ -47,6 +47,7 @@ window {
 
 .tab-focusable:focus {
   background-color: rgba(116, 170, 255, 0.28);
+  box-shadow: inset 0 0 0 1px #75aaff;
   border-radius: 6px;
 }
 
@@ -61,10 +62,10 @@ window {
   color: #e8e8ec;
 }
 
-.tab-close:focus,
 .tab-new-btn:focus,
 .ghost-btn:focus {
   background-color: rgba(116, 170, 255, 0.28);
+  box-shadow: inset 0 0 0 1px #75aaff;
   color: #ffffff;
 }
 
