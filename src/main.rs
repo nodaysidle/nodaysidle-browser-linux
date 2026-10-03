@@ -125,7 +125,11 @@ fn get_or_insert_manager<T: Clone>(slot: &RefCell<Option<T>>, build: impl FnOnce
 }
 
 fn build_ui(app: &Application) -> TabManager {
-    let data_dir = app_data_dir();
+    let Some(data_dir) = app_data_dir() else {
+        // Never fall back to a directory another user could control (V-4).
+        eprintln!("nodaysidle-browser: no private profile directory available; not starting");
+        std::process::exit(1);
+    };
     let web_context = persistent_web_context(&data_dir);
     downloads::wire(&web_context);
     let history = Rc::new(RefCell::new(HistoryStore::load(data_dir.join("history.json"))));

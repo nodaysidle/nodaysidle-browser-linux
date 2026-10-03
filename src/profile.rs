@@ -65,9 +65,10 @@ pub fn ensure_private_dir(path: &Path) -> std::io::Result<()> {
 
 /// Absolute profile directory. Falls back to ~/.local/share and then to the
 /// temporary directory instead of a path relative to the working directory.
-pub fn app_data_dir() -> PathBuf {
+/// `None` if not even a private temporary directory could be had.
+pub fn app_data_dir() -> Option<PathBuf> {
     match xdg_data_dir(dirs::data_local_dir(), dirs::home_dir()) {
-        Some(dir) => dir,
+        Some(dir) => Some(dir),
         None => {
             let user = std::env::var("USER").unwrap_or_else(|_| "user".into());
             temp_data_dir(&std::env::temp_dir(), &user, current_uid())
@@ -97,20 +98,27 @@ fn current_uid() -> Option<u32> {
 /// XDG data dir or HOME. The predictable `nodaysidle-browser-$USER` name is
 /// used only if it is a real directory owned by us and private after chmod;
 /// otherwise another local user could have planted it (V-4), so a fresh
-/// private directory is created instead (not persistent across launches).
-fn temp_data_dir(temp: &Path, user: &str, uid: Option<u32>) -> PathBuf {
+/// private directory with an unpredictable name is created instead (not
+/// persistent across launches). `None` if neither works: the refused
+/// directory is never used as a last resort.
+fn temp_data_dir(temp: &Path, user: &str, uid: Option<u32>) -> Option<PathBuf> {
+    use std::hash::BuildHasher;
+
     let preferred = temp.join(format!("nodaysidle-browser-{user}"));
     let refusal = match uid {
         Some(uid) => match claim_private_dir(&preferred, uid) {
-            Ok(()) => return preferred,
+            Ok(()) => return Some(preferred),
             Err(err) => err.to_string(),
         },
         None => "cannot determine the current user id".to_string(),
     };
-    for attempt in 0..100u32 {
+    // RandomState is seeded from the OS random source, so other users cannot
+    // guess (and pre-create) these names.
+    let random = std::collections::hash_map::RandomState::new();
+    for attempt in 0..16u32 {
         let fresh = temp.join(format!(
-            "nodaysidle-browser-{user}-{}-{attempt}",
-            std::process::id()
+            "nodaysidle-browser-{user}-{:016x}",
+            random.hash_one((std::process::id(), attempt))
         ));
         if create_new_private_dir(&fresh).is_ok() {
             eprintln!(
@@ -118,11 +126,15 @@ fn temp_data_dir(temp: &Path, user: &str, uid: Option<u32>) -> PathBuf {
                 preferred.display(),
                 fresh.display()
             );
-            return fresh;
+            return Some(fresh);
         }
     }
-    eprintln!("Could not create a private profile directory in {}", temp.display());
-    preferred
+    eprintln!(
+        "Not using profile directory {} ({refusal}) and could not create a private one in {}",
+        preferred.display(),
+        temp.display()
+    );
+    None
 }
 
 /// Creates `path` as a 0700 directory, failing if anything already exists.
@@ -196,13 +208,13 @@ mod tests {
     fn the_temp_fallback_uses_its_own_private_directory() {
         let temp = scratch("tempfb");
         let uid = super::current_uid().expect("/proc/self is readable");
-        let dir = temp_data_dir(&temp, "me", Some(uid));
+        let dir = temp_data_dir(&temp, "me", Some(uid)).unwrap();
         assert_eq!(dir, temp.join("nodaysidle-browser-me"));
         assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
 
         // An existing directory of ours that is too open is tightened and kept.
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        assert_eq!(temp_data_dir(&temp, "me", Some(uid)), dir);
+        assert_eq!(temp_data_dir(&temp, "me", Some(uid)), Some(dir.clone()));
         assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
         std::fs::remove_dir_all(&temp).unwrap();
     }
@@ -216,7 +228,7 @@ mod tests {
 
         // Owned by someone else (simulated by claiming to be another uid).
         assert!(claim_private_dir(&preferred, uid + 1).is_err());
-        let other = temp_data_dir(&temp, "me", Some(uid + 1));
+        let other = temp_data_dir(&temp, "me", Some(uid + 1)).unwrap();
         assert_ne!(other, preferred);
         assert!(other.starts_with(&temp));
         assert_eq!(std::fs::metadata(&other).unwrap().permissions().mode() & 0o777, 0o700);
@@ -227,11 +239,19 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         std::os::unix::fs::symlink(&target, &preferred).unwrap();
         assert!(claim_private_dir(&preferred, uid).is_err());
-        assert_ne!(temp_data_dir(&temp, "me", Some(uid)), preferred);
+        assert_ne!(temp_data_dir(&temp, "me", Some(uid)).unwrap(), preferred);
 
         // Without a known uid nothing predictable is trusted.
         std::fs::remove_file(&preferred).unwrap();
-        assert_ne!(temp_data_dir(&temp, "me", None), preferred);
+        assert_ne!(temp_data_dir(&temp, "me", None).unwrap(), preferred);
+
+        // If no fresh directory can be created either, the refused one is
+        // still not used: there is no profile directory at all.
+        std::fs::create_dir(&preferred).unwrap();
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let none = temp_data_dir(&temp, "me", Some(uid + 1));
+        std::fs::set_permissions(&temp, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(none, None);
         std::fs::remove_dir_all(&temp).unwrap();
     }
 
