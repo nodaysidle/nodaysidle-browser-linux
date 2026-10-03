@@ -516,6 +516,7 @@ impl TabManager {
             let mut inner = mgr.borrow_mut();
             let tab = inner.tabs.iter_mut().find(|tab| tab.id == tab_id)?;
             tab.webview = Some(webview.clone());
+            inner.refresh_close_buttons();
         }
         page_stack.add_named(&webview, "web");
         webview.show_all();
@@ -641,7 +642,7 @@ impl TabManager {
         let (stack, url_entry, tab_scroll, tab_strip, reveal, sync) = {
             let mut inner = mgr.borrow_mut();
             inner.selected = Some(id);
-            let show_close = inner.tabs.len() > 1;
+            inner.refresh_close_buttons();
             for tab in &inner.tabs {
                 let selected = tab.id == id;
                 tab.pill.style_context().remove_class("selected");
@@ -654,7 +655,6 @@ impl TabManager {
                         .style_context()
                         .add_class("tab-pill-label-selected");
                 }
-                tab.close_btn.set_visible(show_close);
             }
             let sync = inner
                 .tabs
@@ -702,22 +702,46 @@ impl TabManager {
         }
     }
 
+    /// Closes a tab. Closing the last tab replaces it with a fresh Home tab
+    /// rather than leaving the window without one (N-2); a lone Home tab that
+    /// never loaded a page has nothing to close and stays as it is.
     fn close_tab(mgr: &Rc<RefCell<TabManagerInner>>, id: u32) {
+        let last_tab = {
+            let inner = mgr.borrow();
+            let Some(tab) = inner.tabs.iter().find(|tab| tab.id == id) else {
+                return;
+            };
+            last_tab_action(inner.tabs.len(), tab.webview.is_some())
+        };
+        match last_tab {
+            LastTab::NotLast => {}
+            LastTab::KeepPristineHome => {
+                let home_search = {
+                    let inner = mgr.borrow();
+                    inner.tabs.iter().find(|tab| tab.id == id).map(|tab| tab.home_search.clone())
+                };
+                if let Some(home_search) = home_search {
+                    home_search.grab_focus();
+                }
+                return;
+            }
+            LastTab::ReplaceWithHome => {
+                TabManager::open_tab(mgr, TabOpen::Home, true);
+            }
+        }
         let owns_fullscreen = { mgr.borrow().fullscreen_owner == Some(id) };
         if owns_fullscreen {
             end_element_fullscreen_unless(mgr, None);
         }
         let (removed_selected, select_after) = {
             let mut inner = mgr.borrow_mut();
-            if inner.tabs.len() <= 1 {
-                return;
-            }
             let Some(idx) = inner.tabs.iter().position(|t| t.id == id) else {
                 return;
             };
             let tab = inner.tabs.remove(idx);
             inner.stack.remove(&tab.page_stack);
             inner.tab_strip.remove(&tab.pill);
+            inner.refresh_close_buttons();
             let was_selected = inner.selected == Some(id);
             let remaining_ids = inner.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>();
             let selected_after = selection_after_close(&remaining_ids, inner.selected, id, idx);
@@ -732,16 +756,8 @@ impl TabManager {
 
         if let Some(next_id) = select_after {
             TabManager::select_tab_id(mgr, next_id);
-        } else if !removed_selected {
-            // Refresh close buttons visibility
-            let mgr2 = mgr.clone();
-            glib::idle_add_local(move || {
-                let selected = { mgr2.borrow().selected };
-                if let Some(id) = selected {
-                    TabManager::select_tab_id(&mgr2, id);
-                }
-                glib::ControlFlow::Break
-            });
+        } else if removed_selected {
+            mgr.borrow().refresh_nav_buttons();
         }
     }
 
@@ -835,6 +851,15 @@ impl TabManager {
 }
 
 impl TabManagerInner {
+    /// Every tab can be closed except a lone Home tab that never loaded a page.
+    fn refresh_close_buttons(&self) {
+        let only_tab_has_page = self.tabs.first().is_some_and(|tab| tab.webview.is_some());
+        let closable = self.tabs.len() > 1 || only_tab_has_page;
+        for tab in &self.tabs {
+            tab.close_btn.set_visible(closable);
+        }
+    }
+
     fn selected_tab(&self) -> Option<&TabEntry> {
         let id = self.selected?;
         self.tabs.iter().find(|t| t.id == id)
@@ -870,6 +895,23 @@ impl TabManagerInner {
         self.back_btn.set_sensitive(can_back);
         self.forward_btn.set_sensitive(can_fwd);
         self.reload_btn.set_sensitive(true);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LastTab {
+    NotLast,
+    /// The only tab has loaded a page: open a fresh Home tab, then close it.
+    ReplaceWithHome,
+    /// The only tab is an untouched Home tab: nothing to do.
+    KeepPristineHome,
+}
+
+fn last_tab_action(tab_count: usize, has_page: bool) -> LastTab {
+    match (tab_count, has_page) {
+        (0 | 1, true) => LastTab::ReplaceWithHome,
+        (0 | 1, false) => LastTab::KeepPristineHome,
+        _ => LastTab::NotLast,
     }
 }
 
@@ -1650,9 +1692,9 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_status_text, is_sized_popup, next_tab_id, pill_is_visible, scroll_value_to_reveal,
-        selection_after_close,
-        shortcut_for, url_bar_sync_value, FindStatus, Shortcut,
+        find_status_text, is_sized_popup, last_tab_action, next_tab_id, pill_is_visible,
+        scroll_value_to_reveal, selection_after_close, shortcut_for, url_bar_sync_value,
+        FindStatus, LastTab, Shortcut,
     };
     use gdk::keys::constants as key;
     use gdk::ModifierType as M;
@@ -1738,6 +1780,14 @@ mod tests {
     #[test]
     fn scroll_value_stays_put_when_the_pill_is_already_visible() {
         assert_eq!(scroll_value_to_reveal(20.0, 100.0, 40, 30), 20.0);
+    }
+
+    #[test]
+    fn closing_the_last_tab_replaces_it_with_home_unless_it_is_untouched() {
+        assert_eq!(last_tab_action(1, true), LastTab::ReplaceWithHome);
+        assert_eq!(last_tab_action(1, false), LastTab::KeepPristineHome);
+        assert_eq!(last_tab_action(2, true), LastTab::NotLast);
+        assert_eq!(last_tab_action(3, false), LastTab::NotLast);
     }
 
     #[test]
