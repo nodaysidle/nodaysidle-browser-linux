@@ -88,10 +88,16 @@ struct TabManagerInner {
     reload_btn: Button,
     home_btn: Button,
     find_bar: FindBar,
+    window: gtk::ApplicationWindow,
+    /// Tab whose page is in element (e.g. video) fullscreen, if any.
+    fullscreen_owner: Option<u32>,
+    /// Window fullscreen requested by the user with F11.
+    user_fullscreen: bool,
 }
 
 impl TabManager {
     pub fn new(
+        window: &gtk::ApplicationWindow,
         chrome: TabChrome,
         web_context: webkit2gtk::WebContext,
         history: Rc<RefCell<HistoryStore>>,
@@ -116,6 +122,9 @@ impl TabManager {
             reload_btn: chrome.reload_btn,
             home_btn: chrome.home_btn,
             find_bar: chrome.find_bar,
+            window: window.clone(),
+            fullscreen_owner: None,
+            user_fullscreen: false,
         };
         Self {
             inner: Rc::new(RefCell::new(inner)),
@@ -296,26 +305,44 @@ impl TabManager {
         );
 
         let mgr = self.inner.clone();
-        let window_for_fullscreen = window.clone();
         group.connect_accel_group(
             *gdk::keys::constants::F11,
             gdk::ModifierType::empty(),
             gtk::AccelFlags::VISIBLE,
             move |_, _, _, _| {
-                let is_fullscreen = window_for_fullscreen
-                    .window()
-                    .map(|window| window.state().contains(gdk::WindowState::FULLSCREEN))
-                    .unwrap_or(false);
-                if is_fullscreen {
-                    window_for_fullscreen.unfullscreen();
-                    set_browser_chrome_visible(&mgr, true);
-                } else {
-                    set_browser_chrome_visible(&mgr, false);
-                    window_for_fullscreen.fullscreen();
-                }
+                toggle_user_fullscreen(&mgr);
                 true
             },
         );
+
+        // The window manager can leave fullscreen on its own (e.g. a compositor
+        // keybinding); keep the F11 state and the chrome in sync with it.
+        let mgr = self.inner.clone();
+        window.connect_window_state_event(move |_, event| {
+            if event
+                .changed_mask()
+                .contains(gdk::WindowState::FULLSCREEN)
+                && !event
+                    .new_window_state()
+                    .contains(gdk::WindowState::FULLSCREEN)
+            {
+                let restore = {
+                    let Ok(mut inner) = mgr.try_borrow_mut() else {
+                        return glib::Propagation::Proceed;
+                    };
+                    if inner.fullscreen_owner.is_none() && inner.user_fullscreen {
+                        inner.user_fullscreen = false;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if restore {
+                    set_browser_chrome_visible(&mgr, true);
+                }
+            }
+            glib::Propagation::Proceed
+        });
     }
 
     fn open_tab(mgr: &Rc<RefCell<TabManagerInner>>, open: TabOpen, select: bool) -> u32 {
@@ -491,47 +518,38 @@ impl TabManager {
             sync_view_chrome(&mgr_title, tab_id, view, &title, &uri);
         });
 
-        let (tab_bar, tab_separator, toolbar, toolbar_separator) = {
-            let inner = mgr.borrow();
-            (
-                inner.tab_bar.clone(),
-                inner.tab_separator.clone(),
-                inner.toolbar.clone(),
-                inner.toolbar_separator.clone(),
-            )
-        };
-        let tab_bar_on_enter = tab_bar.clone();
-        let tab_separator_on_enter = tab_separator.clone();
-        let toolbar_on_enter = toolbar.clone();
-        let toolbar_separator_on_enter = toolbar_separator.clone();
-        webview.connect_enter_fullscreen(move |view| {
-            let Some(window) = view
-                .toplevel()
-                .and_then(|widget| widget.downcast::<gtk::Window>().ok())
-            else {
-                return false;
-            };
-            tab_bar_on_enter.hide();
-            tab_separator_on_enter.hide();
-            toolbar_on_enter.hide();
-            toolbar_separator_on_enter.hide();
-            window.fullscreen();
-            true
+        // Element fullscreen (R-7): only hide or show our chrome and return
+        // FALSE, so WebKit's default handler fullscreens the toplevel itself.
+        // That handler copes with a window that is already fullscreen (F11),
+        // which returning TRUE used to bypass.
+        let mgr_enter = mgr.clone();
+        webview.connect_enter_fullscreen(move |_| {
+            {
+                let Ok(mut inner) = mgr_enter.try_borrow_mut() else {
+                    return false;
+                };
+                inner.fullscreen_owner = Some(tab_id);
+            }
+            set_browser_chrome_visible(&mgr_enter, false);
+            false
         });
 
-        webview.connect_leave_fullscreen(move |view| {
-            let Some(window) = view
-                .toplevel()
-                .and_then(|widget| widget.downcast::<gtk::Window>().ok())
-            else {
-                return false;
+        let mgr_leave = mgr.clone();
+        webview.connect_leave_fullscreen(move |_| {
+            let show_chrome = {
+                let Ok(mut inner) = mgr_leave.try_borrow_mut() else {
+                    return false;
+                };
+                if inner.fullscreen_owner != Some(tab_id) {
+                    return false;
+                }
+                inner.fullscreen_owner = None;
+                !inner.user_fullscreen
             };
-            window.unfullscreen();
-            tab_bar.show();
-            tab_separator.show();
-            toolbar.show();
-            toolbar_separator.show();
-            true
+            if show_chrome {
+                set_browser_chrome_visible(&mgr_leave, true);
+            }
+            false
         });
 
         let mgr_create = mgr.clone();
@@ -631,6 +649,8 @@ impl TabManager {
             }
         }
 
+        end_element_fullscreen_unless(mgr, Some(id));
+
         let (stack, url_entry, tab_scroll, tab_strip, sync) = {
             let mut inner = mgr.borrow_mut();
             inner.selected = Some(id);
@@ -695,6 +715,10 @@ impl TabManager {
     }
 
     fn close_tab(mgr: &Rc<RefCell<TabManagerInner>>, id: u32) {
+        let owns_fullscreen = { mgr.borrow().fullscreen_owner == Some(id) };
+        if owns_fullscreen {
+            end_element_fullscreen_unless(mgr, None);
+        }
         let (removed_selected, select_after) = {
             let mut inner = mgr.borrow_mut();
             if inner.tabs.len() <= 1 {
@@ -1049,6 +1073,78 @@ fn set_find_status(find_bar: &FindBar, status: FindStatus) {
     } else {
         style.remove_class("find-none");
     }
+}
+
+fn toggle_user_fullscreen(mgr: &Rc<RefCell<TabManagerInner>>) {
+    let (window, owner_view, window_is_fullscreen) = {
+        let inner = mgr.borrow();
+        let owner_view = inner.fullscreen_owner.and_then(|owner| {
+            inner
+                .tabs
+                .iter()
+                .find(|tab| tab.id == owner)
+                .and_then(|tab| tab.webview.clone())
+        });
+        let window_is_fullscreen = inner
+            .window
+            .window()
+            .map(|window| window.state().contains(gdk::WindowState::FULLSCREEN))
+            .unwrap_or(false);
+        (inner.window.clone(), owner_view, window_is_fullscreen)
+    };
+    if let Some(view) = owner_view {
+        // F11 while a video is fullscreen leaves the video fullscreen first.
+        exit_element_fullscreen(&view);
+        return;
+    }
+    let user_fullscreen = !window_is_fullscreen;
+    {
+        mgr.borrow_mut().user_fullscreen = user_fullscreen;
+    }
+    set_browser_chrome_visible(mgr, !user_fullscreen);
+    if user_fullscreen {
+        window.fullscreen();
+    } else {
+        window.unfullscreen();
+    }
+}
+
+/// Ends element fullscreen when the owning tab is closed or another tab is
+/// selected, restoring the chrome and the window's F11 state (R-7).
+fn end_element_fullscreen_unless(mgr: &Rc<RefCell<TabManagerInner>>, keep: Option<u32>) {
+    let (owner_view, window, user_fullscreen) = {
+        let mut inner = mgr.borrow_mut();
+        let Some(owner) = inner.fullscreen_owner else {
+            return;
+        };
+        if Some(owner) == keep {
+            return;
+        }
+        inner.fullscreen_owner = None;
+        let owner_view = inner
+            .tabs
+            .iter()
+            .find(|tab| tab.id == owner)
+            .and_then(|tab| tab.webview.clone());
+        (owner_view, inner.window.clone(), inner.user_fullscreen)
+    };
+    if let Some(view) = owner_view {
+        exit_element_fullscreen(&view);
+    }
+    if !user_fullscreen {
+        window.unfullscreen();
+    }
+    set_browser_chrome_visible(mgr, !user_fullscreen);
+}
+
+fn exit_element_fullscreen(view: &WebView) {
+    view.evaluate_javascript(
+        "if (document.fullscreenElement) { document.exitFullscreen(); }",
+        None,
+        None,
+        None::<&gio::Cancellable>,
+        |_| {},
+    );
 }
 
 fn set_browser_chrome_visible(mgr: &Rc<RefCell<TabManagerInner>>, visible: bool) {
