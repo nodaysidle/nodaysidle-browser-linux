@@ -344,13 +344,13 @@ impl TabManager {
         tab_strip.pack_start(&pill, false, false, 0);
         pill.show_all();
 
-        let mgr_weak = mgr.clone();
-        title_hit.connect_button_press_event(clone!(@strong mgr_weak => move |_, event| {
+        let mgr_click = mgr.clone();
+        title_hit.connect_button_press_event(move |_, event| {
             if event.button() == 1 {
-                TabManager::select_tab_id(&mgr_weak, tab_id);
+                TabManager::select_tab_id(&mgr_click, tab_id);
             }
             glib::Propagation::Proceed
-        }));
+        });
 
         let mgr_key = mgr.clone();
         title_hit.connect_key_press_event(move |_, event| {
@@ -363,9 +363,8 @@ impl TabManager {
             }
         });
 
-        close_btn.connect_clicked(clone!(@strong mgr_weak => move |_| {
-            TabManager::close_tab(&mgr_weak, tab_id);
-        }));
+        let mgr_close = mgr.clone();
+        close_btn.connect_clicked(move |_| TabManager::close_tab(&mgr_close, tab_id));
 
         let mgr_nav = mgr.clone();
         home_search.connect_activate(clone!(@strong mgr_nav => move |entry| {
