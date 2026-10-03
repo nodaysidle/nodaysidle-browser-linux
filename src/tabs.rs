@@ -2285,25 +2285,93 @@ mod tests {
 /// runs each test on its own thread. Skipped when no display is available.
 #[cfg(test)]
 mod gtk_tests {
-    use super::{build_chrome_layout, TabManager, TabOpen};
+    use super::{build_chrome_layout, run_find, run_shortcut, show_find_bar, Shortcut};
+    use super::{TabManager, TabManagerInner, TabOpen};
     use crate::history::HistoryStore;
     use gtk::prelude::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
-    use webkit2gtk::WebContextExt;
+    use std::time::{Duration, Instant};
+    use webkit2gtk::{SettingsExt, WebContextExt, WebView, WebViewExt};
 
-    fn pump() {
-        while gtk::events_pending() {
-            gtk::main_iteration();
+    /// Runs the main loop until `done` holds or `secs` pass.
+    fn pump_until(secs: u64, done: impl Fn() -> bool) -> bool {
+        let start = Instant::now();
+        loop {
+            while gtk::events_pending() {
+                gtk::main_iteration();
+            }
+            if done() {
+                return true;
+            }
+            if start.elapsed() > Duration::from_secs(secs) {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
+    fn pump() {
+        pump_until(0, || true);
+    }
+
+    /// A flag that turns true when `object` is finalized (its data dropped).
+    fn finalized_flag(object: &impl IsA<glib::Object>) -> Rc<Cell<bool>> {
+        struct Marker(Rc<Cell<bool>>);
+        impl Drop for Marker {
+            fn drop(&mut self) {
+                self.0.set(true);
+            }
+        }
+        let flag = Rc::new(Cell::new(false));
+        // SAFETY: the key is used only here and always with this type.
+        unsafe { object.as_ref().set_data("nodaysidle-test-finalized", Marker(flag.clone())) };
+        flag
+    }
+
+    fn view_of(mgr: &Rc<RefCell<TabManagerInner>>, id: u32) -> WebView {
+        let inner = mgr.borrow();
+        let tab = inner.tabs.iter().find(|tab| tab.id == id).expect("tab exists");
+        tab.webview.clone().expect("tab has a WebView")
+    }
+
+    fn click_close(mgr: &Rc<RefCell<TabManagerInner>>, id: u32) {
+        let button = {
+            let inner = mgr.borrow();
+            inner.tabs.iter().find(|tab| tab.id == id).map(|tab| tab.close_btn.clone())
+        };
+        let button = button.expect("tab exists");
+        assert!(button.is_visible(), "tab {id} can be closed");
+        button.clicked();
+    }
+
+    fn ids(mgr: &Rc<RefCell<TabManagerInner>>) -> Vec<u32> {
+        mgr.borrow().tabs.iter().map(|tab| tab.id).collect()
+    }
+
+    /// Exercises tab teardown in a realized window with real WebViews: the
+    /// X-1 close-tab re-entrancy, the find bar outliving its tab (R-1), a
+    /// WebKit-created view (R-2) and WebView disposal after close (V-9). A
+    /// RefCell borrow held across any of it panics inside a GLib callback,
+    /// which aborts the test process.
     #[test]
     fn gtk_tab_manager_and_web_context() {
-        // WebKit creates GTK widgets while building a WebContext; without an
-        // initialised display, GTK dereferences NULL settings and segfaults.
+        // WebKit creates GTK widgets while building a WebContext; without a
+        // display GTK cannot initialise, so this test can only run under X11,
+        // Wayland or Xvfb. Set NODAYSIDLE_REQUIRE_DISPLAY=1 to fail instead.
         if gtk::init().is_err() {
-            eprintln!("skipping: no display available for GTK");
+            assert!(
+                std::env::var_os("NODAYSIDLE_REQUIRE_DISPLAY").is_none(),
+                "NODAYSIDLE_REQUIRE_DISPLAY is set but GTK could not open a display"
+            );
+            // Written to stderr directly so the test harness does not
+            // capture it: a skip must be visible in the test output.
+            use std::io::Write;
+            let _ = writeln!(
+                std::io::stderr(),
+                "SKIPPED gtk_tab_manager_and_web_context: no display (run with DISPLAY \
+                 or under Xvfb to exercise it)"
+            );
             return;
         }
         let dir = std::env::temp_dir().join(format!(
@@ -2313,49 +2381,95 @@ mod gtk_tests {
         let web_context = crate::profile::persistent_web_context(&dir);
         assert!(web_context.is_sandbox_enabled());
 
-        // X-1 regression: closing tabs re-enters TabManager (selection,
-        // close buttons, focus). A RefCell borrow held across that panics
-        // inside a GLib callback, which aborts this test process.
-        let window = gtk::ApplicationWindow::builder().build();
+        let window = gtk::ApplicationWindow::builder().default_width(900).build();
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        window.add(&root);
         let (chrome, new_tab_btn) = build_chrome_layout(&root);
         let history = Rc::new(RefCell::new(HistoryStore::load(dir.join("history.json"))));
         let manager = TabManager::new(&window, chrome, web_context, history);
         manager.wire_toolbar(&new_tab_btn);
+        manager.wire_keyboard(&window);
         let mgr = &manager.inner;
+        manager.open_initial_home();
+        window.show_all();
+        assert!(pump_until(10, || window.is_visible() && window.is_realized()));
+
+        // Three page tabs with real WebViews, the last one selected.
+        let html = "<p>alpha beta gamma alpha</p>";
+        let mut page_tabs = Vec::new();
         for _ in 0..3 {
-            TabManager::open_tab(mgr, TabOpen::Home, true);
+            let id = TabManager::open_tab(mgr, TabOpen::Url("about:blank".into()), true);
+            view_of(mgr, id).load_html(html, None);
+            page_tabs.push(id);
         }
-        pump();
-        assert_eq!(mgr.borrow().selected, Some(3));
+        let views: Vec<WebView> = page_tabs.iter().map(|id| view_of(mgr, *id)).collect();
+        assert!(pump_until(20, || views.iter().all(|view| !view.is_loading())));
+        let finalized: Vec<_> = views.iter().map(finalized_flag).collect();
+        drop(views);
+        let [first, second, third] = [page_tabs[0], page_tabs[1], page_tabs[2]];
+        assert_eq!(mgr.borrow().selected, Some(third));
 
-        // Background tab: the selection must not move.
-        TabManager::close_tab(mgr, 1);
+        // X-1: close a background tab through its close button.
+        click_close(mgr, first);
         pump();
-        assert_eq!(mgr.borrow().selected, Some(3));
-        assert_eq!(mgr.borrow().tabs.len(), 2);
+        assert_eq!(mgr.borrow().selected, Some(third));
+        assert!(!ids(mgr).contains(&first));
 
-        // Selected tab: the neighbour is selected.
-        TabManager::close_tab(mgr, 3);
+        // R-1: search in the selected tab, close it with the find bar open,
+        // then keep searching; the search must move to the next tab.
+        run_shortcut(mgr, Shortcut::Find);
+        let find_entry = { mgr.borrow().find_bar.entry.clone() };
+        find_entry.set_text("alpha");
+        pump_until(2, || false);
+        click_close(mgr, third);
         pump();
-        assert_eq!(mgr.borrow().selected, Some(2));
+        assert_eq!(mgr.borrow().selected, Some(second));
+        find_entry.set_text("beta");
+        run_find(mgr);
+        show_find_bar(mgr);
+        pump_until(1, || false);
 
-        // The last, untouched Home tab stays (N-2).
-        TabManager::close_tab(mgr, 2);
+        // R-2: a WebKit-created view (window.open) opens as a tab and is
+        // closed again through its button.
+        let opener = view_of(mgr, second);
+        if let Some(settings) = WebViewExt::settings(&opener) {
+            settings.set_javascript_can_open_windows_automatically(true);
+        }
+        let before = ids(mgr);
+        opener.load_html("<script>window.open('about:blank')</script>", None);
+        drop(opener);
+        assert!(
+            pump_until(20, || ids(mgr).len() == before.len() + 1),
+            "window.open opened a tab"
+        );
+        let created = *ids(mgr).iter().find(|id| !before.contains(id)).unwrap();
+        let created_finalized = finalized_flag(&view_of(mgr, created));
+        click_close(mgr, created);
         pump();
-        assert_eq!(mgr.borrow().tabs.len(), 1);
-        assert_eq!(mgr.borrow().selected, Some(2));
+        assert!(!ids(mgr).contains(&created));
 
-        // Through the real button handler too.
-        new_tab_btn.clicked();
+        // The last page tab: Ctrl+W replaces it with a fresh Home tab (N-2),
+        // and the lone Home tab cannot be closed.
+        let initial_home = ids(mgr)[0];
+        click_close(mgr, initial_home);
         pump();
-        assert_eq!(mgr.borrow().selected, Some(4));
-        let close_btn = mgr.borrow().tabs[0].close_btn.clone();
-        close_btn.clicked();
+        assert_eq!(ids(mgr), [second]);
+        run_shortcut(mgr, Shortcut::CloseTab);
         pump();
-        assert_eq!(mgr.borrow().selected, Some(4));
-        assert_eq!(mgr.borrow().tabs.len(), 1);
+        let remaining = ids(mgr);
+        assert_eq!(remaining.len(), 1);
+        assert_ne!(remaining[0], second);
+        assert_eq!(mgr.borrow().selected, Some(remaining[0]));
+        run_shortcut(mgr, Shortcut::CloseTab);
+        pump();
+        assert_eq!(ids(mgr), remaining);
 
+        // V-9: closed tabs' WebViews are released without an explicit
+        // destroy: nothing keeps them alive after their tab is gone.
+        let all_finalized = || finalized.iter().all(|flag| flag.get()) && created_finalized.get();
+        assert!(pump_until(10, all_finalized), "closed WebViews were finalized");
+
+        // SAFETY: test teardown; nothing uses the window afterwards.
         unsafe { window.destroy() };
         pump();
         let _ = std::fs::remove_dir_all(&dir);
