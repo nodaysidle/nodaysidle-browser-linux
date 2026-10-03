@@ -1,175 +1,142 @@
 # Agent handoff — nodaysidle-browser-linux
 
-Last updated: 2026-10-02 (user session on Omarchy / Hyprland)
+Last updated: 2026-10-03, after the audit fix series on top of `30f00b6`.
 
-This document captures **current state**, **known bugs**, and **what was already tried** so the next agent can debug without re-discovering context.
+This file describes the code as it is now, plus the rules that keep it stable. The history of the
+earlier P0 bug ("search does not leave the Home UI") is gone: it was fixed long ago, and the old
+notes described code that no longer exists.
 
 ## Project
 
 | Item | Path / note |
 |------|-------------|
-| Linux port | `/home/arch/dev/nodaysidle/nodaysidle-browser-linux` |
-| macOS reference | `/home/arch/dev/nodaysidle/nodaysidle-browser` (SwiftUI + WKWebView) |
+| Linux port | `~/dev/nodaysidle/nodaysidle-browser-linux` |
+| macOS reference | `~/dev/nodaysidle/nodaysidle-browser` (SwiftUI + WKWebView) |
 | Binary | `~/.local/bin/nodaysidle-browser` |
-| Desktop entry | `~/.local/share/applications/nodaysidle-browser.desktop` (`Exec=` full path) |
-| Profile data | `~/.local/share/nodaysidle-browser/` (`webkit-data/cookies.sqlite`, `webkit-cache`, `history.json`) |
+| Desktop entry | `~/.local/share/applications/com.nodaysidle.Browser.desktop` (tracked as `desktop/com.nodaysidle.Browser.desktop`; the installer only rewrites `Exec=`) |
+| Icon | `~/.local/share/icons/hicolor/scalable/apps/nodaysidle-browser.svg` (+ PNGs if `rsvg-convert` exists); also embedded in the binary |
+| Profile data | `~/.local/share/nodaysidle-browser/` (`0700`): `webkit-data/` (cookies in `cookies.sqlite`, `0600`), `webkit-cache/`, `history.json` (`0600`) |
 
-**Stack:** Rust, GTK 3 (`gtk` 0.18), WebKitGTK (`webkit2gtk` 2.0 → system `webkit2gtk-4.1`).
+**Stack:** Rust 2021 (MSRV 1.88, `rust-version` in `Cargo.toml`), GTK 3 through gtk-rs 0.18,
+WebKitGTK 4.1 through the `webkit2gtk` 2.0 crate (feature `v2_40`). Single-threaded,
+`Rc<RefCell<…>>` state.
 
-**Not** GTK 4 Rust bindings yet — `webkit2gtk` crate still targets GTK 3 widgets.
+**GTK 4 / WebKitGTK 6.0 (X-29):** the `webkit6` crate exists, but this project stays on GTK 3. The
+`webkit2gtk` crate pins gtk-rs 0.18, so gtk/glib/gdk cannot be upgraded independently; moving on
+means a GTK 4 UI rewrite. Not planned.
 
-## Intended UX (match macOS)
+**Identity:** GApplication ID `com.nodaysidle.Browser`. `main()` sets the program name and (in
+`startup`) the GDK program class to the same string, so the Wayland app_id, the X11 `WM_CLASS`, the
+desktop file name and `StartupWMClass` all match (GTK 3 takes the app_id from the program name, not
+from the application ID). Hyprland rules: `class:^(com\.nodaysidle\.Browser)$`.
 
-1. **Tab bar** (top): horizontal pills + **+** for new tab.
-2. **Toolbar**: icon buttons + URL field + history.
-3. **New tab / first launch**: centered **nodaysidle** + **rounded search pill** (no website loaded until user searches). Search uses **DuckDuckGo** via `navigation::resolve` (same rules as Mac).
-4. **Persistent logins**: shared `WebContext` + `WebsiteDataManager` under `~/.local/share/nodaysidle-browser/`.
-
-## Architecture (current code)
+## Architecture
 
 ```
-ApplicationWindow
+ApplicationWindow (.browser-window)
 └── VBox
-    ├── tab bar (ScrolledWindow → tab_stripHBox)
-    ├── separator
-    ├── toolbar (home, back, forward, reload, url_entry, history)
-    ├── separator
-    └── GtkStack (one child per tab, named by tab id)
+    ├── tab bar: ScrolledWindow → tab strip HBox of pills (+ "new tab" button)
+    │       pill = HBox [EventBox title (focusable, tooltip = title + URL)] [close Button]
+    ├── toolbar: Home, Back, Forward, Reload/Stop, URL entry (security icon + progress),
+    │            History (popover), Menu (☰: New Tab, Find in Page, Full Screen, About)
+    ├── find bar (hidden until Ctrl+F)
+    └── GtkStack, one child per tab
         └── per tab: GtkStack page_stack
-            ├── "home"  → build_home_surface() (nodaysidle + Entry)
-            └── "web"   → WebView (lazy: created on first navigation only)
+            ├── "home" → home::build_home_surface() (nodaysidle + search pill)
+            └── "web"  → WebView (created lazily on first navigation)
 ```
 
-Key modules:
+Modules:
 
-- `src/tabs.rs` — tab lifecycle, lazy `ensure_webview`, navigation, close/select.
-- `src/home.rs` — home surface UI.
-- `src/navigation.rs` — URL/search resolution (DDG default).
-- `src/theme.rs` — CSS (must run on `Application::connect_startup`, **not** before `gtk::init`).
+- `src/main.rs`: application setup, identity, command-line argument resolution, `open` handler.
+- `src/tabs.rs`: `TabManager` (tab lifecycle, toolbar, shortcuts, find bar, fullscreen, pop-ups,
+  error pages, Home/Back/Forward, history wiring) plus a GTK regression test (`gtk_tests`).
+- `src/navigation.rs`: address-bar and command-line input resolution (`resolve`), DuckDuckGo search.
+- `src/home.rs`: Home surface.
+- `src/history.rs`: `HistoryStore` (batched, atomic, private writes; corrupt files set aside).
+- `src/downloads.rs`: save dialog, progress window, single cancel, close confirmation.
+- `src/permissions.rs`: permission prompts and per-session decisions.
+- `src/error_page.rs`: HTML for failed loads and crashed web processes.
+- `src/profile.rs`: data directory, shared `WebContext`, sandbox, cookie storage.
+- `src/icon.rs`: window/default icon (theme icon, else the embedded SVG).
+- `src/theme.rs`: CSS. `theme::install()` must run in `connect_startup`, never before GTK init.
 
-## Bugs fixed earlier in this session
+## Behaviour (what the code really does)
 
-| Issue | Cause | Fix |
-|-------|--------|-----|
-| App won’t open from Super+Space | `theme::install()` before GTK init → panic | `connect_startup` → `theme::install()` |
-| Instant crash on first tab | `RefCell` reborrow: `add_tab` held borrow while `Notebook`/`switch-page` fired | Restructured borrows; later replaced Notebook with custom tab strip |
-| Close button useless | Close **inside** parent `GtkButton` pill | Pill = `HBox` + `EventBox` (title) + separate close `Button` |
-| New tab loaded a website | Eager `WebView` + `load_uri(START_PAGE)` | `TabOpen::Home`, lazy webview |
-| GTK init / desktop | — | Full path in `.desktop`; `install-desktop.sh` regenerates it |
+- **New tabs** show the built-in Home surface; no page loads until the user searches or types a URL.
+- **Home button:** on a Home tab it focuses the search; on a page it navigates the tab to
+  `about:blank#nodaysidle-home` and shows the Home surface, so Back returns to the page.
+- **Last tab:** closing the last tab that shows a page opens a fresh Home tab first. A lone,
+  untouched Home tab has no close button; Ctrl+W there just focuses its search. Close the window to
+  quit.
+- **Address bar** (`navigation::resolve`): `http`, `https`, `file`, `about` load as typed;
+  `/path` and `~/path` open files; localhost, loopback, private addresses and `host:port` get
+  `http://`; IPv6 literals are bracketed; plausible domains get `https://`; everything else
+  (including `node.js`, `notes.txt`, `javascript:` and `data:`) is a DuckDuckGo search.
+- **Command line / external opens:** an existing file (or a `./`, `../` path) opens as a file,
+  anything else goes through `resolve`. A second launch raises the existing window (`present()`).
+- **Shortcuts** are handled in the window's `key-press-event` before the focused widget (pages
+  cannot swallow them): Ctrl+T; Ctrl+W / Ctrl+F4; Ctrl+Tab / Ctrl+Page Down; Ctrl+Shift+Tab /
+  Ctrl+Page Up; Ctrl+1…8, Ctrl+9; Ctrl+L / Alt+D / F6; Ctrl+F; Ctrl+R / F5; Alt+Left / Alt+Right;
+  F11. GTK `AccelGroup` cannot carry Tab, which is why they are not accelerators.
+- **Find in page** is a bar under the toolbar. It asks the *current* WebView for its
+  `FindController` on every use and never stores it: a `WebKitFindController` only holds a raw,
+  non-owning pointer to its view, and the old non-modal dialog crashed once its tab was closed.
+- **Fullscreen:** WebKit's `enter-fullscreen` / `leave-fullscreen` handlers hide/restore the chrome
+  and return `false` so WebKit keeps driving element fullscreen. F11 leaves element fullscreen;
+  closing or switching away from the fullscreen tab ends it.
+- **Pop-ups:** `create` returns a related view; `ready-to-show` decides where it goes. A
+  `window.open` with an explicit size (not a link click, geometry different from the opener's)
+  opens in its own transient window with a read-only address bar; everything else becomes a tab.
+  `close` is handled from an idle callback.
+- **Tab teardown:** `close_tab` removes the entry under the `RefCell` borrow, then removes widgets
+  and drops the entry outside it, and destroys the tab's widgets from an idle callback (the
+  project's only `unsafe` block, with a SAFETY comment).
+- **Downloads:** Cancel calls `webkit_download_cancel` at most once (it is asynchronous and the
+  download emits `failed` afterwards). Closing the progress window while a download runs asks
+  whether to cancel; a finished download's window closes freely.
+- **Permissions:** location, camera, microphone, notifications and pointer lock show
+  "<top-level origin> (or a site embedded in it) requests …" (WebKitGTK 4.1 does not expose the
+  requesting frame's origin) and require Allow. Allow/Deny is remembered per origin and permission
+  until the browser exits; unknown request types are denied.
+- **Error pages:** failed loads (not cancellations or policy interruptions) and crashed/killed web
+  processes show a dark built-in page with Try again / Reload. Error pages are not added to history.
+- **Address bar extras:** lock / "Not secure" icon from the TLS state, a progress bar, and Reload
+  turning into Stop while loading. The URL bar does not overwrite text while focused.
+- **History:** recorded when a load finishes, saved two seconds after the last change and on exit,
+  via a `0600` temp file + fsync + rename. An unreadable file is renamed to
+  `history.json.corrupt-<time>` instead of being overwritten.
+- **Cookies** persist in `webkit-data/cookies.sqlite` (created `0600`).
 
-## Active bug — search does not leave home UI (P0)
+## Rules that keep it stable
 
-### Symptoms (user report + screenshot ~2026-10-02)
+- Never hold a `RefCell` borrow of `TabManager` state across anything that can re-enter
+  `TabManager` or emit GTK signals (`select_tab_id`, widget removal/destroy, `load_uri`, dialogs,
+  `grab_focus`…). Copy what you need out of the borrow first. `gtk_tests` in `tabs.rs` catches the
+  close-tab variant of this (run with a display: `DISPLAY=:0 cargo test --release`).
+- Don't panic in GTK callbacks (an unwind across FFI aborts).
+- Never store `FindController`, `WebView` pointers in dialogs, or other objects that can outlive a tab.
+- Keep the custom tab strip (no `GtkNotebook`).
 
-1. User types e.g. `google` in the **home pill** (or toolbar) and submits.
-2. **Toolbar URL** updates correctly (e.g. `https://duckduckgo.com/?q=google`).
-3. **Tab title** updates (e.g. `google at DuckDuckGo`).
-4. **Main content still shows the home surface** (nodaysidle + pill with query text) — **no visible navigation**.
-
-So **WebView likely loads** (title/URL hooks fire) but **home layer remains visible**.
-
-### Reproduction
-
-```bash
-nodaysidle-browser
-# 1. On home, type "google" in center pill, press Enter.
-# 2. Observe URL bar and tab title vs main viewport.
-```
-
-### Suspected cause (not fully verified)
-
-- `page_stack.set_visible_child_name("web")` in `navigate_tab` may not be taking effect on GTK 3 `GtkStack` in this layout, **or**
-- Home widget remains visible/stacked incorrectly while webview loads behind it, **or**
-- `select_tab_id` / `is_selected_on_home` logic resets visible child to `"home"` after navigation, **or**
-- Missing explicit `set_visible_child(&webview)`, `show_all()`, or `home_page.hide()`.
-
-Relevant code: `TabManager::navigate_tab`, `ensure_webview`, `select_tab_id`, `show_home_for_selected` in `src/tabs.rs`.
-
-### Suggested next steps for debugger
-
-1. Add temporary logging in `navigate_tab` after `set_visible_child_name("web")`: log `page_stack.visible_child_name()`.
-2. Store `home_page: GtkBox` in `TabEntry`; on navigate call explicit `reveal_web()` / `reveal_home()` (hide/show + `set_visible_child`).
-3. Confirm `home_search.connect_activate` and `url_entry.connect_activate` both call `navigate_tab` for the **correct** `tab_id`.
-4. Rule out `select_tab_id` running after navigate and forcing home (grep call sites).
-5. Try `page_stack.set_transition_type(StackTransitionType::None)` to rule out transition glitches.
-6. Run under `GTK_DEBUG=interactive` or `RUST_BACKTRACE=1` if crashes reappear.
-
-## Other rough edges (lower priority)
-
-- The tab strip caps title labels and scrolls the selected pill into view (X-4); live visual verification with many tabs remains outstanding.
-- Home layout uses `set_valign`/`set_halign` on inner box — verify centering on all resolutions.
-- `TabOpen::Url` variant unused; history from toolbar vs pill should behave identically.
-- Warnings: dead `tab_scroll` field, unused `TabOpen::Url`.
-- macOS parity not done: bookmarks, find-in-page, zoom, gear menu, Secure Sync, tab drag-reorder.
-
-## Build / install
+## Build / test / install
 
 ```bash
 cd ~/dev/nodaysidle/nodaysidle-browser-linux
 cargo build --release
-install -m 0755 target/release/nodaysidle-browser ~/.local/bin/nodaysidle-browser
-./scripts/install-desktop.sh
+cargo test --release            # the GTK test skips itself without a display
+./scripts/install-desktop.sh    # builds, installs binary, desktop file and icons
 ```
 
-Dependencies (Arch): `gtk3`, `webkit2gtk-4.1`, `base-devel`.
+Dependencies (Arch): `gtk3`, `webkit2gtk-4.1`, `base-devel`; optional `librsvg` for PNG icons.
 
-## Git / repo hygiene
+Clippy and rustfmt were not run during the audit fixes (not installed on the fix machine).
 
-- Linux port is a **sibling** repo under `~/dev/nodaysidle/`, not inside `~/Projects` umbrella repo.
-- User is migrating to `~/dev/nodaysidle/<github-repo-name>` layout; legacy tree still at `~/Projects` (do not use as Cursor root).
+## Open items
 
-## User goal reminder
-
-Quiet, native-feeling **nodaysidle** browser on Linux: home page on every **+** tab, DDG search, persistent sessions, Super+Space launcher with icon — visually close to macOS `Theme.swift` / `NewTabView.swift`.
-
----
-
-## Resolved (2026-10-02)
-
-### P0 Bug Fixed: Search does not leave home UI
-- **Root Cause**: In GTK 3, newly constructed widgets (including `WebView::with_context`) default to `is_visible == false`. Because `window.show_all()` was only invoked once at initial startup before any WebView existed, newly created WebViews remained invisible. When `page_stack.set_visible_child_name("web")` was called, GTK 3's `gtk_stack_set_visible_child` checked `if (!gtk_widget_get_visible(child)) return;` and silently dropped the transition, keeping `"home"` displayed while WebKitGTK loaded in the background.
-- **Fix applied in `src/tabs.rs`**:
-  1. In `ensure_webview`: Added `webview.show_all()` immediately after `tab.page_stack.add_named(&webview, "web")`.
-  2. In `navigate_tab`: Added `webview.show()` and `webview.grab_focus()`.
-  3. In `open_tab`: Added `page_stack.show_all()` after `stack.add_named(&page_stack, &name)` so dynamically added tabs (via `+`) have visible page stacks.
-  4. In `show_home_for_selected`: Reset `title_label` back to `"New Tab"` when navigating back to home.
-  5. Silenced dead code warnings for `tab_scroll` and `TabOpen::Url`.
-- **Status**: Verified build (`cargo check` and `cargo build --release` with 0 warnings) and re-installed binary via `./scripts/install-desktop.sh`.
-
-### GTK callback borrow safety
-- A panic in a GTK callback can cross an FFI boundary and abort the process; the earlier blanket claim that no panic was reachable from a signal handler was incorrect.
-- Closing a background tab now copies the selected tab ID out of the `RefCell` borrow before calling `select_tab_id`. Closing a missing tab returns without panicking.
-- Continue to keep `RefCell` borrows out of calls that can re-enter `TabManager` or emit GTK signals, and avoid panics in GTK callbacks.
-
-### WebKit-created views (X-3)
-- WebKit `create` requests open related views as selected tabs in the existing tab strip.
-- `ready-to-show` shows the view, and `close` closes its tab.
-
-### External URI handling (X-5)
-- The GApplication `open` handler accepts HTTP, HTTPS, and file URIs and opens each in a tab. Unsupported schemes are ignored.
-- When the selected tab is still on its home page, the first external URI reuses that tab.
-
-### Web process sandbox and app reuse (X-6 / X-10)
-- The shared WebContext enables WebKit's process sandbox.
-- GApplication remains unique by application ID, and repeated activation/open callbacks reuse one TabManager, window, WebContext, and HistoryStore.
-
-### Downloads and site permissions (X-7 / X-13)
-- Downloads ask for a destination, default to the XDG Downloads directory when available, and show progress with cancel support.
-- Location, camera, microphone, notification, and pointer-lock requests show the requesting origin and require an explicit Allow response. Unknown permission request types are denied.
-
-### Empty page titles (X-16)
-- Pages without a nonempty document title use a URL-derived tab and history title.
-
-### Navigation state and fullscreen (X-8 / X-11 / X-12 / X-18)
-- URI and title property changes keep the selected tab's URL bar, title, and Back/Forward buttons current, including same-document SPA navigation.
-- The Home button navigates the current WebView to `START_PAGE`, preserving browser history; new tabs continue to use the built-in home surface.
-- WebKit fullscreen requests hide the tab bar and toolbar and fullscreen the window. Leaving fullscreen restores the chrome.
-- URI notifications do not replace text while the URL bar has focus.
-
-### Keyboard access (X-9)
-- Ctrl+T opens a tab, Ctrl+W closes the selected tab, Ctrl+L focuses and selects the URL bar, Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+F opens find-in-page, and F11 toggles window fullscreen.
-- Tab titles can be focused and activated with Enter or Space. The tab scroller is skipped in the Tab order, and focused controls have a high-contrast highlight.
-
-## Pending
-
-- **Git remote not configured — push deferred.** `master` has one local commit (`ae08c40`); nothing pushed. When the user says to, add `origin` and push, e.g. `git remote add origin <url> && git push -u origin master`.
+- No git remote and therefore no CI. When the user asks, add `origin` and push; a CI job would run
+  `cargo build --release`, `cargo test --release` (under Xvfb for the GTK test) and clippy.
+- macOS parity still missing: bookmarks, zoom, settings, Secure Sync, tab drag-reorder.
+- The pop-up placement rule is a heuristic based on what WebKitGTK 2.54 reports; check it against
+  real sign-in flows.
+- Wayland (Hyprland) behaviour of the app_id/icon has only been reasoned from the GTK source, not
+  tested live.
