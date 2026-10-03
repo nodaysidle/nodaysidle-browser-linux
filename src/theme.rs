@@ -45,6 +45,11 @@ window {
   color: #e8e8ec;
 }
 
+.tab-focusable:focus {
+  background-color: rgba(116, 170, 255, 0.28);
+  border-radius: 6px;
+}
+
 .tab-close {
   color: #6b6b70;
   padding: 2px;
@@ -54,6 +59,13 @@ window {
 
 .tab-close:hover {
   color: #e8e8ec;
+}
+
+.tab-close:focus,
+.tab-new-btn:focus,
+.ghost-btn:focus {
+  background-color: rgba(116, 170, 255, 0.28);
+  color: #ffffff;
 }
 
 .tab-new-btn {
@@ -98,7 +110,8 @@ window {
 }
 
 .url-bar:focus {
-  border-color: rgba(255, 255, 255, 0.14);
+  border-color: #75aaff;
+  box-shadow: 0 0 0 1px rgba(117, 170, 255, 0.55);
 }
 
 .toolbar {

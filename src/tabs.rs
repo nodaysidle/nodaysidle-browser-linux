@@ -9,7 +9,9 @@ use gtk::{
 };
 use std::cell::RefCell;
 use std::rc::Rc;
-use webkit2gtk::{LoadEvent, SettingsExt as WebSettingsExt, WebView, WebViewExt};
+use webkit2gtk::{
+    FindControllerExt, FindOptions, LoadEvent, SettingsExt as WebSettingsExt, WebView, WebViewExt,
+};
 
 const TAB_BAR_HEIGHT: i32 = 36;
 const TOOLBAR_HEIGHT: i32 = 40;
@@ -161,6 +163,104 @@ impl TabManager {
         }));
     }
 
+    pub fn wire_keyboard(&self, window: &gtk::ApplicationWindow) {
+        let group = gtk::AccelGroup::new();
+        window.add_accel_group(&group);
+
+        let mgr = self.inner.clone();
+        group.connect_accel_group(
+            *gdk::keys::constants::t,
+            gdk::ModifierType::CONTROL_MASK,
+            gtk::AccelFlags::VISIBLE,
+            move |_, _, _, _| {
+                TabManager::open_tab(&mgr, TabOpen::Home, true);
+                true
+            },
+        );
+
+        let mgr = self.inner.clone();
+        group.connect_accel_group(
+            *gdk::keys::constants::w,
+            gdk::ModifierType::CONTROL_MASK,
+            gtk::AccelFlags::VISIBLE,
+            move |_, _, _, _| {
+                let selected = { mgr.borrow().selected };
+                if let Some(tab_id) = selected {
+                    TabManager::close_tab(&mgr, tab_id);
+                }
+                true
+            },
+        );
+
+        let url_entry = self.inner.borrow().url_entry.clone();
+        group.connect_accel_group(
+            *gdk::keys::constants::l,
+            gdk::ModifierType::CONTROL_MASK,
+            gtk::AccelFlags::VISIBLE,
+            move |_, _, _, _| {
+                url_entry.grab_focus();
+                url_entry.select_region(0, -1);
+                true
+            },
+        );
+
+        let mgr = self.inner.clone();
+        group.connect_accel_group(
+            *gdk::keys::constants::Tab,
+            gdk::ModifierType::CONTROL_MASK,
+            gtk::AccelFlags::VISIBLE,
+            move |_, _, _, _| {
+                cycle_selected_tab(&mgr, false);
+                true
+            },
+        );
+
+        let mgr = self.inner.clone();
+        group.connect_accel_group(
+            *gdk::keys::constants::Tab,
+            gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
+            gtk::AccelFlags::VISIBLE,
+            move |_, _, _, _| {
+                cycle_selected_tab(&mgr, true);
+                true
+            },
+        );
+
+        let mgr = self.inner.clone();
+        let window_for_find = window.clone();
+        group.connect_accel_group(
+            *gdk::keys::constants::f,
+            gdk::ModifierType::CONTROL_MASK,
+            gtk::AccelFlags::VISIBLE,
+            move |_, _, _, _| {
+                show_find_dialog(&mgr, &window_for_find);
+                true
+            },
+        );
+
+        let mgr = self.inner.clone();
+        let window_for_fullscreen = window.clone();
+        group.connect_accel_group(
+            *gdk::keys::constants::F11,
+            gdk::ModifierType::empty(),
+            gtk::AccelFlags::VISIBLE,
+            move |_, _, _, _| {
+                let is_fullscreen = window_for_fullscreen
+                    .window()
+                    .map(|window| window.state().contains(gdk::WindowState::FULLSCREEN))
+                    .unwrap_or(false);
+                if is_fullscreen {
+                    window_for_fullscreen.unfullscreen();
+                    set_browser_chrome_visible(&mgr, true);
+                } else {
+                    set_browser_chrome_visible(&mgr, false);
+                    window_for_fullscreen.fullscreen();
+                }
+                true
+            },
+        );
+    }
+
     fn open_tab(mgr: &Rc<RefCell<TabManagerInner>>, open: TabOpen, select: bool) -> u32 {
         let (stack, tab_strip, next_id) = {
             let mut inner = mgr.borrow_mut();
@@ -193,6 +293,9 @@ impl TabManager {
         let title_hit = EventBox::new();
         title_hit.add(&title_label);
         title_hit.add_events(gdk::EventMask::BUTTON_PRESS_MASK);
+        title_hit.set_can_focus(true);
+        title_hit.set_focus_on_click(true);
+        title_hit.style_context().add_class("tab-focusable");
 
         let pill = GtkBox::new(Orientation::Horizontal, 0);
         pill.style_context().add_class("tab-pill");
@@ -213,6 +316,17 @@ impl TabManager {
             }
             glib::Propagation::Proceed
         }));
+
+        let mgr_key = mgr.clone();
+        title_hit.connect_key_press_event(move |_, event| {
+            let key = event.keyval();
+            if key == gdk::keys::constants::Return || key == gdk::keys::constants::space {
+                TabManager::select_tab_id(&mgr_key, tab_id);
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
 
         close_btn.connect_clicked(clone!(@strong mgr_weak => move |_| {
             TabManager::close_tab(&mgr_weak, tab_id);
@@ -701,6 +815,134 @@ fn url_bar_sync_value(is_focused: bool, uri: &str) -> Option<&str> {
     (!is_focused).then_some(uri)
 }
 
+fn cycle_selected_tab(mgr: &Rc<RefCell<TabManagerInner>>, reverse: bool) {
+    let next = {
+        let inner = mgr.borrow();
+        let ids = inner.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>();
+        next_tab_id(&ids, inner.selected, reverse)
+    };
+    if let Some(tab_id) = next {
+        TabManager::select_tab_id(mgr, tab_id);
+    }
+}
+
+fn next_tab_id(ids: &[u32], selected: Option<u32>, reverse: bool) -> Option<u32> {
+    if ids.is_empty() {
+        return None;
+    }
+    let current_index = selected.and_then(|id| ids.iter().position(|candidate| *candidate == id));
+    let next_index = match (current_index, reverse) {
+        (Some(index), true) => (index + ids.len() - 1) % ids.len(),
+        (Some(index), false) => (index + 1) % ids.len(),
+        (None, true) => ids.len() - 1,
+        (None, false) => 0,
+    };
+    Some(ids[next_index])
+}
+
+fn show_find_dialog(mgr: &Rc<RefCell<TabManagerInner>>, window: &gtk::ApplicationWindow) {
+    let view = { mgr.borrow().selected_webview() };
+    let Some(controller) = view.and_then(|view| view.find_controller()) else {
+        return;
+    };
+
+    let dialog = gtk::Dialog::with_buttons(
+        Some("Find in page"),
+        Some(window.upcast_ref::<gtk::Window>()),
+        gtk::DialogFlags::DESTROY_WITH_PARENT,
+        &[],
+    );
+    dialog.set_modal(false);
+
+    let content = dialog.content_area();
+    let entry = gtk::Entry::new();
+    entry.set_placeholder_text(Some("Find text"));
+    entry.set_margin_top(12);
+    entry.set_margin_start(12);
+    entry.set_margin_end(12);
+    content.pack_start(&entry, false, false, 0);
+
+    let buttons = GtkBox::new(Orientation::Horizontal, 6);
+    buttons.set_halign(gtk::Align::End);
+    buttons.set_margin_top(8);
+    buttons.set_margin_bottom(12);
+    buttons.set_margin_start(12);
+    buttons.set_margin_end(12);
+    let previous = Button::with_label("Previous");
+    let next = Button::with_label("Next");
+    let close = Button::with_label("Close");
+    buttons.pack_start(&previous, false, false, 0);
+    buttons.pack_start(&next, false, false, 0);
+    buttons.pack_start(&close, false, false, 0);
+    content.pack_start(&buttons, false, false, 0);
+
+    let find_on_change = controller.clone();
+    entry.connect_changed(move |entry| {
+        let text = entry.text();
+        if text.is_empty() {
+            find_on_change.search_finish();
+        } else {
+            find_on_change.search(
+                text.as_str(),
+                (FindOptions::CASE_INSENSITIVE | FindOptions::WRAP_AROUND).bits(),
+                1_000,
+            );
+        }
+    });
+
+    let find_on_activate = controller.clone();
+    entry.connect_activate(move |_| find_on_activate.search_next());
+
+    let find_previous = controller.clone();
+    previous.connect_clicked(move |_| find_previous.search_previous());
+
+    let find_next = controller.clone();
+    next.connect_clicked(move |_| find_next.search_next());
+
+    let dialog_weak = dialog.downgrade();
+    close.connect_clicked(move |_| {
+        if let Some(dialog) = dialog_weak.upgrade() {
+            dialog.close();
+        }
+    });
+
+    let finish_on_destroy = controller.clone();
+    dialog.connect_destroy(move |_| finish_on_destroy.search_finish());
+
+    let dialog_weak = dialog.downgrade();
+    let finish_on_escape = controller;
+    entry.connect_key_press_event(move |_, event| {
+        if event.keyval() == gdk::keys::constants::Escape {
+            finish_on_escape.search_finish();
+            if let Some(dialog) = dialog_weak.upgrade() {
+                dialog.close();
+            }
+            glib::Propagation::Stop
+        } else {
+            glib::Propagation::Proceed
+        }
+    });
+
+    dialog.show_all();
+    entry.grab_focus();
+}
+
+fn set_browser_chrome_visible(mgr: &Rc<RefCell<TabManagerInner>>, visible: bool) {
+    let (tab_bar, tab_separator, toolbar, toolbar_separator) = {
+        let inner = mgr.borrow();
+        (
+            inner.tab_bar.clone(),
+            inner.tab_separator.clone(),
+            inner.toolbar.clone(),
+            inner.toolbar_separator.clone(),
+        )
+    };
+    tab_bar.set_visible(visible);
+    tab_separator.set_visible(visible);
+    toolbar.set_visible(visible);
+    toolbar_separator.set_visible(visible);
+}
+
 fn selection_after_close(
     remaining_ids: &[u32],
     selected: Option<u32>,
@@ -784,6 +1026,7 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     let tab_scroll = ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
     tab_scroll.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
     tab_scroll.set_shadow_type(gtk::ShadowType::None);
+    tab_scroll.set_can_focus(false);
 
     let tab_strip = GtkBox::new(Orientation::Horizontal, 4);
     tab_scroll.add(&tab_strip);
@@ -865,7 +1108,9 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
 
 #[cfg(test)]
 mod tests {
-    use super::{scroll_value_to_reveal, selection_after_close, url_bar_sync_value};
+    use super::{
+        next_tab_id, scroll_value_to_reveal, selection_after_close, url_bar_sync_value,
+    };
 
     #[test]
     fn scroll_value_reveals_pills_outside_the_current_viewport() {
@@ -896,5 +1141,13 @@ mod tests {
             url_bar_sync_value(false, "https://example.com"),
             Some("https://example.com")
         );
+    }
+
+    #[test]
+    fn keyboard_tab_switching_wraps_in_both_directions() {
+        assert_eq!(next_tab_id(&[1, 2, 3], Some(2), false), Some(3));
+        assert_eq!(next_tab_id(&[1, 2, 3], Some(3), false), Some(1));
+        assert_eq!(next_tab_id(&[1, 2, 3], Some(1), true), Some(3));
+        assert_eq!(next_tab_id(&[], None, false), None);
     }
 }

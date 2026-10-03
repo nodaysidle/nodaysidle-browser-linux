@@ -11,6 +11,7 @@ GTK + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/noday
 - Open HTTP(S) URLs and local HTML files passed by other applications or the command line
 - Downloads prompt for a save location and show progress with cancel support
 - Site requests for location, camera, microphone, notifications, and pointer lock require explicit approval
+- Keyboard shortcuts: Ctrl+T/W/L/Tab, Ctrl+F, and F11; tab titles can receive keyboard focus
 - Desktop entry for the Omarchy app launcher (Super+Space → Apps)
 
 ## Requirements (Arch / Omarchy)

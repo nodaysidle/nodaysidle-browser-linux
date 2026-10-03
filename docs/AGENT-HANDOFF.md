@@ -166,6 +166,10 @@ Quiet, native-feeling **nodaysidle** browser on Linux: home page on every **+** 
 - WebKit fullscreen requests hide the tab bar and toolbar and fullscreen the window. Leaving fullscreen restores the chrome.
 - URI notifications do not replace text while the URL bar has focus.
 
+### Keyboard access (X-9)
+- Ctrl+T opens a tab, Ctrl+W closes the selected tab, Ctrl+L focuses and selects the URL bar, Ctrl+Tab / Ctrl+Shift+Tab cycle tabs, Ctrl+F opens find-in-page, and F11 toggles window fullscreen.
+- Tab titles can be focused and activated with Enter or Space. The tab scroller is skipped in the Tab order, and focused controls have a high-contrast highlight.
+
 ## Pending
 
 - **Git remote not configured — push deferred.** `master` has one local commit (`ae08c40`); nothing pushed. When the user says to, add `origin` and push, e.g. `git remote add origin <url> && git push -u origin master`.
