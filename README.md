@@ -15,10 +15,13 @@ GTK 3 + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/nod
   an unreadable file is kept as `history.json.corrupt-<time>`
 - Opens URLs and local files passed on the command line or by other applications (see [Command line](#command-line))
 - `window.open` pop-ups that ask for a size (e.g. sign-in windows) open in their own small window with a read-only
-  address bar; links with `target=_blank` and plain `window.open` open a new tab
+  address bar (see [Pop-up windows](#pop-up-windows)); links with `target=_blank` and plain `window.open` open a
+  new tab
 - Find in page (Ctrl+F) as a bar under the toolbar
-- Downloads ask where to save and show progress; Cancel stops the download, and closing the progress window
-  while a download runs asks before cancelling it
+- Downloads ask where to save and show progress in a window that belongs to the main browser window (closing a
+  pop-up that started a download does not stop it). Cancel stops the download and the window then shows
+  "Download cancelled" with a Close button; closing the progress window while a download runs asks before
+  cancelling it. Quitting the browser stops unfinished downloads.
 - Site requests for location, camera, microphone, notifications and pointer lock need an explicit Allow; the
   answer is remembered per site until the browser exits
 - Failed loads and crashed pages show a built-in error page with a Try again / Reload button
@@ -32,7 +35,7 @@ GTK 3 + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/nod
 |------|--------|
 | Ctrl+T | New tab |
 | Ctrl+W, Ctrl+F4 | Close tab |
-| Ctrl+Tab, Ctrl+Page Down | Next tab |
+| Ctrl+Tab, Ctrl+Page Down, Ctrl+Shift+Page Down | Next tab |
 | Ctrl+Shift+Tab, Ctrl+Page Up | Previous tab |
 | Ctrl+1 … Ctrl+8, Ctrl+9 | Go to tab 1–8, last tab |
 | Ctrl+L, Alt+D, F6 | Focus the address bar |
@@ -41,13 +44,24 @@ GTK 3 + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/nod
 | Alt+Left, Alt+Right | Back, Forward |
 | F11 | Full screen (also leaves video fullscreen) |
 
-Shortcuts work wherever the focus is, including inside web pages. Tab titles can be reached with Tab and
-activated with Enter or Space.
+In the main window, shortcuts work wherever the focus is, including inside web pages. Tab titles can be reached
+with Tab and activated with Enter or Space. Pop-up windows have their own, smaller set (below).
 
 ### Tabs
 
 Closing the last tab replaces it with a fresh Home tab, so the window always has one tab; a lone Home tab that
 has not loaded anything has no close button. Close the window to quit.
+
+### Pop-up windows
+
+A pop-up window shows one page and a read-only address bar. It has:
+
+- Ctrl+W or Ctrl+F4 to close it, Ctrl+R or F5 to reload, and Esc to close it unless the page handles the key
+  itself (for example a page script that cancels the Escape key event);
+- the same error page for failed loads and the same "This page stopped working" page with Reload as tabs.
+
+It has no find bar (no Ctrl+F), no Back/Forward or Home buttons, no editable address bar and none of the tab
+shortcuts, and its pages are not added to history. Pop-ups close together with the main window.
 
 ### Address bar input
 
@@ -135,6 +149,9 @@ changed by hand to `class:^(com\.nodaysidle\.Browser)$`.
   the code paths used here).
 - Google and other sites may still challenge uncommon browsers; persistent login depends on the on-disk
   profile not being cleared.
+- Without a usable XDG data directory or `HOME`, the profile goes to `$TMPDIR/nodaysidle-browser-$USER`, but
+  only if that is a real directory owned by you with mode `0700` (after a chmod). Otherwise the browser uses a
+  fresh private directory with a random name for that session, and if it cannot create one it refuses to start.
 - There is no CI: the repository has no remote yet.
 
 ## Related
