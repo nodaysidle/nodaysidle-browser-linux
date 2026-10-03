@@ -4,8 +4,9 @@
 #   ~/.local/share/applications/com.nodaysidle.Browser.desktop
 #   ~/.local/share/icons/hicolor/{scalable,48x48,128x128,256x256}/apps/nodaysidle-browser.*
 # The desktop file is desktop/com.nodaysidle.Browser.desktop with only the
-# Exec line pointing at the installed binary. Its name matches the GTK
-# application ID, which is the Wayland app_id (Hyprland, GNOME, KDE).
+# Exec line pointing at the installed binary. Its name matches the
+# application ID, which the browser also uses as its Wayland app_id and X11
+# WM_CLASS (Hyprland, GNOME, KDE, docks and taskbars match on it).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

@@ -21,10 +21,12 @@ use tabs::{build_chrome_layout, TabManager};
 const APP_ID: &str = "com.nodaysidle.Browser";
 
 fn main() -> glib::ExitCode {
-    // WM_CLASS on X11 comes from the program name: keep it equal to the
-    // desktop file's StartupWMClass however the binary is invoked. On Wayland
-    // the app_id is APP_ID, which matches com.nodaysidle.Browser.desktop (X-26).
-    glib::set_prgname(Some("nodaysidle-browser"));
+    // GTK 3 uses the program name as the Wayland app_id and as X11's WM_CLASS
+    // instance, and the program class as the WM_CLASS class. Set both to the
+    // application ID so the window, com.nodaysidle.Browser.desktop and its
+    // StartupWMClass all match however the binary is invoked (X-26). GDK must
+    // be initialized before the class can be set, hence the startup handler.
+    glib::set_prgname(Some(APP_ID));
     glib::set_application_name("nodaysidle");
     let app = Application::builder()
         .application_id(APP_ID)
@@ -32,6 +34,7 @@ fn main() -> glib::ExitCode {
         .build();
     let tab_manager = Rc::new(RefCell::new(None::<TabManager>));
     app.connect_startup(|_| {
+        gdk::set_program_class(APP_ID);
         theme::install();
         icon::install_default_icon();
     });
