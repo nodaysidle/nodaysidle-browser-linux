@@ -103,9 +103,10 @@ Modules:
   processes show a dark built-in page with Try again / Reload. Error pages are not added to history.
 - **Address bar extras:** lock / "Not secure" icon from the TLS state, a progress bar, and Reload
   turning into Stop while loading. The URL bar does not overwrite text while focused.
-- **History:** recorded when a load finishes, saved two seconds after the last change and on exit,
-  via a `0600` temp file + fsync + rename. An unreadable file is renamed to
-  `history.json.corrupt-<time>` instead of being overwritten.
+- **History:** recorded when a load finishes and written in batches: the first unsaved visit arms
+  one 2 s timer (later visits join that batch), a failed write is retried after 5 s, doubling up to
+  60 s, and the app flushes on exit. Writes go through a `0600` temp file + fsync + rename. An
+  unreadable file is renamed to `history.json.corrupt-<time>` instead of being overwritten.
 - **Cookies** persist in `webkit-data/cookies.sqlite` (created `0600`).
 
 ## Rules that keep it stable

@@ -10,8 +10,9 @@ GTK 3 + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/nod
 - Built-in Home page on every new tab; the Home button returns to it (Back takes you to the page you left)
 - **Persistent profile** under `~/.local/share/nodaysidle-browser/` (directories `0700`):
   cookies in `webkit-data/cookies.sqlite` (`0600`), other site data in `webkit-data/`, cache in `webkit-cache/`
-- **Local history** in `~/.local/share/nodaysidle-browser/history.json` (`0600`), written atomically a couple
-  of seconds after a visit and on exit; an unreadable file is kept as `history.json.corrupt-<time>`
+- **Local history** in `~/.local/share/nodaysidle-browser/history.json` (`0600`), written atomically in
+  batches (about two seconds after the first unsaved visit, retried with backoff if a write fails) and on exit;
+  an unreadable file is kept as `history.json.corrupt-<time>`
 - Opens URLs and local files passed on the command line or by other applications (see [Command line](#command-line))
 - `window.open` pop-ups that ask for a size (e.g. sign-in windows) open in their own small window with a read-only
   address bar; links with `target=_blank` and plain `window.open` open a new tab

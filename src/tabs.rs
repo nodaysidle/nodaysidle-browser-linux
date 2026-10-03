@@ -460,14 +460,11 @@ impl TabManager {
                 sync_view_chrome(&mgr_load, tab_id, view, &title, &uri);
                 return;
             }
-            let schedule_save = history.borrow_mut().record(uri.to_string(), title.clone());
-            if schedule_save {
+            let save_after = history.borrow_mut().record(uri.to_string(), title.clone());
+            if let Some(delay) = save_after {
                 // Batch history writes instead of rewriting the file on every
                 // load (X-17); the app also flushes on shutdown.
-                let history = history.clone();
-                glib::timeout_add_local_once(std::time::Duration::from_secs(2), move || {
-                    history.borrow_mut().flush();
-                });
+                schedule_history_save(history.clone(), delay);
             }
             sync_view_chrome(&mgr_load, tab_id, view, &title, &uri);
         }));
@@ -1452,6 +1449,17 @@ enum Shortcut {
     Reload,
     Back,
     Forward,
+}
+
+/// Arms the history save timer; a failed save re-arms it with the store's
+/// backoff delay so one error does not stop saving for the session (V-3).
+fn schedule_history_save(history: Rc<RefCell<HistoryStore>>, delay: std::time::Duration) {
+    glib::timeout_add_local_once(delay, move || {
+        let retry = history.borrow_mut().flush_from_timer();
+        if let Some(delay) = retry {
+            schedule_history_save(history, delay);
+        }
+    });
 }
 
 fn shortcut_for(keyval: &gdk::keys::Key, state: gdk::ModifierType) -> Option<Shortcut> {

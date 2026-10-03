@@ -3,6 +3,13 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// How long after the first unsaved visit the batch is written (X-17).
+pub const SAVE_DELAY: Duration = Duration::from_secs(2);
+/// First retry delay after a failed save; doubles up to `MAX_RETRY_DELAY`.
+const FIRST_RETRY_DELAY: Duration = Duration::from_secs(5);
+const MAX_RETRY_DELAY: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistoryEntry {
@@ -12,14 +19,20 @@ pub struct HistoryEntry {
 }
 
 /// Browsing history kept in memory and written to disk in batches (X-17):
-/// `record` only marks the store dirty, and the owner calls `flush` shortly
-/// afterwards and on shutdown. Writes are atomic and private to the user, and a
-/// file that cannot be parsed is set aside instead of being overwritten.
+/// `record` marks the store dirty and asks the owner to arm one save timer
+/// (`SAVE_DELAY` after the first unsaved visit); the timer calls
+/// `flush_from_timer`, which asks for a retry with backoff if the write fails
+/// (V-3). The owner also calls `flush` on shutdown. Writes are atomic and
+/// private to the user, and a file that cannot be parsed is set aside instead
+/// of being overwritten.
 pub struct HistoryStore {
     path: PathBuf,
     entries: Vec<HistoryEntry>,
     max_entries: usize,
     dirty: bool,
+    /// A save timer is armed and will call `flush_from_timer`.
+    save_pending: bool,
+    retry_delay: Duration,
 }
 
 impl HistoryStore {
@@ -44,6 +57,8 @@ impl HistoryStore {
             entries,
             max_entries: 500,
             dirty: false,
+            save_pending: false,
+            retry_delay: FIRST_RETRY_DELAY,
         }
     }
 
@@ -51,11 +66,11 @@ impl HistoryStore {
         &self.entries
     }
 
-    /// Records a visit. Returns true when the store just became dirty, i.e.
-    /// when the caller should schedule a `flush`.
-    pub fn record(&mut self, url: String, title: String) -> bool {
+    /// Records a visit. Returns the delay after which the caller must call
+    /// `flush_from_timer` when no save timer is armed yet, otherwise `None`.
+    pub fn record(&mut self, url: String, title: String) -> Option<Duration> {
         if url.is_empty() || url == "about:blank" {
-            return false;
+            return None;
         }
 
         self.entries.retain(|e| e.url != url);
@@ -72,22 +87,47 @@ impl HistoryStore {
             self.entries.truncate(self.max_entries);
         }
 
-        let schedule = !self.dirty;
         self.dirty = true;
-        schedule
+        if self.save_pending {
+            return None;
+        }
+        self.save_pending = true;
+        Some(SAVE_DELAY)
     }
 
-    /// Writes pending changes to disk, if any.
-    pub fn flush(&mut self) {
-        if !self.dirty {
-            return;
+    /// Called by the save timer. Writes pending changes; if that fails, the
+    /// timer is consumed but the store stays dirty and the returned delay
+    /// tells the caller when to try again (doubling up to a minute).
+    pub fn flush_from_timer(&mut self) -> Option<Duration> {
+        self.save_pending = false;
+        if self.flush() {
+            self.retry_delay = FIRST_RETRY_DELAY;
+            return None;
         }
-        match serde_json::to_string_pretty(&self.entries) {
-            Ok(json) => match write_private_atomically(&self.path, json.as_bytes()) {
-                Ok(()) => self.dirty = false,
-                Err(err) => eprintln!("Could not save history to {}: {err}", self.path.display()),
-            },
-            Err(err) => eprintln!("Could not serialise history: {err}"),
+        let delay = self.retry_delay;
+        self.retry_delay = (self.retry_delay * 2).min(MAX_RETRY_DELAY);
+        self.save_pending = true;
+        Some(delay)
+    }
+
+    /// Writes pending changes to disk, if any. Returns false if they could
+    /// not be written (the store stays dirty).
+    pub fn flush(&mut self) -> bool {
+        if !self.dirty {
+            return true;
+        }
+        let result = serde_json::to_string_pretty(&self.entries)
+            .map_err(std::io::Error::from)
+            .and_then(|json| write_private_atomically(&self.path, json.as_bytes()));
+        match result {
+            Ok(()) => {
+                self.dirty = false;
+                true
+            }
+            Err(err) => {
+                eprintln!("Could not save history to {}: {err}", self.path.display());
+                false
+            }
         }
     }
 }
@@ -142,9 +182,10 @@ fn write_private_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()>
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::HistoryStore;
+    use super::{HistoryStore, SAVE_DELAY};
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
+    use std::time::Duration;
 
     fn test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -160,12 +201,12 @@ mod tests {
         let dir = test_dir("atomic");
         let path = dir.join("profile/history.json");
         let mut store = HistoryStore::load(path.clone());
-        assert!(store.record("https://example.com/".into(), "Example".into()));
+        assert_eq!(store.record("https://example.com/".into(), "Example".into()), Some(SAVE_DELAY));
         // Further visits before the flush do not schedule another save.
-        assert!(!store.record("https://example.org/".into(), "Org".into()));
+        assert_eq!(store.record("https://example.org/".into(), "Org".into()), None);
         assert!(!path.exists(), "record must not write synchronously");
 
-        store.flush();
+        assert_eq!(store.flush_from_timer(), None);
         let file_mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(file_mode & 0o777, 0o600);
         let dir_mode = std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode();
@@ -179,7 +220,34 @@ mod tests {
         let reloaded = HistoryStore::load(path);
         let urls: Vec<_> = reloaded.entries().iter().map(|e| e.url.as_str()).collect();
         assert_eq!(urls, ["https://example.org/", "https://example.com/"]);
-        assert!(store.record("https://example.net/".into(), "Net".into()));
+        assert_eq!(store.record("https://example.net/".into(), "Net".into()), Some(SAVE_DELAY));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_save_is_retried_with_backoff_until_it_succeeds() {
+        let dir = test_dir("retry");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A regular file where the profile directory should be makes the
+        // write fail regardless of the user running the test.
+        let blocker = dir.join("profile");
+        std::fs::write(&blocker, b"").unwrap();
+        let path = blocker.join("history.json");
+        let mut store = HistoryStore::load(path.clone());
+
+        assert_eq!(store.record("https://example.com/".into(), "Example".into()), Some(SAVE_DELAY));
+        assert_eq!(store.flush_from_timer(), Some(Duration::from_secs(5)));
+        // The retry timer is pending, so new visits do not arm another one.
+        assert_eq!(store.record("https://example.org/".into(), "Org".into()), None);
+        assert_eq!(store.flush_from_timer(), Some(Duration::from_secs(10)));
+
+        std::fs::remove_file(&blocker).unwrap();
+        assert_eq!(store.flush_from_timer(), None);
+        let reloaded = HistoryStore::load(path);
+        let urls: Vec<_> = reloaded.entries().iter().map(|e| e.url.as_str()).collect();
+        assert_eq!(urls, ["https://example.org/", "https://example.com/"]);
+        // Back to normal batching, with the backoff reset.
+        assert_eq!(store.record("https://example.net/".into(), "Net".into()), Some(SAVE_DELAY));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
