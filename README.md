@@ -1,159 +1,144 @@
-# nodaysidle-browser (Linux)
+<div align="center">
+  <img src="assets/icon.svg" alt="nodaysidle app logo" width="132" height="132">
 
-GTK 3 + WebKitGTK port of [nodaysidle-browser](https://github.com/nodaysidle/nodaysidle-browser) for Omarchy / Linux.
+  # nodaysidle (Linux)
 
-## Features (v0.1)
+  **A quiet, native Linux browser for focused browsing.**
 
-- Multi-tab browsing (WebKitGTK 4.1) with a custom tab strip; tab tooltips show the full title and URL
-- Address bar with search / URL rules aligned with the macOS app (see [Address bar input](#address-bar-input)),
-  a lock / "Not secure" indicator, a load-progress bar, and Reload that turns into Stop while loading
-- Built-in Home page on every new tab; the Home button returns to it (Back takes you to the page you left)
-- **Persistent profile** under `~/.local/share/nodaysidle-browser/` (directories `0700`):
-  cookies in `webkit-data/cookies.sqlite` (`0600`), other site data in `webkit-data/`, cache in `webkit-cache/`
-- **Local history** in `~/.local/share/nodaysidle-browser/history.json` (`0600`), written atomically in
-  batches (about two seconds after the first unsaved visit, retried with backoff if a write fails) and on exit;
-  an unreadable file is kept as `history.json.corrupt-<time>`
-- Opens URLs and local files passed on the command line or by other applications (see [Command line](#command-line))
-- `window.open` pop-ups that ask for a size (e.g. sign-in windows) open in their own small window with a read-only
-  address bar (see [Pop-up windows](#pop-up-windows)); links with `target=_blank` and plain `window.open` open a
-  new tab
-- Find in page (Ctrl+F) as a bar under the toolbar
-- Downloads ask where to save and show progress in a window that belongs to the main browser window (closing a
-  pop-up that started a download does not stop it). Cancel stops the download and the window then shows
-  "Download cancelled" with a Close button; closing the progress window or the browser window while a download
-  runs asks for confirmation before cancelling.
-- Site requests for location, camera, microphone, notifications and pointer lock need an explicit Allow; the
-  answer is remembered per site until the browser exits
-- Failed loads and crashed pages show a built-in error page with a Try again / Reload button
-- Video and other element fullscreen; F11 window fullscreen
-- Menu (☰) with New Tab, Find in Page, Full Screen and About
-- Desktop entry and icon for the Omarchy app launcher (Super+Space → Apps)
+  Minimal chrome. Native WebKit pages. Local-first privacy.
 
-### Keyboard shortcuts
+  <p>
+    <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases"><img src="https://img.shields.io/badge/version-0.1.0-8e8e96?style=flat-square" alt="Version 0.1.0"></a>
+    <a href="https://www.kernel.org/"><img src="https://img.shields.io/badge/Linux-x86__64-151518?style=flat-square&logo=linux&logoColor=white" alt="Linux x86_64"></a>
+    <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-2021-DEA584?style=flat-square&logo=rust&logoColor=white" alt="Rust 2021"></a>
+    <a href="https://webkitgtk.org/"><img src="https://img.shields.io/badge/WebKitGTK-4.1-1f5b82?style=flat-square&logo=webkit&logoColor=white" alt="WebKitGTK 4.1"></a>
+    <img src="https://img.shields.io/badge/telemetry-none-4c8c6b?style=flat-square" alt="No telemetry">
+  </p>
+</div>
 
-| Keys | Action |
-|------|--------|
-| Ctrl+T | New tab |
-| Ctrl+W, Ctrl+F4 | Close tab |
-| Ctrl+Tab, Ctrl+Page Down, Ctrl+Shift+Page Down | Next tab |
-| Ctrl+Shift+Tab, Ctrl+Page Up | Previous tab |
-| Ctrl+1 … Ctrl+8, Ctrl+9 | Go to tab 1–8, last tab |
-| Ctrl+L, Alt+D, F6 | Focus the address bar |
-| Ctrl+F | Find in page (Enter / Shift+Enter: next / previous, Esc: close) |
-| Ctrl+R, F5 | Reload |
-| Alt+Left, Alt+Right | Back, Forward |
-| F11 | Full screen (also leaves video fullscreen) |
+## What is nodaysidle?
 
-In the main window, shortcuts work wherever the focus is, including inside web pages. Tab titles can be reached
-with Tab and activated with Enter or Space. Pop-up windows have their own, smaller set (below).
+`nodaysidle` is a deliberately small native Linux browser built with Rust, GTK 3, and WebKitGTK 4.1. It keeps the browser controls close at hand and lets websites own the page experience—without an Electron runtime, heavy JavaScript chrome layer, start-page clutter, or application telemetry.
 
-### Tabs
+The visual language is warm charcoal, silver, and quiet motion: a focused surface for everyday browsing that stays out of the way.
 
-Closing the last tab replaces it with a fresh Home tab, so the window always has one tab; a lone Home tab that
-has not loaded anything has no close button. Close the window to quit.
+## Highlights
 
-### Pop-up windows
+- Native GTK 3 browser chrome backed by WebKitGTK 4.1 (`libsoup3`)
+- Built-in search-first Home screen on new tabs with DuckDuckGo resolution
+- Multi-tab browsing with auto-scrolling active pills, minimum-width shrinking, and tab tooltips
+- Address bar with instant search / URL resolution, real-time HTTPS indicator, load progress, and decoded Unicode URLs
+- `Ctrl+F` in-page find bar with accurate match counts and narrow tiling support
+- Safe tab lifecycle and sized pop-up windows (e.g. OAuth sign-in) with error and crash surfaces
+- Downloads with folder chooser, progress dialog, cancel protection, and close confirmation
+- Local-first persistence: bounded history (`0600`) flushed on exit/signals, and persistent cookies (`0600` SQLite)
+- Desktop integration with Wayland `app_id` and X11 `WM_CLASS` (`com.nodaysidle.Browser`)
+- Portable `.AppImage` available for immediate download
+- No application telemetry
 
-A pop-up window shows one page and a read-only address bar. It has:
+## Install and run
 
-- Ctrl+W or Ctrl+F4 to close it, Ctrl+R or F5 to reload, and Esc to close it unless the page handles the key
-  itself (for example a page script that cancels the Escape key event);
-- the same error page for failed loads and the same "This page stopped working" page with Reload as tabs.
+### Download `.AppImage`
 
-It has no find bar (no Ctrl+F), no Back/Forward or Home buttons, no editable address bar and none of the tab
-shortcuts, and its pages are not added to history. Pop-ups close together with the main window.
-
-### Address bar input
-
-- `http://`, `https://`, `file://` and `about:` URLs load as typed.
-- `/absolute/path` and `~/path` open local files.
-- `localhost`, `*.localhost`, a single-label `host:port`, and local addresses use `http://`: loopback,
-  private IPv4 (10/8, 172.16/12, 192.168/16), link-local IPv4 (169.254/16), IPv6 loopback, unique local
-  (fc00::/7) and link-local (fe80::/10) addresses. IPv6 literals such as `::1` are bracketed.
-- Other input that looks like a domain (`example.com`, `en.wikipedia.org/wiki/Rust`) gets `https://`.
-- Everything else is searched with DuckDuckGo, including text with spaces, file names such as `node.js` or
-  `notes.txt`, numbers such as `3.14`, and `javascript:` / `data:` URLs.
-
-### Command line
+Download the standalone executable from the [GitHub Releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases) page:
 
 ```bash
-nodaysidle-browser [URL-or-file …]
+chmod +x nodaysidle-browser-x86_64.AppImage
+./nodaysidle-browser-x86_64.AppImage
 ```
 
-An argument naming an existing file (or starting with `./` or `../`) opens that file; anything else is
-resolved like address-bar input, so `nodaysidle-browser wikipedia.org` opens `https://wikipedia.org`.
-Running the command again while the browser is open raises the existing window and opens the arguments there.
+### Build `.AppImage` locally
 
-## Requirements (Arch / Omarchy)
+```bash
+./scripts/package-appimage.sh
+# Outputs: dist/nodaysidle-browser-x86_64.AppImage
+```
+
+### Requirements (Arch / Omarchy)
 
 ```bash
 sudo pacman -S --needed gtk3 webkit2gtk-4.1 base-devel
 ```
 
-Rust **1.88** or newer (the locked dependencies need it; `rust-version` in `Cargo.toml`).
+Requires Rust **1.88** or newer (`rust-version` in `Cargo.toml`).
 
-## Run from source
+### Run from source
 
 ```bash
-cd ~/dev/nodaysidle/nodaysidle-browser-linux
+git clone https://github.com/nodaysidle/nodaysidle-browser-linux.git
+cd nodaysidle-browser-linux
 cargo run --release
-cargo test --release   # GTK tests run only when a display is available
+cargo test --release   # GTK tests run when a display is available
 ```
 
-## Install launcher + icon
+### Install launcher + icon
 
 ```bash
 ./scripts/install-desktop.sh
 ```
 
 This builds a release binary and installs:
-
 - `~/.local/bin/nodaysidle-browser`
-- `${XDG_DATA_HOME:-~/.local/share}/applications/com.nodaysidle.Browser.desktop`: the tracked
-  `desktop/com.nodaysidle.Browser.desktop` with only `Exec=` pointing at the installed binary (quoted only
-  when the path contains characters that need it, because `xdg-settings` cannot handle a quoted `Exec=`)
-- `${XDG_DATA_HOME:-~/.local/share}/icons/hicolor/scalable/apps/nodaysidle-browser.svg`, plus 48/128/256 px PNGs when
-  `rsvg-convert` is installed
+- `${XDG_DATA_HOME:-~/.local/share}/applications/com.nodaysidle.Browser.desktop` (quoted only when path characters require it)
+- `${XDG_DATA_HOME:-~/.local/share}/icons/hicolor/scalable/apps/nodaysidle-browser.svg` (plus 48/128/256 px PNGs when `rsvg-convert` is available)
 
-The desktop file is named after the application ID `com.nodaysidle.Browser`, which the browser also uses as
-its Wayland app_id and X11 window class (`StartupWMClass`). Hyprland window rules therefore match
-`class:^(com\.nodaysidle\.Browser)$` (older builds used `nodaysidle-browser`). Run
-`update-desktop-database ~/.local/share/applications` if the app does not appear immediately.
+The launcher name matches the application ID `com.nodaysidle.Browser`, so Hyprland window rules match `class:^(com\.nodaysidle\.Browser)$`.
 
-### Upgrading from `nodaysidle-browser.desktop`
+#### Upgrading from `nodaysidle-browser.desktop`
 
-Versions before the rename installed `~/.local/share/applications/nodaysidle-browser.desktop`. Running the
-script again:
+Versions before the rename installed `nodaysidle-browser.desktop`. Running `./scripts/install-desktop.sh`:
+- Migrates `nodaysidle-browser.desktop` entries in `mimeapps.list` files to `com.nodaysidle.Browser.desktop`.
+- Updates `xdg-settings set default-web-browser com.nodaysidle.Browser.desktop` if the old name was previously default.
+- Removes the old generated launcher.
 
-- rewrites `nodaysidle-browser.desktop` to `com.nodaysidle.Browser.desktop` in every entry of
-  `${XDG_CONFIG_HOME:-~/.config}/mimeapps.list`, `${XDG_CONFIG_HOME:-~/.config}/*-mimeapps.list` and the
-  legacy `applications/mimeapps.list` that lists it (default browser, `x-scheme-handler/http(s)`,
-  `text/html`, added associations). Other entries and lines are left byte-for-byte as they were; a changed file
-  is first copied to `mimeapps.list.nodaysidle-backup`, and a symlinked file is edited at its target;
-- if `xdg-settings get default-web-browser` reported `nodaysidle-browser.desktop`, runs
-  `xdg-settings set default-web-browser com.nodaysidle.Browser.desktop` (which also updates desktops that keep
-  the setting outside mimeapps.list, where xdg-settings supports them); if that fails it prints the command;
-- removes the old launcher from both `~/.local/share/applications` and `$XDG_DATA_HOME/applications`.
+## Keyboard shortcuts
 
-All of this happens only for the launcher the script generated (`Name=nodaysidle`,
-`StartupWMClass=nodaysidle-browser`). If a `nodaysidle-browser.desktop` you wrote yourself is there, it is
-kept and so are the associations that use it. Hyprland rules matching `class:^(nodaysidle-browser)$` must be
-changed by hand to `class:^(com\.nodaysidle\.Browser)$`.
+| Action | Shortcut |
+| --- | --- |
+| New tab | <kbd>Ctrl</kbd>+<kbd>T</kbd> |
+| Close tab | <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F4</kbd> |
+| Next tab | <kbd>Ctrl</kbd>+<kbd>Tab</kbd>, <kbd>Ctrl</kbd>+<kbd>Page Down</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Page Down</kbd> |
+| Previous tab | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd>, <kbd>Ctrl</kbd>+<kbd>Page Up</kbd> |
+| Select tab | <kbd>Ctrl</kbd>+<kbd>1</kbd>–<kbd>Ctrl</kbd>+<kbd>8</kbd>, <kbd>Ctrl</kbd>+<kbd>9</kbd> |
+| Focus address bar | <kbd>Ctrl</kbd>+<kbd>L</kbd>, <kbd>Alt</kbd>+<kbd>D</kbd>, <kbd>F6</kbd> |
+| Reload / stop | <kbd>Ctrl</kbd>+<kbd>R</kbd>, <kbd>F5</kbd> |
+| Find in page | <kbd>Ctrl</kbd>+<kbd>F</kbd> |
+| Navigate back / forward | <kbd>Alt</kbd>+<kbd>Left</kbd> / <kbd>Alt</kbd>+<kbd>Right</kbd> |
+| Full screen | <kbd>F11</kbd> |
 
-## Notes
+In the main window, shortcuts work wherever the focus is, including inside web pages. Tab titles can be reached with Tab and activated with Enter or Space.
 
-- The UI uses **GTK 3** with **webkit2gtk-4.1** through the `webkit2gtk` 2.0 crate (same engine family as the
-  Mac app's WebKit). GTK 4 bindings for WebKitGTK 6.0 exist (`webkit6` crate), but moving to them means
-  rewriting the UI for GTK 4; not planned for now. The `webkit2gtk` crate pins gtk-rs 0.18, so the gtk/glib
-  crates cannot be upgraded past 0.18 without that migration (glib advisory RUSTSEC-2024-0429 does not affect
-  the code paths used here).
-- Google and other sites may still challenge uncommon browsers; persistent login depends on the on-disk
-  profile not being cleared.
-- Without a usable XDG data directory or `HOME`, the profile goes to `$TMPDIR/nodaysidle-browser-$USER`, but
-  only if that is a real directory owned by you with mode `0700` (after a chmod). Otherwise the browser uses a
-  fresh private directory with a random name for that session, and if it cannot create one it refuses to start.
-- There is no CI: the repository has no remote yet.
+## Pop-up windows
+
+A pop-up window shows one page and a read-only address bar. It has:
+- <kbd>Ctrl</kbd>+<kbd>W</kbd> or <kbd>Ctrl</kbd>+<kbd>F4</kbd> to close it, <kbd>Ctrl</kbd>+<kbd>R</kbd> or <kbd>F5</kbd> to reload, and <kbd>Esc</kbd> to close it unless the page handles the key itself.
+- Built-in dark error pages for failed loads and web process recovery.
+- Pop-ups lack find, back/forward history, and editable address bar, and close with the parent window.
+
+## Address bar input
+
+- `http://`, `https://`, `file://` and `about:` URLs load as typed.
+- `/absolute/path` and `~/path` open local files.
+- `localhost`, `*.localhost`, a single-label `host:port`, and local addresses use `http://`: loopback, private IPv4 (`10/8`, `172.16/12`, `192.168/16`), link-local IPv4 (`169.254/16`), IPv6 loopback, unique local (`fc00::/7`) and link-local (`fe80::/10`) addresses. IPv6 literals such as `::1` are bracketed.
+- Other input that looks like a domain (`example.com`, `en.wikipedia.org/wiki/Rust`) gets `https://`.
+- Everything else is searched with DuckDuckGo, including text with spaces, file names such as `node.js` or `notes.txt`, numbers such as `3.14`, and `javascript:` / `data:` URLs.
+
+## Command line
+
+```bash
+nodaysidle-browser [URL-or-file …]
+```
+
+An argument naming an existing file (or starting with `./` or `../`) opens that file; anything else is resolved like address-bar input (e.g. `nodaysidle-browser wikipedia.org` opens `https://wikipedia.org`). Running the command again raises the existing window.
+
+## Privacy model
+
+- No analytics, telemetry, or application-owned browsing backend.
+- Website cookies persist locally in `~/.local/share/nodaysidle-browser/webkit-data/cookies.sqlite` (`0600`).
+- Local browsing history is stored in `~/.local/share/nodaysidle-browser/history.json` (`0600`) and flushed atomically on exit or signals (`SIGTERM`, `SIGINT`, `SIGHUP`).
+- WebKit sandbox is enabled by default.
+- Site requests for location, camera, microphone, notifications, and pointer lock require explicit user permission.
 
 ## Related
 
-- macOS app: `~/dev/nodaysidle/nodaysidle-browser` (Swift)
+- macOS app: [nodaysidle-browser](https://github.com/nodaysidle/nodaysidle-browser) (SwiftUI + WKWebView)
