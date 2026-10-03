@@ -12,6 +12,7 @@ use gtk::{Application, ApplicationWindow, Box as GtkBox, Orientation};
 use history::HistoryStore;
 use profile::{app_data_dir, persistent_web_context};
 use std::cell::RefCell;
+use std::path::Path;
 use std::rc::Rc;
 use tabs::{build_chrome_layout, TabManager};
 
@@ -42,7 +43,49 @@ fn main() -> glib::ExitCode {
         }
         manager.present();
     });
-    app.run()
+    let args = command_line_args(std::env::args().collect(), |path| path.exists());
+    app.run_with_args(&args)
+}
+
+/// GApplication turns every non-URI argument into a file relative to the
+/// working directory, so `nodaysidle-browser wikipedia.org` used to open
+/// file:///<cwd>/wikipedia.org (R-10). Resolve arguments here instead: an
+/// existing file opens as a file, and anything else goes through the same
+/// resolution as the address bar.
+fn command_line_args(args: Vec<String>, exists: impl Fn(&Path) -> bool) -> Vec<String> {
+    let cwd = std::env::current_dir().ok();
+    let mut options_done = false;
+    args.into_iter()
+        .enumerate()
+        .map(|(index, arg)| {
+            if index == 0 {
+                return arg;
+            }
+            if !options_done && arg.starts_with('-') {
+                options_done = arg == "--";
+                return arg;
+            }
+            command_line_target(&arg, cwd.as_deref(), &exists).unwrap_or(arg)
+        })
+        .collect()
+}
+
+fn command_line_target(
+    arg: &str,
+    cwd: Option<&Path>,
+    exists: &impl Fn(&Path) -> bool,
+) -> Option<String> {
+    let path = Path::new(arg);
+    let absolute = match cwd {
+        Some(cwd) if path.is_relative() => cwd.join(path),
+        _ => path.to_path_buf(),
+    };
+    let looks_like_path = arg.starts_with("./") || arg.starts_with("../");
+    if exists(&absolute) || (looks_like_path && cwd.is_some()) {
+        let absolute = absolute.canonicalize().unwrap_or(absolute);
+        return url::Url::from_file_path(&absolute).ok().map(String::from);
+    }
+    navigation::resolve(arg, navigation::SearchEngine::default())
 }
 
 fn get_or_build_ui(
@@ -92,7 +135,7 @@ fn build_ui(app: &Application) -> TabManager {
 fn external_uri_to_open(uri: &str) -> Option<String> {
     let parsed = url::Url::parse(uri).ok()?;
     match parsed.scheme() {
-        "http" | "https" | "file" => Some(parsed.into()),
+        "http" | "https" | "file" | "about" => Some(parsed.into()),
         _ => None,
     }
 }
@@ -101,7 +144,46 @@ fn external_uri_to_open(uri: &str) -> Option<String> {
 mod tests {
     use super::external_uri_to_open;
     use super::get_or_insert_manager;
+    use super::{command_line_args, command_line_target};
     use std::cell::{Cell, RefCell};
+    use std::path::Path;
+
+    fn target(arg: &str, existing: &[&str]) -> Option<String> {
+        command_line_target(arg, Some(Path::new("/work")), &|path: &Path| {
+            existing.iter().any(|existing| path == Path::new(existing))
+        })
+    }
+
+    #[test]
+    fn bare_host_arguments_resolve_like_the_address_bar() {
+        assert_eq!(target("wikipedia.org", &[]), Some("https://wikipedia.org".into()));
+        assert_eq!(target("localhost:3000", &[]), Some("http://localhost:3000".into()));
+        assert_eq!(
+            target("https://example.com/a", &[]),
+            Some("https://example.com/a".into())
+        );
+    }
+
+    #[test]
+    fn existing_files_and_explicit_paths_open_as_files() {
+        assert_eq!(
+            target("wikipedia.org", &["/work/wikipedia.org"]),
+            Some("file:///work/wikipedia.org".into())
+        );
+        assert_eq!(target("./missing.html", &[]), Some("file:///work/missing.html".into()));
+        assert_eq!(target("/tmp/page.html", &[]), Some("file:///tmp/page.html".into()));
+    }
+
+    #[test]
+    fn options_and_program_name_are_left_alone() {
+        let args = ["prog", "--gapplication-service", "wikipedia.org", "--", "-dash.org"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(
+            command_line_args(args, |_| false),
+            ["prog", "--gapplication-service", "https://wikipedia.org", "--", "https://-dash.org"]
+        );
+    }
 
     #[test]
     fn repeated_application_activation_reuses_the_existing_manager() {
@@ -135,6 +217,11 @@ mod tests {
             external_uri_to_open("file:///tmp/page.html"),
             Some("file:///tmp/page.html".to_string())
         );
+    }
+
+    #[test]
+    fn external_about_blank_is_accepted() {
+        assert_eq!(external_uri_to_open("about:blank"), Some("about:blank".to_string()));
     }
 
     #[test]
