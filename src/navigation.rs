@@ -57,7 +57,7 @@ fn resolve_with_home(raw: &str, engine: SearchEngine, home: Option<&Path>) -> Op
 
     // Unbracketed IPv6 literal such as `::1` or `fe80::1`.
     if let Ok(address) = trimmed.parse::<Ipv6Addr>() {
-        let scheme = if address.is_loopback() { "http" } else { "https" };
+        let scheme = if is_local_ipv6(address) { "http" } else { "https" };
         return Some(format!("{scheme}://[{address}]/"));
     }
 
@@ -104,22 +104,13 @@ fn host_kind(input: &str) -> HostKind {
     }
     let raw_host = raw_host(input);
     match parsed.host() {
-        Some(url::Host::Ipv6(address)) => {
-            if address.is_loopback() {
-                HostKind::Local
-            } else {
-                HostKind::Public
-            }
-        }
+        Some(url::Host::Ipv6(address)) if is_local_ipv6(address) => HostKind::Local,
+        Some(url::Host::Ipv6(_)) => HostKind::Public,
         Some(url::Host::Ipv4(_)) => {
             // WHATWG parsing turns `3.14` into 3.0.0.14; only a full dotted
             // quad typed by the user counts as an address.
             match raw_host.parse::<Ipv4Addr>() {
-                Ok(address)
-                    if address.is_loopback() || address.is_private() || address.is_link_local() =>
-                {
-                    HostKind::Local
-                }
+                Ok(address) if is_local_ipv4(address) => HostKind::Local,
                 Ok(_) => HostKind::Public,
                 Err(_) => HostKind::NotAHost,
             }
@@ -139,6 +130,22 @@ fn host_kind(input: &str) -> HostKind {
         }
         None => HostKind::NotAHost,
     }
+}
+
+/// Loopback (127.0.0.0/8), private (RFC 1918: 10/8, 172.16/12, 192.168/16)
+/// and link-local (169.254/16) addresses: local services that rarely have a
+/// certificate, so they get http.
+fn is_local_ipv4(address: Ipv4Addr) -> bool {
+    address.is_loopback() || address.is_private() || address.is_link_local()
+}
+
+/// Loopback (::1), unique local (fc00::/7), link-local (fe80::/10) and
+/// IPv4-mapped local addresses (V-5).
+fn is_local_ipv6(address: Ipv6Addr) -> bool {
+    address.is_loopback()
+        || address.is_unique_local()
+        || address.is_unicast_link_local()
+        || address.to_ipv4_mapped().is_some_and(is_local_ipv4)
 }
 
 /// Host part of `host[:port][/path]` as typed.
@@ -246,12 +253,28 @@ mod tests {
     }
 
     #[test]
+    fn private_and_link_local_ipv6_use_http() {
+        assert_eq!(resolve("fd00::1"), "http://[fd00::1]/");
+        assert_eq!(resolve("fc00::5"), "http://[fc00::5]/");
+        assert_eq!(resolve("fe80::1"), "http://[fe80::1]/");
+        assert_eq!(resolve("[fd12:3456::1]:8080/admin"), "http://[fd12:3456::1]:8080/admin");
+        assert_eq!(resolve("[fe80::abcd]/"), "http://[fe80::abcd]/");
+        assert_eq!(resolve("::ffff:192.168.1.1"), "http://[::ffff:192.168.1.1]/");
+        assert_eq!(resolve("fec0::1"), "https://[fec0::1]/");
+        assert_eq!(resolve("[2606:4700::1111]"), "https://[2606:4700::1111]");
+    }
+
+    #[test]
     fn local_and_private_hosts_use_http() {
         assert_eq!(resolve("localhost:3000"), "http://localhost:3000");
         assert_eq!(resolve("app.localhost"), "http://app.localhost");
         assert_eq!(resolve("127.0.0.1:8011/a"), "http://127.0.0.1:8011/a");
         assert_eq!(resolve("192.168.1.1"), "http://192.168.1.1");
         assert_eq!(resolve("10.0.0.2:8080"), "http://10.0.0.2:8080");
+        assert_eq!(resolve("172.16.0.1"), "http://172.16.0.1");
+        assert_eq!(resolve("172.31.255.254/x"), "http://172.31.255.254/x");
+        assert_eq!(resolve("169.254.10.20"), "http://169.254.10.20");
+        assert_eq!(resolve("172.32.0.1"), "https://172.32.0.1");
         assert_eq!(resolve("intranet:8080"), "http://intranet:8080");
     }
 

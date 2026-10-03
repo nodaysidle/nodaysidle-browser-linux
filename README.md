@@ -52,8 +52,9 @@ has not loaded anything has no close button. Close the window to quit.
 
 - `http://`, `https://`, `file://` and `about:` URLs load as typed.
 - `/absolute/path` and `~/path` open local files.
-- `localhost`, `*.localhost`, loopback and private-network addresses, and `host:port` use `http://`;
-  IPv6 literals such as `::1` are bracketed.
+- `localhost`, `*.localhost`, a single-label `host:port`, and local addresses use `http://`: loopback,
+  private IPv4 (10/8, 172.16/12, 192.168/16), link-local IPv4 (169.254/16), IPv6 loopback, unique local
+  (fc00::/7) and link-local (fe80::/10) addresses. IPv6 literals such as `::1` are bracketed.
 - Other input that looks like a domain (`example.com`, `en.wikipedia.org/wiki/Rust`) gets `https://`.
 - Everything else is searched with DuckDuckGo, including text with spaces, file names such as `node.js` or
   `notes.txt`, numbers such as `3.14`, and `javascript:` / `data:` URLs.
