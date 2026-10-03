@@ -157,6 +157,9 @@ Quiet, native-feeling **nodaysidle** browser on Linux: home page on every **+** 
 - Downloads ask for a destination, default to the XDG Downloads directory when available, and show progress with cancel support.
 - Location, camera, microphone, notification, and pointer-lock requests show the requesting origin and require an explicit Allow response. Unknown permission request types are denied.
 
+### Empty page titles (X-16)
+- Pages without a nonempty document title use a URL-derived tab and history title.
+
 ## Pending
 
 - **Git remote not configured — push deferred.** `master` has one local commit (`ae08c40`); nothing pushed. When the user says to, add `origin` and push, e.g. `git remote add origin <url> && git push -u origin master`.

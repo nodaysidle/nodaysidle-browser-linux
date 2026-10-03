@@ -1,6 +1,6 @@
 use crate::history::HistoryStore;
 use crate::home::build_home_surface;
-use crate::navigation::{resolve, SearchEngine, title_for_url};
+use crate::navigation::{resolve, title_for_page, SearchEngine};
 use glib::clone;
 use gtk::prelude::*;
 use gtk::{
@@ -283,10 +283,7 @@ impl TabManager {
             if uri.is_empty() || uri == "about:blank" {
                 return;
             }
-            let title = view
-                .title()
-                .map(|t| t.to_string())
-                .unwrap_or_else(|| title_for_url(&uri));
+                let title = title_for_page(view.title().as_deref(), &uri);
             history.borrow_mut().record(uri.to_string(), title.clone());
             title_label.set_text(&truncate(&title));
 

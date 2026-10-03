@@ -66,6 +66,14 @@ pub fn title_for_url(url: &str) -> String {
     }
 }
 
+pub fn title_for_page(title: Option<&str>, url: &str) -> String {
+    title
+        .map(str::trim)
+        .filter(|title| !title.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| title_for_url(url))
+}
+
 fn is_loopback_target(input: &str) -> bool {
     let host = url::Url::parse(&format!("http://{}", input))
         .ok()
@@ -92,4 +100,30 @@ fn percent_encode_query(query: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::title_for_page;
+
+    #[test]
+    fn empty_page_titles_fall_back_to_the_page_url() {
+        assert_eq!(
+            title_for_page(Some(""), "https://example.com/a"),
+            "example.com"
+        );
+        assert_eq!(
+            title_for_page(Some("  "), "https://example.com/a"),
+            "example.com"
+        );
+        assert_eq!(title_for_page(None, "https://example.com/a"), "example.com");
+    }
+
+    #[test]
+    fn nonempty_page_titles_are_preserved_without_padding() {
+        assert_eq!(
+            title_for_page(Some(" Page title "), "https://example.com"),
+            "Page title"
+        );
+    }
 }
