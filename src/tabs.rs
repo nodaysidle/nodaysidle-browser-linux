@@ -869,20 +869,12 @@ impl TabManager {
         tab_strip.remove(&tab.pill);
         let close_buttons = { mgr.borrow().close_button_states() };
         apply_close_buttons(close_buttons);
-        let TabEntry { page_stack, .. } = tab;
-        // Destroy the tab's page (and with it its WebView) explicitly instead
-        // of relying on the last reference going away: signal closures, pop-up
-        // openers or pending callbacks can keep a view alive, and a closed tab
-        // must stop running its page (R-2). Deferred to an idle so no handler of
-        // this view is still on the stack.
-        glib::idle_add_local_once(move || {
-            // SAFETY: the page stack is no longer in the widget tree or in
-            // TabManager, nothing looks it or its WebView up again (every
-            // handler resolves its tab by id, which is gone), and destroy()
-            // only disposes the widgets; remaining references stay valid
-            // GObjects.
-            unsafe { page_stack.destroy() };
-        });
+        // Dropping the entry releases the last reference to the tab's page
+        // stack. GTK 3 then disposes it, which emits destroy, and a destroyed
+        // container destroys its children, so the WebView is disposed and
+        // WebKit closes its page even if a closure still holds a reference to
+        // the view (R-2, V-9). This happens outside any borrow (X-28).
+        drop(tab);
 
         if let Some(next_id) = select_after {
             TabManager::select_tab_id(mgr, next_id);
