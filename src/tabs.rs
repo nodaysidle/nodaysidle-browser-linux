@@ -11,6 +11,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use webkit2gtk::{
     FindControllerExt, FindOptions, LoadEvent, SettingsExt as WebSettingsExt, WebView, WebViewExt,
+    WindowPropertiesExt,
 };
 
 const TAB_BAR_HEIGHT: i32 = 36;
@@ -393,35 +394,39 @@ impl TabManager {
         if existing.is_some() {
             return existing;
         }
-        TabManager::create_webview(mgr, tab_id, None)
+        TabManager::create_webview(mgr, tab_id)
     }
 
-    fn create_webview(
-        mgr: &Rc<RefCell<TabManagerInner>>,
-        tab_id: u32,
-        related_view: Option<&WebView>,
-    ) -> Option<WebView> {
-        let (web_context, history, page_stack) = {
+    fn create_webview(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32) -> Option<WebView> {
+        let web_context = {
             let inner = mgr.borrow();
             let tab = inner.tabs.iter().find(|tab| tab.id == tab_id)?;
             if let Some(view) = &tab.webview {
                 return Some(view.clone());
             }
-            (
-                inner.web_context.clone(),
-                inner.history.clone(),
-                tab.page_stack.clone(),
-            )
+            inner.web_context.clone()
         };
+        let webview = WebView::with_context(&web_context);
+        configure_view(&webview);
+        TabManager::attach_webview(mgr, tab_id, &webview)?;
+        Some(webview)
+    }
 
-        let webview = related_view
-            .map(WebView::with_related_view)
-            .unwrap_or_else(|| WebView::with_context(&web_context));
-        if let Some(settings) = WebViewExt::settings(&webview) {
-            settings.set_enable_javascript(true);
-            settings.set_enable_html5_database(true);
-            settings.set_enable_html5_local_storage(true);
-        }
+    /// Wires a WebView into a tab and shows it in that tab's page stack.
+    fn attach_webview(
+        mgr: &Rc<RefCell<TabManagerInner>>,
+        tab_id: u32,
+        webview: &WebView,
+    ) -> Option<()> {
+        let (history, page_stack) = {
+            let inner = mgr.borrow();
+            let tab = inner.tabs.iter().find(|tab| tab.id == tab_id)?;
+            if tab.webview.is_some() {
+                return None;
+            }
+            (inner.history.clone(), tab.page_stack.clone())
+        };
+        let webview = webview.clone();
         crate::permissions::wire(&webview);
         wire_find_feedback(mgr, tab_id, &webview);
 
@@ -495,16 +500,17 @@ impl TabManager {
         });
 
         let mgr_create = mgr.clone();
-        webview.connect_create(move |parent, _action| {
-            TabManager::open_related_tab(&mgr_create, parent).map(|view| view.upcast())
+        webview.connect_create(move |parent, action| {
+            Some(TabManager::create_related_view(&mgr_create, parent, action).upcast())
         });
 
         let mgr_close = mgr.clone();
         webview.connect_close(move |_| {
-            TabManager::close_tab(&mgr_close, tab_id);
+            // window.close() from the page: close the tab once WebKit has
+            // finished emitting the signal.
+            let mgr_close = mgr_close.clone();
+            glib::idle_add_local_once(move || TabManager::close_tab(&mgr_close, tab_id));
         });
-
-        webview.connect_ready_to_show(|view| view.show());
 
         {
             let mut inner = mgr.borrow_mut();
@@ -514,17 +520,56 @@ impl TabManager {
         page_stack.add_named(&webview, "web");
         webview.show_all();
         page_stack.set_visible_child_name("web");
-        Some(webview)
+        Some(())
     }
 
-    fn open_related_tab(
+    /// `create` handler: returns a related view (required for window.opener
+    /// and postMessage) and decides where it goes only on `ready-to-show`, as
+    /// the WebKitGTK docs ask, because WebKitWindowProperties (the requested
+    /// size) are known by then. Sized pop-ups (window.open with width and
+    /// height, e.g. OAuth sign-in) get their own window; everything else
+    /// (target=_blank, plain window.open) opens a selected tab (X-3).
+    fn create_related_view(
         mgr: &Rc<RefCell<TabManagerInner>>,
-        related_view: &WebView,
-    ) -> Option<WebView> {
-        let tab_id = TabManager::open_tab(mgr, TabOpen::Home, true);
-        let webview = TabManager::create_webview(mgr, tab_id, Some(related_view))?;
-        TabManager::select_tab_id(mgr, tab_id);
-        Some(webview)
+        parent: &WebView,
+        action: &webkit2gtk::NavigationAction,
+    ) -> WebView {
+        let view = WebView::with_related_view(parent);
+        configure_view(&view);
+        let link_clicked = action.navigation_type() == webkit2gtk::NavigationType::LinkClicked;
+        let opener_size = parent
+            .toplevel()
+            .and_then(|widget| widget.downcast::<gtk::Window>().ok())
+            .map(|window| window.size());
+        let mgr_show = Rc::downgrade(mgr);
+        view.connect_ready_to_show(move |view| {
+            let Some(mgr) = mgr_show.upgrade() else {
+                return;
+            };
+            if view.parent().is_some() {
+                return;
+            }
+            let popup_size = view.window_properties().and_then(|properties| {
+                let geometry = properties.geometry();
+                let size = (geometry.width(), geometry.height());
+                is_sized_popup(size, opener_size, link_clicked).then_some(size)
+            });
+            match popup_size {
+                Some((width, height)) => open_popup_window(&mgr, view, width, height),
+                None => {
+                    let tab_id = TabManager::open_tab(&mgr, TabOpen::Home, true);
+                    if TabManager::attach_webview(&mgr, tab_id, view).is_some() {
+                        TabManager::select_tab_id(&mgr, tab_id);
+                        let uri = view.uri().unwrap_or_default().to_string();
+                        if !uri.is_empty() {
+                            let title = title_for_page(view.title().as_deref(), &uri);
+                            sync_view_chrome(&mgr, tab_id, view, &title, &uri);
+                        }
+                    }
+                }
+            }
+        });
+        view
     }
 
     fn navigate_tab(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32, raw: &str) {
@@ -826,6 +871,90 @@ impl TabManagerInner {
         self.forward_btn.set_sensitive(can_fwd);
         self.reload_btn.set_sensitive(true);
     }
+}
+
+fn configure_view(webview: &WebView) {
+    if let Some(settings) = WebViewExt::settings(webview) {
+        settings.set_enable_javascript(true);
+        settings.set_enable_html5_database(true);
+        settings.set_enable_html5_local_storage(true);
+    }
+}
+
+/// A `window.open` whose features asked for a size. WebKitWindowProperties
+/// alone cannot tell (observed on WebKitGTK 2.54): WebCore no longer sets the
+/// bar visibility, a plain `window.open(url)` reports the opener window's size,
+/// and a `target=_blank` link reports WebCore's 100x100 minimum. So links never
+/// open pop-ups, and a window.open is a pop-up only when its geometry differs
+/// from the opener window's size.
+fn is_sized_popup(size: (i32, i32), opener_size: Option<(i32, i32)>, link_clicked: bool) -> bool {
+    let (width, height) = size;
+    !link_clicked && width > 0 && height > 0 && Some(size) != opener_size
+}
+
+/// Pop-up window for a sized `window.open`. It always shows the page's
+/// address (read-only) so a sign-in pop-up cannot hide where it really is.
+fn open_popup_window(mgr: &Rc<RefCell<TabManagerInner>>, view: &WebView, width: i32, height: i32) {
+    let parent = { mgr.borrow().window.clone() };
+    let window = gtk::Window::new(gtk::WindowType::Toplevel);
+    window.set_transient_for(Some(&parent));
+    window.set_destroy_with_parent(true);
+    if let Some(app) = parent.application() {
+        window.set_application(Some(&app));
+    }
+    window.set_default_size(width.clamp(200, 4_096), height.clamp(150, 4_096));
+    window.set_title("Pop-up");
+
+    let root = GtkBox::new(Orientation::Vertical, 0);
+    let address = gtk::Entry::new();
+    address.set_editable(false);
+    address.set_can_focus(false);
+    address.style_context().add_class("url-bar");
+    address.style_context().add_class("popup-address");
+    let header = GtkBox::new(Orientation::Horizontal, 0);
+    header.style_context().add_class("chrome");
+    header.style_context().add_class("toolbar");
+    header.pack_start(&address, true, true, 0);
+    root.pack_start(&header, false, false, 0);
+    view.set_vexpand(true);
+    root.pack_start(view, true, true, 0);
+    window.add(&root);
+
+    let sync = {
+        let window = window.downgrade();
+        let address = address.downgrade();
+        move |view: &WebView| {
+            let uri = view.uri().unwrap_or_default().to_string();
+            if let Some(address) = address.upgrade() {
+                address.set_text(&uri);
+            }
+            if let Some(window) = window.upgrade() {
+                window.set_title(&title_for_page(view.title().as_deref(), &uri));
+            }
+        }
+    };
+    sync(view);
+    let sync_uri = sync.clone();
+    view.connect_notify_local(Some("uri"), move |view, _| sync_uri(view));
+    view.connect_notify_local(Some("title"), move |view, _| sync(view));
+
+    crate::permissions::wire(view);
+    let mgr_create = mgr.clone();
+    view.connect_create(move |parent, action| {
+        Some(TabManager::create_related_view(&mgr_create, parent, action).upcast())
+    });
+    let window_weak = window.downgrade();
+    view.connect_close(move |_| {
+        let window_weak = window_weak.clone();
+        glib::idle_add_local_once(move || {
+            if let Some(window) = window_weak.upgrade() {
+                window.close();
+            }
+        });
+    });
+
+    window.show_all();
+    view.grab_focus();
 }
 
 fn sync_view_chrome(
@@ -1521,7 +1650,7 @@ fn icon_button(icon_name: &str, tooltip: &str) -> Button {
 #[cfg(test)]
 mod tests {
     use super::{
-        find_status_text, next_tab_id, pill_is_visible, scroll_value_to_reveal,
+        find_status_text, is_sized_popup, next_tab_id, pill_is_visible, scroll_value_to_reveal,
         selection_after_close,
         shortcut_for, url_bar_sync_value, FindStatus, Shortcut,
     };
@@ -1568,6 +1697,18 @@ mod tests {
         assert_eq!(shortcut_for(&key::_9, M::CONTROL_MASK), Some(Shortcut::LastTab));
         assert_eq!(shortcut_for(&key::Left, M::MOD1_MASK), Some(Shortcut::Back));
         assert_eq!(shortcut_for(&key::l, M::CONTROL_MASK), Some(Shortcut::FocusLocation));
+    }
+
+    #[test]
+    fn only_window_open_with_a_size_gets_its_own_window() {
+        let opener = Some((1200, 800));
+        // window.open(url, name, "width=420,height=360")
+        assert!(is_sized_popup((420, 360), opener, false));
+        // window.open(url): WebKit reports the opener window's size.
+        assert!(!is_sized_popup((1200, 800), opener, false));
+        // target=_blank: WebCore's 100x100 minimum, but it is a link.
+        assert!(!is_sized_popup((100, 100), opener, true));
+        assert!(!is_sized_popup((0, 0), opener, false));
     }
 
     #[test]
