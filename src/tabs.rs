@@ -518,34 +518,7 @@ impl TabManager {
             sync_view_chrome(&mgr_title, tab_id, view, &title, &uri);
         });
 
-        // Failed loads get a styled error page with Try again instead of a
-        // blank view (X-21). Cancelled loads and navigations that turned into
-        // downloads are not failures the user needs to see.
-        webview.connect_load_failed(|view, _event, failing_uri, error| {
-            if error.matches(webkit2gtk::NetworkError::Cancelled)
-                || error.matches(webkit2gtk::PolicyError::FrameLoadInterruptedByPolicyChange)
-                || error.matches(webkit2gtk::PluginError::WillHandleLoad)
-            {
-                return false;
-            }
-            let html = crate::error_page::load_failed_html(failing_uri, error.message());
-            view.load_alternate_html(&html, failing_uri, None);
-            true
-        });
-
-        // A crashed or killed web process used to leave a blank, dead tab
-        // (X-27): explain it and offer Reload.
-        webview.connect_web_process_terminated(|view, reason| {
-            let exceeded_memory = match reason {
-                webkit2gtk::WebProcessTerminationReason::TerminatedByApi => return,
-                webkit2gtk::WebProcessTerminationReason::ExceededMemoryLimit => true,
-                _ => false,
-            };
-            let uri = view.uri().unwrap_or_default().to_string();
-            let html = crate::error_page::web_process_ended_html(&uri, exceeded_memory);
-            let content_uri = if uri.is_empty() { "about:blank" } else { uri.as_str() };
-            view.load_alternate_html(&html, content_uri, None);
-        });
+        wire_error_pages(&webview);
 
         // Element fullscreen (R-7): only hide or show our chrome and return
         // FALSE, so WebKit's default handler fullscreens the toplevel itself.
@@ -1112,6 +1085,83 @@ fn is_sized_popup(size: (i32, i32), opener_size: Option<(i32, i32)>, link_clicke
 
 /// Pop-up window for a sized `window.open`. It always shows the page's
 /// address (read-only) so a sign-in pop-up cannot hide where it really is.
+/// Error and crash pages for a view, shared by tabs and pop-up windows (V-6).
+fn wire_error_pages(webview: &WebView) {
+    // Failed loads get a styled error page with Try again instead of a
+    // blank view (X-21). Cancelled loads and navigations that turned into
+    // downloads are not failures the user needs to see.
+    webview.connect_load_failed(|view, _event, failing_uri, error| {
+        if error.matches(webkit2gtk::NetworkError::Cancelled)
+            || error.matches(webkit2gtk::PolicyError::FrameLoadInterruptedByPolicyChange)
+            || error.matches(webkit2gtk::PluginError::WillHandleLoad)
+        {
+            return false;
+        }
+        let html = crate::error_page::load_failed_html(failing_uri, error.message());
+        view.load_alternate_html(&html, failing_uri, None);
+        true
+    });
+
+    // A crashed or killed web process used to leave a blank, dead tab
+    // (X-27): explain it and offer Reload.
+    webview.connect_web_process_terminated(|view, reason| {
+        let exceeded_memory = match reason {
+            webkit2gtk::WebProcessTerminationReason::TerminatedByApi => return,
+            webkit2gtk::WebProcessTerminationReason::ExceededMemoryLimit => true,
+            _ => false,
+        };
+        let uri = view.uri().unwrap_or_default().to_string();
+        let html = crate::error_page::web_process_ended_html(&uri, exceeded_memory);
+        let content_uri = if uri.is_empty() { "about:blank" } else { uri.as_str() };
+        view.load_alternate_html(&html, content_uri, None);
+    });
+}
+
+/// Keyboard for pop-up windows (V-6). Ctrl+W closes the window and
+/// Ctrl+R / F5 reload, before the page sees the key, like in the main
+/// window. Esc closes the pop-up only if the page did not handle it: this
+/// handler runs after the default one, and WebKit hands keys the page did
+/// not consume back to the window for that phase.
+fn wire_popup_keys(window: &gtk::Window, view: &WebView) {
+    use gdk::keys::constants as key;
+    use gdk::ModifierType as M;
+
+    let modifiers = |event: &gdk::EventKey| {
+        event.state() & (M::CONTROL_MASK | M::SHIFT_MASK | M::MOD1_MASK | M::SUPER_MASK)
+    };
+    let view_weak = view.downgrade();
+    window.connect_key_press_event(move |window, event| {
+        let keyval = event.keyval().to_lower();
+        let mods = modifiers(event);
+        if mods == M::CONTROL_MASK && (keyval == key::w || keyval == key::F4) {
+            window.close();
+            return glib::Propagation::Stop;
+        }
+        let reload = (mods == M::CONTROL_MASK && keyval == key::r)
+            || (mods.is_empty() && keyval == key::F5);
+        if reload {
+            if let Some(view) = view_weak.upgrade() {
+                view.reload();
+            }
+            return glib::Propagation::Stop;
+        }
+        glib::Propagation::Proceed
+    });
+    window.connect_local("key-press-event", true, move |values| {
+        let handled = (|| {
+            let window = values.first()?.get::<gtk::Window>().ok()?;
+            let event = values.get(1)?.get::<gdk::Event>().ok()?;
+            let event = event.downcast_ref::<gdk::EventKey>()?;
+            if event.keyval() == key::Escape && modifiers(event).is_empty() {
+                window.close();
+                return Some(true);
+            }
+            None
+        })();
+        Some(handled.unwrap_or(false).to_value())
+    });
+}
+
 fn open_popup_window(mgr: &Rc<RefCell<TabManagerInner>>, view: &WebView, width: i32, height: i32) {
     let parent = { mgr.borrow().window.clone() };
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
@@ -1158,6 +1208,8 @@ fn open_popup_window(mgr: &Rc<RefCell<TabManagerInner>>, view: &WebView, width: 
     view.connect_notify_local(Some("title"), move |view, _| sync(view));
 
     crate::permissions::wire(view);
+    wire_error_pages(view);
+    wire_popup_keys(&window, view);
     let mgr_create = mgr.clone();
     view.connect_create(move |parent, action| {
         Some(TabManager::create_related_view(&mgr_create, parent, action).upcast())
