@@ -319,7 +319,7 @@ impl TabManager {
         // order and never keeps focus after a click.
         close_btn.set_can_focus(false);
         close_btn.set_focus_on_click(false);
-        // Visibility is managed by refresh_close_buttons; window.show_all()
+        // Visibility is managed by close_button_states; window.show_all()
         // must not reveal the close button of a lone, untouched Home tab.
         close_btn.set_no_show_all(true);
 
@@ -383,7 +383,8 @@ impl TabManager {
         });
 
         if select {
-            mgr.borrow().url_entry.set_text("");
+            let url_entry = { mgr.borrow().url_entry.clone() };
+            url_entry.set_text("");
             TabManager::select_tab_id(mgr, tab_id);
         }
         match open {
@@ -593,12 +594,13 @@ impl TabManager {
             glib::idle_add_local_once(move || TabManager::close_tab(&mgr_close, tab_id));
         });
 
-        {
+        let close_buttons = {
             let mut inner = mgr.borrow_mut();
             let tab = inner.tabs.iter_mut().find(|tab| tab.id == tab_id)?;
             tab.webview = Some(webview.clone());
-            inner.refresh_close_buttons();
-        }
+            inner.close_button_states()
+        };
+        apply_close_buttons(close_buttons);
         page_stack.add_named(&webview, "web");
         webview.show_all();
         page_stack.set_visible_child_name("web");
@@ -737,20 +739,24 @@ impl TabManager {
         let (stack, url_entry, reload_btn, tab_scroll, tab_strip, reveal, sync) = {
             let mut inner = mgr.borrow_mut();
             inner.selected = Some(id);
-            inner.refresh_close_buttons();
-            for tab in &inner.tabs {
-                let selected = tab.id == id;
-                tab.pill.style_context().remove_class("selected");
-                tab.title_label
-                    .style_context()
-                    .remove_class("tab-pill-label-selected");
+            let close_buttons = inner.close_button_states();
+            let pills = inner
+                .tabs
+                .iter()
+                .map(|tab| (tab.pill.clone(), tab.title_label.clone(), tab.id == id))
+                .collect::<Vec<_>>();
+            drop(inner);
+            // Widget updates happen outside the borrow (V-8).
+            apply_close_buttons(close_buttons);
+            for (pill, title_label, selected) in pills {
+                pill.style_context().remove_class("selected");
+                title_label.style_context().remove_class("tab-pill-label-selected");
                 if selected {
-                    tab.pill.style_context().add_class("selected");
-                    tab.title_label
-                        .style_context()
-                        .add_class("tab-pill-label-selected");
+                    pill.style_context().add_class("selected");
+                    title_label.style_context().add_class("tab-pill-label-selected");
                 }
             }
+            let inner = mgr.borrow();
             let sync = inner
                 .tabs
                 .iter()
@@ -861,7 +867,8 @@ impl TabManager {
 
         stack.remove(&tab.page_stack);
         tab_strip.remove(&tab.pill);
-        mgr.borrow().refresh_close_buttons();
+        let close_buttons = { mgr.borrow().close_button_states() };
+        apply_close_buttons(close_buttons);
         let TabEntry { page_stack, .. } = tab;
         // Destroy the tab's page (and with it its WebView) explicitly instead
         // of relying on the last reference going away: signal closures, pop-up
@@ -985,13 +992,8 @@ impl TabManager {
         history_btn.set_relief(gtk::ReliefStyle::None);
         history_btn.set_focus_on_click(false);
 
-        if let Some(toolbar) = self
-            .inner
-            .borrow()
-            .url_entry
-            .parent()
-            .and_then(|p| p.downcast::<GtkBox>().ok())
-        {
+        let url_entry = { self.inner.borrow().url_entry.clone() };
+        if let Some(toolbar) = url_entry.parent().and_then(|p| p.downcast::<GtkBox>().ok()) {
             toolbar.pack_end(&history_btn, false, false, 0);
             history_btn.show();
         }
@@ -1019,7 +1021,8 @@ impl TabManager {
             while let Some(row) = list.row_at_index(0) {
                 list.remove(&row);
             }
-            for entry in history.borrow().entries().iter() {
+            let entries = { history.borrow().entries().to_vec() };
+            for entry in &entries {
                 list.add(&history_row(entry));
             }
             popover.show_all();
@@ -1039,12 +1042,12 @@ impl TabManager {
 
 impl TabManagerInner {
     /// Every tab can be closed except a lone Home tab that never loaded a page.
-    fn refresh_close_buttons(&self) {
+    /// Returns the buttons and their visibility so the caller can apply them
+    /// with `apply_close_buttons` after the borrow ends (V-8).
+    fn close_button_states(&self) -> Vec<(Button, bool)> {
         let only_tab_has_page = self.tabs.first().is_some_and(|tab| tab.webview.is_some());
         let closable = self.tabs.len() > 1 || only_tab_has_page;
-        for tab in &self.tabs {
-            tab.close_btn.set_visible(closable);
-        }
+        self.tabs.iter().map(|tab| (tab.close_btn.clone(), closable)).collect()
     }
 
     fn selected_tab(&self) -> Option<&TabEntry> {
@@ -1449,6 +1452,12 @@ enum Shortcut {
     Reload,
     Back,
     Forward,
+}
+
+fn apply_close_buttons(states: Vec<(Button, bool)>) {
+    for (button, visible) in states {
+        button.set_visible(visible);
+    }
 }
 
 /// Arms the history save timer; a failed save re-arms it with the store's
