@@ -1,11 +1,23 @@
 use gtk::prelude::*;
 use gtk::{CssProvider, StyleContext};
 
+/// Fallback inset when compositor rounding cannot be detected (pixels).
+pub const WINDOW_CORNER_INSET_PX: i32 = 8;
+
 const STYLESHEET: &str = r#"
 /* Only the browser's own windows are dark; dialogs (permissions, downloads,
    About, file chooser) keep the GTK theme's colours (R-9, I-3). */
 window.browser-window {
   background-color: #151518;
+}
+
+.browser-frame {
+  background-color: #151518;
+}
+
+window.browser-window.maximized .browser-frame,
+window.browser-window.tiled .browser-frame {
+  border-radius: 0;
 }
 
 .chrome {
@@ -22,7 +34,7 @@ window.browser-window {
 }
 
 .tab-strip {
-  padding: 4px 8px 4px 12px;
+  padding: 4px 8px;
 }
 
 .tab-pill {
@@ -34,12 +46,13 @@ window.browser-window {
 
 .tab-pill.selected {
   background-color: #202022;
+  box-shadow: inset 0 -2px 0 #75aaff;
 }
 
 .tab-pill-label {
   color: #949499;
   font-family: monospace;
-  font-size: 11px;
+  font-size: 12px;
   padding: 4px 8px;
 }
 
@@ -54,7 +67,7 @@ window.browser-window {
 }
 
 .tab-close {
-  color: #6b6b70;
+  color: #8a8a90;
   padding: 2px;
   min-width: 20px;
   min-height: 20px;
@@ -137,7 +150,7 @@ window.browser-window {
 }
 
 .toolbar {
-  padding: 4px 10px;
+  padding: 4px 8px;
 }
 
 .home-title {
@@ -158,7 +171,7 @@ window.browser-window {
 }
 
 .find-bar {
-  padding: 4px 10px;
+  padding: 4px 8px;
   min-width: 0;
 }
 
@@ -195,12 +208,97 @@ window.browser-window {
 }
 "#;
 
+pub fn window_corner_inset_px() -> i32 {
+    if let Ok(raw) = std::env::var("NODAYSIDLE_CORNER_INSET") {
+        if let Ok(value) = raw.parse::<i32>() {
+            if value >= 0 {
+                return value;
+            }
+        }
+    }
+    hyprland_rounding_px().unwrap_or(WINDOW_CORNER_INSET_PX)
+}
+
+/// Reads Hyprland `decoration:rounding` when `hyprctl` is available.
+fn hyprland_rounding_px() -> Option<i32> {
+    let output = std::process::Command::new("hyprctl")
+        .args(["-j", "getoption", "decoration:rounding"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_hyprland_rounding_json(&output.stdout)
+}
+
+fn parse_hyprland_rounding_json(bytes: &[u8]) -> Option<i32> {
+    let parsed: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    parsed
+        .get("int")
+        .and_then(|value| value.as_i64())
+        .map(|value| value as i32)
+}
+
+fn set_frame_margins(frame: &gtk::Box, inset: i32) {
+    frame.set_margin_start(inset);
+    frame.set_margin_end(inset);
+    frame.set_margin_top(inset);
+    frame.set_margin_bottom(inset);
+}
+
+/// Pads the main chrome away from compositor-rounded window corners.
+pub fn apply_browser_frame_insets(frame: &gtk::Box, css_id: &str) {
+    let inset = window_corner_inset_px();
+    set_frame_margins(frame, inset);
+    if inset <= 0 {
+        return;
+    }
+    frame.set_widget_name(css_id);
+    let chrome_radius = inset.min(12);
+    let css = format!(
+        r#"
+box#{css_id}.browser-frame {{
+  border-radius: {inset}px;
+}}
+box#{css_id}.browser-frame .chrome.tab-strip,
+box#{css_id}.browser-frame .chrome.popup-chrome {{
+  border-top-left-radius: {chrome_radius}px;
+  border-top-right-radius: {chrome_radius}px;
+}}
+"#,
+        css_id = css_id,
+        inset = inset,
+        chrome_radius = chrome_radius,
+    );
+    let provider = CssProvider::new();
+    if provider.load_from_data(css.as_bytes()).is_ok() {
+        frame
+            .style_context()
+            .add_provider(&provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1);
+    }
+}
+
+fn sync_frame_margins(window: &gtk::Window, frame: &gtk::Box) {
+    let inset = if window.is_maximized() {
+        0
+    } else {
+        window_corner_inset_px()
+    };
+    set_frame_margins(frame, inset);
+}
+
+/// Keeps chrome flush to the screen edge while maximized (Hyprland uses rounding 0).
+pub fn wire_window_corner_insets(window: &gtk::Window, frame: &gtk::Box) {
+    sync_frame_margins(window, frame);
+    let frame = frame.clone();
+    window.connect_notify_local(Some("is-maximized"), move |window, _| {
+        sync_frame_margins(window, &frame);
+    });
+}
+
 pub fn install() {
     let provider = CssProvider::new();
-    if provider
-        .load_from_data(STYLESHEET.as_bytes())
-        .is_err()
-    {
+    if provider.load_from_data(STYLESHEET.as_bytes()).is_err() {
         return;
     }
     if let Some(screen) = gdk::Screen::default() {
@@ -209,5 +307,19 @@ pub fn install() {
             &provider,
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_hyprland_rounding_json;
+
+    #[test]
+    fn hyprland_rounding_json_is_parsed_from_hyprctl_output() {
+        assert_eq!(
+            parse_hyprland_rounding_json(br#"{"int":20,"set":true}"#),
+            Some(20)
+        );
+        assert_eq!(parse_hyprland_rounding_json(b"not json"), None);
     }
 }

@@ -43,7 +43,7 @@ desktop_exec_quote() {
 }
 
 echo "Building release binary..."
-cargo build --release --manifest-path "${ROOT}/Cargo.toml"
+cargo build --release --locked --manifest-path "${ROOT}/Cargo.toml"
 
 install -d "${BIN_DIR}"
 install -m 0755 "${ROOT}/target/release/nodaysidle-browser" "${BIN}"

@@ -1,13 +1,15 @@
+mod downloads;
+mod error_page;
 mod history;
 mod home;
 mod icon;
-mod downloads;
-mod error_page;
 mod navigation;
 mod permissions;
+mod privacy;
 mod profile;
 mod tabs;
 mod theme;
+mod url_display;
 
 use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow, Box as GtkBox, Orientation};
@@ -60,14 +62,18 @@ fn main() -> glib::ExitCode {
     app.connect_activate(move |app| {
         // A second launch activates the primary instance: bring its window
         // to the front instead of doing nothing visible (R-4).
-        get_or_build_ui(app, &manager_for_activate).present();
+        if let Some(manager) = get_or_build_ui(app, &manager_for_activate) {
+            manager.present();
+        }
     });
     app.connect_open(move |app, files, _hint| {
         let uris = files
             .iter()
             .filter_map(|file| external_uri_to_open(file.uri().as_str()))
             .collect::<Vec<_>>();
-        let manager = get_or_build_ui(app, &tab_manager);
+        let Some(manager) = get_or_build_ui(app, &tab_manager) else {
+            return;
+        };
         for uri in uris {
             manager.open_external_uri(&uri);
         }
@@ -121,10 +127,20 @@ fn command_line_target(
 fn get_or_build_ui(
     app: &Application,
     manager_slot: &Rc<RefCell<Option<TabManager>>>,
-) -> TabManager {
-    get_or_insert_manager(manager_slot, || build_ui(app))
+) -> Option<TabManager> {
+    if let Some(manager) = manager_slot.borrow().clone() {
+        return Some(manager);
+    }
+    match build_ui(app) {
+        Some(manager) => {
+            *manager_slot.borrow_mut() = Some(manager.clone());
+            Some(manager)
+        }
+        None => None,
+    }
 }
 
+#[allow(dead_code)] // used by unit tests in this module
 fn get_or_insert_manager<T: Clone>(slot: &RefCell<Option<T>>, build: impl FnOnce() -> T) -> T {
     let existing = { slot.borrow().clone() };
     if let Some(value) = existing {
@@ -135,15 +151,26 @@ fn get_or_insert_manager<T: Clone>(slot: &RefCell<Option<T>>, build: impl FnOnce
     value
 }
 
-fn build_ui(app: &Application) -> TabManager {
+fn build_ui(app: &Application) -> Option<TabManager> {
     let Some(data_dir) = app_data_dir() else {
         // Never fall back to a directory another user could control (V-4).
-        eprintln!("nodaysidle-browser: no private profile directory available; not starting");
-        std::process::exit(1);
+        show_fatal_profile_error(
+            app,
+            "no private profile directory is available for this user",
+        );
+        return None;
     };
-    let web_context = persistent_web_context(&data_dir);
+    let web_context = match persistent_web_context(&data_dir) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            show_fatal_profile_error(app, &err.to_string());
+            return None;
+        }
+    };
     downloads::wire(&web_context);
-    let history = Rc::new(RefCell::new(HistoryStore::load(data_dir.join("history.json"))));
+    let history = Rc::new(RefCell::new(HistoryStore::load(
+        data_dir.join("history.json"),
+    )));
 
     let window = ApplicationWindow::builder()
         .application(app)
@@ -165,19 +192,43 @@ fn build_ui(app: &Application) -> TabManager {
     });
 
     window.style_context().add_class("browser-window");
-    let root = GtkBox::new(Orientation::Vertical, 0);
-    window.add(&root);
+    let frame = GtkBox::new(Orientation::Vertical, 0);
+    frame.style_context().add_class("browser-frame");
+    theme::apply_browser_frame_insets(&frame, "nodaysidle-browser-frame");
+    theme::wire_window_corner_insets(window.upcast_ref(), &frame);
+    window.add(&frame);
 
-    let (chrome, new_tab_btn) = build_chrome_layout(&root);
-    let tab_manager = TabManager::new(&window, chrome, web_context, history.clone());
+    let (chrome, new_tab_btn) = build_chrome_layout(&frame);
+    let tab_manager = TabManager::new(&window, chrome, web_context.clone(), history.clone());
     tab_manager.wire_toolbar(&new_tab_btn);
     tab_manager.wire_keyboard(&window);
-    tab_manager.wire_app_menu();
+    tab_manager.wire_app_menu(web_context.clone());
     tab_manager.wire_history(history);
 
     tab_manager.open_initial_home();
     window.show_all();
-    tab_manager
+    Some(tab_manager)
+}
+
+fn show_fatal_profile_error(app: &Application, message: &str) {
+    eprintln!("nodaysidle-browser: {message}");
+    let dialog = gtk::MessageDialog::new(
+        None::<&gtk::Window>,
+        gtk::DialogFlags::MODAL,
+        gtk::MessageType::Error,
+        gtk::ButtonsType::Close,
+        "Could not open a private profile",
+    );
+    dialog.set_secondary_text(Some(message));
+    if let Some(window) = app.active_window() {
+        dialog.set_transient_for(Some(&window));
+    }
+    dialog.connect_response(|dialog, _| {
+        dialog.close();
+    });
+    dialog.show_all();
+    dialog.run();
+    app.quit();
 }
 
 fn external_uri_to_open(uri: &str) -> Option<String> {
@@ -204,8 +255,14 @@ mod tests {
 
     #[test]
     fn bare_host_arguments_resolve_like_the_address_bar() {
-        assert_eq!(target("wikipedia.org", &[]), Some("https://wikipedia.org".into()));
-        assert_eq!(target("localhost:3000", &[]), Some("http://localhost:3000".into()));
+        assert_eq!(
+            target("wikipedia.org", &[]),
+            Some("https://wikipedia.org".into())
+        );
+        assert_eq!(
+            target("localhost:3000", &[]),
+            Some("http://localhost:3000".into())
+        );
         assert_eq!(
             target("https://example.com/a", &[]),
             Some("https://example.com/a".into())
@@ -218,18 +275,36 @@ mod tests {
             target("wikipedia.org", &["/work/wikipedia.org"]),
             Some("file:///work/wikipedia.org".into())
         );
-        assert_eq!(target("./missing.html", &[]), Some("file:///work/missing.html".into()));
-        assert_eq!(target("/tmp/page.html", &[]), Some("file:///tmp/page.html".into()));
+        assert_eq!(
+            target("./missing.html", &[]),
+            Some("file:///work/missing.html".into())
+        );
+        assert_eq!(
+            target("/tmp/page.html", &[]),
+            Some("file:///tmp/page.html".into())
+        );
     }
 
     #[test]
     fn options_and_program_name_are_left_alone() {
-        let args = ["prog", "--gapplication-service", "wikipedia.org", "--", "-dash.org"]
-            .map(String::from)
-            .to_vec();
+        let args = [
+            "prog",
+            "--gapplication-service",
+            "wikipedia.org",
+            "--",
+            "-dash.org",
+        ]
+        .map(String::from)
+        .to_vec();
         assert_eq!(
             command_line_args(args, |_| false),
-            ["prog", "--gapplication-service", "https://wikipedia.org", "--", "https://-dash.org"]
+            [
+                "prog",
+                "--gapplication-service",
+                "https://wikipedia.org",
+                "--",
+                "https://-dash.org"
+            ]
         );
     }
 
@@ -269,7 +344,10 @@ mod tests {
 
     #[test]
     fn external_about_blank_is_accepted() {
-        assert_eq!(external_uri_to_open("about:blank"), Some("about:blank".to_string()));
+        assert_eq!(
+            external_uri_to_open("about:blank"),
+            Some("about:blank".to_string())
+        );
     }
 
     #[test]

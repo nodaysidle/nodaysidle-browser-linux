@@ -33,14 +33,14 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 - Downloads with folder chooser, progress dialog, cancel protection, and close confirmation
 - Local-first persistence: bounded history (`0600`) flushed on exit/signals, and persistent cookies (`0600` SQLite)
 - Desktop integration with Wayland `app_id` and X11 `WM_CLASS` (`com.nodaysidle.Browser`)
-- Portable `.AppImage` available for immediate download
+- Host-dependent `.AppImage` (requires system WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md))
 - No application telemetry
 
 ## Install and run
 
 ### Download `.AppImage`
 
-Download the standalone executable from the [GitHub Releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases) page:
+Download the executable from the [GitHub Releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases) page. The AppImage bundles the browser binary and metadata only; **GTK 3 and WebKitGTK 4.1 must already be installed** on the system (see [docs/APPIMAGE.md](docs/APPIMAGE.md)):
 
 ```bash
 chmod +x nodaysidle-browser-x86_64.AppImage
@@ -135,7 +135,7 @@ An argument naming an existing file (or starting with `./` or `../`) opens that 
 
 - No analytics, telemetry, or application-owned browsing backend.
 - Website cookies persist locally in `~/.local/share/nodaysidle-browser/webkit-data/cookies.sqlite` (`0600`).
-- Local browsing history is stored in `~/.local/share/nodaysidle-browser/history.json` (`0600`) and flushed atomically on exit or signals (`SIGTERM`, `SIGINT`, `SIGHUP`).
+- Local browsing history is stored in `~/.local/share/nodaysidle-browser/history.json` (`0600`) and flushed atomically on exit or signals (`SIGTERM`, `SIGINT`, `SIGHUP`). Use **Menu → Clear Browsing Data** to erase history, site storage, cache, or remembered permission denials.
 - WebKit sandbox is enabled by default.
 - Site requests for location, camera, microphone, notifications, and pointer lock require explicit user permission.
 

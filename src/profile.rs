@@ -4,17 +4,33 @@ use webkit2gtk::{
     CookieManagerExt, CookiePersistentStorage, WebContext, WebContextExt, WebsiteDataManager,
 };
 
+#[derive(Debug, Clone)]
+pub struct ProfileSetupError(String);
+
+impl std::fmt::Display for ProfileSetupError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl ProfileSetupError {
+    fn new(message: impl Into<String>) -> Self {
+        Self(message.into())
+    }
+}
+
 /// Shared WebKit profile: cookies and site storage persist across launches.
-pub fn persistent_web_context(data_root: &Path) -> WebContext {
+pub fn persistent_web_context(data_root: &Path) -> Result<WebContext, ProfileSetupError> {
+    validate_trusted_dir(data_root, "profile directory")?;
+    ensure_private_dir(data_root)?;
     let data_dir = data_root.join("webkit-data");
     let cache_dir = data_root.join("webkit-cache");
-
-    // The profile holds cookies, site storage and history: keep it private to
-    // the user, and say so when it cannot be created (X-30).
-    for dir in [data_root, data_dir.as_path(), cache_dir.as_path()] {
-        if let Err(err) = ensure_private_dir(dir) {
-            eprintln!("Could not prepare profile directory {}: {err}", dir.display());
-        }
+    for (dir, label) in [
+        (data_dir.as_path(), "profile data directory"),
+        (cache_dir.as_path(), "profile cache directory"),
+    ] {
+        validate_trusted_dir(dir, label)?;
+        ensure_private_dir(dir)?;
     }
 
     let manager = WebsiteDataManager::builder()
@@ -25,20 +41,105 @@ pub fn persistent_web_context(data_root: &Path) -> WebContext {
     let web_context = WebContext::with_website_data_manager(&manager);
     web_context.set_sandbox_enabled(true);
     let cookie_path = data_dir.join("cookies.sqlite");
-    if let Err(err) = ensure_private_cookie_file(&cookie_path) {
-        eprintln!("Could not prepare persistent cookie storage: {err}");
-    }
+    validate_trusted_file(&cookie_path, "cookie database")?;
+    ensure_private_cookie_file(&cookie_path)?;
     if let Some(cookie_manager) = web_context.cookie_manager() {
         cookie_manager.set_persistent_storage(
             &cookie_path.to_string_lossy(),
             CookiePersistentStorage::Sqlite,
         );
     }
-    web_context
+    Ok(web_context)
 }
 
 #[cfg(unix)]
-fn ensure_private_cookie_file(path: &Path) -> std::io::Result<()> {
+fn validate_trusted_dir(path: &Path, label: &str) -> Result<(), ProfileSetupError> {
+    use std::os::unix::fs::MetadataExt;
+
+    if !path.exists() {
+        return Ok(());
+    }
+    let meta = std::fs::symlink_metadata(path).map_err(|err| {
+        ProfileSetupError::new(format!(
+            "could not inspect {label} at {}: {err}",
+            path.display()
+        ))
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err(ProfileSetupError::new(format!(
+            "{label} at {} is a symbolic link and cannot be used",
+            path.display()
+        )));
+    }
+    if !meta.is_dir() {
+        return Err(ProfileSetupError::new(format!(
+            "{label} at {} is not a directory",
+            path.display()
+        )));
+    }
+    let uid = current_uid().ok_or_else(|| {
+        ProfileSetupError::new("cannot determine the current user id for profile validation")
+    })?;
+    if meta.uid() != uid {
+        return Err(ProfileSetupError::new(format!(
+            "{label} at {} is owned by uid {}, not the current user",
+            path.display(),
+            meta.uid()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_trusted_dir(_path: &Path, _label: &str) -> Result<(), ProfileSetupError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_trusted_file(path: &Path, label: &str) -> Result<(), ProfileSetupError> {
+    use std::os::unix::fs::MetadataExt;
+
+    if !path.exists() {
+        return Ok(());
+    }
+    let meta = std::fs::symlink_metadata(path).map_err(|err| {
+        ProfileSetupError::new(format!(
+            "could not inspect {label} at {}: {err}",
+            path.display()
+        ))
+    })?;
+    if meta.file_type().is_symlink() {
+        return Err(ProfileSetupError::new(format!(
+            "{label} at {} is a symbolic link and cannot be used",
+            path.display()
+        )));
+    }
+    if meta.is_dir() {
+        return Err(ProfileSetupError::new(format!(
+            "{label} at {} is a directory, not a file",
+            path.display()
+        )));
+    }
+    let uid = current_uid().ok_or_else(|| {
+        ProfileSetupError::new("cannot determine the current user id for profile validation")
+    })?;
+    if meta.uid() != uid {
+        return Err(ProfileSetupError::new(format!(
+            "{label} at {} is owned by uid {}, not the current user",
+            path.display(),
+            meta.uid()
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn validate_trusted_file(_path: &Path, _label: &str) -> Result<(), ProfileSetupError> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn ensure_private_cookie_file(path: &Path) -> Result<(), ProfileSetupError> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
     let file = OpenOptions::new()
@@ -46,21 +147,54 @@ fn ensure_private_cookie_file(path: &Path) -> std::io::Result<()> {
         .write(true)
         .truncate(false)
         .mode(0o600)
-        .open(path)?;
+        .open(path)
+        .map_err(|err| {
+            ProfileSetupError::new(format!(
+                "could not prepare cookie storage at {}: {err}",
+                path.display()
+            ))
+        })?;
     file.set_permissions(std::fs::Permissions::from_mode(0o600))
+        .map_err(|err| {
+            ProfileSetupError::new(format!(
+                "could not restrict cookie storage at {}: {err}",
+                path.display()
+            ))
+        })
 }
 
 /// Creates `path` (and missing parents) and restricts the directory itself to
 /// the current user. Parents that already exist are left alone.
 #[cfg(unix)]
-pub fn ensure_private_dir(path: &Path) -> std::io::Result<()> {
+pub fn ensure_private_dir(path: &Path) -> Result<(), ProfileSetupError> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(path)?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+        .create(path)
+        .map_err(|err| {
+            ProfileSetupError::new(format!(
+                "could not create profile directory {}: {err}",
+                path.display()
+            ))
+        })?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).map_err(|err| {
+        ProfileSetupError::new(format!(
+            "could not restrict profile directory {}: {err}",
+            path.display()
+        ))
+    })
+}
+
+#[cfg(not(unix))]
+pub fn ensure_private_dir(path: &Path) -> Result<(), ProfileSetupError> {
+    std::fs::create_dir_all(path).map_err(|err| {
+        ProfileSetupError::new(format!(
+            "could not create profile directory {}: {err}",
+            path.display()
+        ))
+    })
 }
 
 /// Absolute profile directory. Falls back to ~/.local/share and then to the
@@ -92,6 +226,11 @@ fn xdg_data_dir(data_local: Option<PathBuf>, home: Option<PathBuf>) -> Option<Pa
 fn current_uid() -> Option<u32> {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata("/proc/self").ok().map(|meta| meta.uid())
+}
+
+#[cfg(not(unix))]
+fn current_uid() -> Option<u32> {
+    None
 }
 
 /// Profile in the shared temporary directory, used only without a usable
@@ -175,10 +314,13 @@ fn claim_private_dir(path: &Path, uid: u32) -> std::io::Result<()> {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{claim_private_dir, ensure_private_cookie_file, ensure_private_dir};
+    use super::{
+        claim_private_dir, ensure_private_cookie_file, ensure_private_dir, persistent_web_context,
+        validate_trusted_dir,
+    };
     use super::{temp_data_dir, xdg_data_dir};
-    use std::path::PathBuf;
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
@@ -191,7 +333,10 @@ mod tests {
             xdg_data_dir(None, Some("/home/me".into())),
             Some(PathBuf::from("/home/me/.local/share/nodaysidle-browser"))
         );
-        assert_eq!(xdg_data_dir(Some("relative".into()), Some("also-relative".into())), None);
+        assert_eq!(
+            xdg_data_dir(Some("relative".into()), Some("also-relative".into())),
+            None
+        );
     }
 
     fn scratch(name: &str) -> PathBuf {
@@ -210,12 +355,18 @@ mod tests {
         let uid = super::current_uid().expect("/proc/self is readable");
         let dir = temp_data_dir(&temp, "me", Some(uid)).unwrap();
         assert_eq!(dir, temp.join("nodaysidle-browser-me"));
-        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
 
         // An existing directory of ours that is too open is tightened and kept.
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(temp_data_dir(&temp, "me", Some(uid)), Some(dir.clone()));
-        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
         std::fs::remove_dir_all(&temp).unwrap();
     }
 
@@ -231,7 +382,10 @@ mod tests {
         let other = temp_data_dir(&temp, "me", Some(uid + 1)).unwrap();
         assert_ne!(other, preferred);
         assert!(other.starts_with(&temp));
-        assert_eq!(std::fs::metadata(&other).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(
+            std::fs::metadata(&other).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
 
         // A symlink planted at the predictable name is not followed.
         std::fs::remove_dir(&preferred).unwrap();
@@ -296,5 +450,17 @@ mod tests {
         let permissions = std::fs::metadata(&cookie_file).unwrap().permissions();
         assert_eq!(permissions.mode() & 0o777, 0o600);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn symlinked_profile_paths_are_rejected() {
+        let temp = scratch("symlink");
+        let target = temp.join("real");
+        std::fs::create_dir(&target).unwrap();
+        let link = temp.join("linked");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(validate_trusted_dir(&link, "profile directory").is_err());
+        assert!(persistent_web_context(&link).is_err());
+        std::fs::remove_dir_all(&temp).unwrap();
     }
 }

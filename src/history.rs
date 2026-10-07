@@ -112,6 +112,16 @@ impl HistoryStore {
 
     /// Writes pending changes to disk, if any. Returns false if they could
     /// not be written (the store stays dirty).
+    /// Removes all entries from memory and on disk. Pending save timers must be
+    /// cancelled by the caller (`save_pending` is cleared here).
+    pub fn clear(&mut self) -> bool {
+        self.entries.clear();
+        self.dirty = true;
+        self.save_pending = false;
+        self.retry_delay = FIRST_RETRY_DELAY;
+        self.flush()
+    }
+
     pub fn flush(&mut self) -> bool {
         if !self.dirty {
             return true;
@@ -158,7 +168,8 @@ fn write_private_atomically(path: &Path, contents: &[u8]) -> std::io::Result<()>
     use std::os::unix::fs::OpenOptionsExt;
 
     if let Some(parent) = path.parent() {
-        crate::profile::ensure_private_dir(parent)?;
+        crate::profile::ensure_private_dir(parent)
+            .map_err(|err| std::io::Error::other(err.to_string()))?;
     }
     let mut temp = path.as_os_str().to_owned();
     temp.push(format!(".tmp-{}", std::process::id()));
@@ -188,10 +199,8 @@ mod tests {
     use std::time::Duration;
 
     fn test_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "nodaysidle-history-{name}-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("nodaysidle-history-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
     }
@@ -201,15 +210,24 @@ mod tests {
         let dir = test_dir("atomic");
         let path = dir.join("profile/history.json");
         let mut store = HistoryStore::load(path.clone());
-        assert_eq!(store.record("https://example.com/".into(), "Example".into()), Some(SAVE_DELAY));
+        assert_eq!(
+            store.record("https://example.com/".into(), "Example".into()),
+            Some(SAVE_DELAY)
+        );
         // Further visits before the flush do not schedule another save.
-        assert_eq!(store.record("https://example.org/".into(), "Org".into()), None);
+        assert_eq!(
+            store.record("https://example.org/".into(), "Org".into()),
+            None
+        );
         assert!(!path.exists(), "record must not write synchronously");
 
         assert_eq!(store.flush_from_timer(), None);
         let file_mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(file_mode & 0o777, 0o600);
-        let dir_mode = std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode();
+        let dir_mode = std::fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(dir_mode & 0o777, 0o700);
         let leftovers = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
@@ -220,7 +238,10 @@ mod tests {
         let reloaded = HistoryStore::load(path);
         let urls: Vec<_> = reloaded.entries().iter().map(|e| e.url.as_str()).collect();
         assert_eq!(urls, ["https://example.org/", "https://example.com/"]);
-        assert_eq!(store.record("https://example.net/".into(), "Net".into()), Some(SAVE_DELAY));
+        assert_eq!(
+            store.record("https://example.net/".into(), "Net".into()),
+            Some(SAVE_DELAY)
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -235,10 +256,16 @@ mod tests {
         let path = blocker.join("history.json");
         let mut store = HistoryStore::load(path.clone());
 
-        assert_eq!(store.record("https://example.com/".into(), "Example".into()), Some(SAVE_DELAY));
+        assert_eq!(
+            store.record("https://example.com/".into(), "Example".into()),
+            Some(SAVE_DELAY)
+        );
         assert_eq!(store.flush_from_timer(), Some(Duration::from_secs(5)));
         // The retry timer is pending, so new visits do not arm another one.
-        assert_eq!(store.record("https://example.org/".into(), "Org".into()), None);
+        assert_eq!(
+            store.record("https://example.org/".into(), "Org".into()),
+            None
+        );
         assert_eq!(store.flush_from_timer(), Some(Duration::from_secs(10)));
 
         std::fs::remove_file(&blocker).unwrap();
@@ -247,7 +274,24 @@ mod tests {
         let urls: Vec<_> = reloaded.entries().iter().map(|e| e.url.as_str()).collect();
         assert_eq!(urls, ["https://example.org/", "https://example.com/"]);
         // Back to normal batching, with the backoff reset.
-        assert_eq!(store.record("https://example.net/".into(), "Net".into()), Some(SAVE_DELAY));
+        assert_eq!(
+            store.record("https://example.net/".into(), "Net".into()),
+            Some(SAVE_DELAY)
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cleared_history_stays_empty_after_reload() {
+        let dir = test_dir("clear");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("history.json");
+        let mut store = HistoryStore::load(path.clone());
+        store.record("https://example.com/".into(), "Example".into());
+        assert!(store.clear());
+        assert!(store.entries().is_empty());
+        let reloaded = HistoryStore::load(path);
+        assert!(reloaded.entries().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

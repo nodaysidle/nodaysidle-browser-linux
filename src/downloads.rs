@@ -50,7 +50,10 @@ pub fn confirm_quit(parent: &gtk::Window) -> bool {
             .iter()
             .filter(|item| item.state.get() == DownloadState::Active)
             .collect();
-        (active.len(), active.first().map(|item| item.filename.clone()))
+        (
+            active.len(),
+            active.first().map(|item| item.filename.clone()),
+        )
     });
     if count == 0 {
         return true;
@@ -72,7 +75,10 @@ pub fn confirm_quit(parent: &gtk::Window) -> bool {
     confirmed
 }
 
-pub(crate) fn quit_confirmation_text(count: usize, first_filename: Option<&str>) -> (String, String) {
+pub(crate) fn quit_confirmation_text(
+    count: usize,
+    first_filename: Option<&str>,
+) -> (String, String) {
     if count <= 1 {
         let name = first_filename.unwrap_or("file");
         (
@@ -129,8 +135,11 @@ fn browser_window_for(download: &Download) -> Option<gtk::Window> {
         }
         return Some(window);
     }
-    let app = gio::Application::default()?.downcast::<gtk::Application>().ok()?;
-    app.active_window().or_else(|| app.windows().into_iter().next())
+    let app = gio::Application::default()?
+        .downcast::<gtk::Application>()
+        .ok()?;
+    app.active_window()
+        .or_else(|| app.windows().into_iter().next())
 }
 
 fn choose_destination(parent: &gtk::Window, filename: &str) -> Option<PathBuf> {

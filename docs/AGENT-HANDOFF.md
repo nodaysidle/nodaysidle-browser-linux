@@ -145,14 +145,17 @@ Modules:
 
 ```bash
 cd ~/dev/nodaysidle/nodaysidle-browser-linux
-cargo build --release
-cargo test --release            # the GTK test skips itself without a display
-./scripts/install-desktop.sh    # builds, installs binary, desktop file and icons
+./scripts/validate.sh           # fmt, clippy -D warnings, release tests (NODAYSIDLE_REQUIRE_DISPLAY=1)
+cargo build --release --locked
+./scripts/install-desktop.sh    # builds --locked, installs binary, desktop file and icons
 ```
 
 Dependencies (Arch): `gtk3`, `webkit2gtk-4.1`, `base-devel`; optional `librsvg` for PNG icons.
 
-Clippy and rustfmt were not run during the audit fixes (not installed on the fix machine).
+AppImage packaging is host-dependent (see `docs/APPIMAGE.md`). Menu → **Clear Browsing Data** erases history,
+site storage, cache, and session permission denials. URL display uses `url_display` (spoof-resistant IDN/path
+policy). Permission allows are per-request; only denials are remembered. Profile setup fails closed on
+untrusted paths.
 
 ## Open items
 

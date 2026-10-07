@@ -696,6 +696,7 @@ dependencies = [
 name = "nodaysidle-browser"
 version = "0.1.0"
 dependencies = [
+ "atk",
  "chrono",
  "dirs",
  "gdk",

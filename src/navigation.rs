@@ -2,24 +2,17 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SearchEngine {
+    #[default]
     DuckDuckGo,
-}
-
-impl Default for SearchEngine {
-    fn default() -> Self {
-        SearchEngine::DuckDuckGo
-    }
 }
 
 impl SearchEngine {
     pub fn search_url(&self, query: &str) -> Option<String> {
         let encoded = percent_encode_query(query);
         match self {
-            SearchEngine::DuckDuckGo => {
-                Some(format!("https://duckduckgo.com/?q={}", encoded))
-            }
+            SearchEngine::DuckDuckGo => Some(format!("https://duckduckgo.com/?q={}", encoded)),
         }
     }
 }
@@ -57,7 +50,11 @@ fn resolve_with_home(raw: &str, engine: SearchEngine, home: Option<&Path>) -> Op
 
     // Unbracketed IPv6 literal such as `::1` or `fe80::1`.
     if let Ok(address) = trimmed.parse::<Ipv6Addr>() {
-        let scheme = if is_local_ipv6(address) { "http" } else { "https" };
+        let scheme = if is_local_ipv6(address) {
+            "http"
+        } else {
+            "https"
+        };
         return Some(format!("{scheme}://[{address}]/"));
     }
 
@@ -168,81 +165,14 @@ fn is_plausible_tld(tld: &str) -> bool {
 }
 
 pub fn format_url_for_display(uri: &str) -> String {
-    let mut working = uri.to_string();
-    if let Ok(parsed) = url::Url::parse(uri) {
-        if let Some(host) = parsed.host_str() {
-            if host.contains("xn--") {
-                let (unicode, _) = idna::domain_to_unicode(host);
-                if let Some(pos) = working.find(host) {
-                    working.replace_range(pos..pos + host.len(), &unicode);
-                }
-            }
-        }
-    }
-    decode_utf8_percent_encoded(&working)
-}
-
-/// Decodes percent-encoded UTF-8 byte sequences where the decoded bytes form
-/// valid non-ASCII UTF-8 characters. ASCII characters and delimiters (such as
-/// `%20`, `%2F`, `%3F`, `%26`, `%23`, etc.) remain safely percent-encoded.
-fn decode_utf8_percent_encoded(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut out = String::with_capacity(input.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let mut decoded_bytes = [0u8; 4];
-            let mut byte_count = 0;
-            let mut idx = i;
-            let mut decoded_char = None;
-            let mut consumed = 0;
-
-            while idx + 2 < bytes.len() && bytes[idx] == b'%' && byte_count < 4 {
-                let hex = &bytes[idx + 1..idx + 3];
-                let Ok(hex_str) = std::str::from_utf8(hex) else { break; };
-                let Ok(b) = u8::from_str_radix(hex_str, 16) else { break; };
-                if b < 0x80 {
-                    // Keep ASCII characters and delimiters percent-encoded
-                    break;
-                }
-                decoded_bytes[byte_count] = b;
-                byte_count += 1;
-                idx += 3;
-
-                if let Ok(s) = std::str::from_utf8(&decoded_bytes[..byte_count]) {
-                    let mut chars = s.chars();
-                    if let Some(ch) = chars.next() {
-                        if chars.next().is_none() && !ch.is_control() {
-                            decoded_char = Some(ch);
-                            consumed = idx - i;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if let Some(ch) = decoded_char {
-                out.push(ch);
-                i += consumed;
-                continue;
-            }
-        }
-        let ch = input[i..].chars().next().unwrap();
-        out.push(ch);
-        i += ch.len_utf8();
-    }
-    out
+    crate::url_display::format_url_for_display(uri)
 }
 
 pub fn title_for_url(url: &str) -> String {
     if let Ok(parsed) = url::Url::parse(url) {
         if let Some(host) = parsed.host_str() {
             if !host.is_empty() {
-                if host.contains("xn--") {
-                    let (unicode, _) = idna::domain_to_unicode(host);
-                    return unicode;
-                }
-                return host.to_string();
+                return crate::url_display::display_host_for_title(host);
             }
         }
         if !parsed.path().is_empty() {
@@ -298,7 +228,10 @@ mod tests {
         assert_eq!(resolve("HTTP://Example.com"), "HTTP://Example.com");
         assert_eq!(resolve("about:blank"), "about:blank");
         assert_eq!(resolve("file:///etc/hostname"), "file:///etc/hostname");
-        assert_eq!(resolve("file:///home/me/a.b/c.d"), "file:///home/me/a.b/c.d");
+        assert_eq!(
+            resolve("file:///home/me/a.b/c.d"),
+            "file:///home/me/a.b/c.d"
+        );
     }
 
     #[test]
@@ -312,8 +245,10 @@ mod tests {
         assert_eq!(resolve("/etc/hostname"), "file:///etc/hostname");
         assert_eq!(resolve("/tmp/my page.html"), "file:///tmp/my%20page.html");
         assert_eq!(resolve("~/docs/a.html"), "file:///home/me/docs/a.html");
-        assert!(resolve_with_home("~/a.html", SearchEngine::DuckDuckGo, None)
-            .is_some_and(|url| is_search(&url)));
+        assert!(
+            resolve_with_home("~/a.html", SearchEngine::DuckDuckGo, None)
+                .is_some_and(|url| is_search(&url))
+        );
     }
 
     #[test]
@@ -328,9 +263,15 @@ mod tests {
         assert_eq!(resolve("fd00::1"), "http://[fd00::1]/");
         assert_eq!(resolve("fc00::5"), "http://[fc00::5]/");
         assert_eq!(resolve("fe80::1"), "http://[fe80::1]/");
-        assert_eq!(resolve("[fd12:3456::1]:8080/admin"), "http://[fd12:3456::1]:8080/admin");
+        assert_eq!(
+            resolve("[fd12:3456::1]:8080/admin"),
+            "http://[fd12:3456::1]:8080/admin"
+        );
         assert_eq!(resolve("[fe80::abcd]/"), "http://[fe80::abcd]/");
-        assert_eq!(resolve("::ffff:192.168.1.1"), "http://[::ffff:192.168.1.1]/");
+        assert_eq!(
+            resolve("::ffff:192.168.1.1"),
+            "http://[::ffff:192.168.1.1]/"
+        );
         assert_eq!(resolve("fec0::1"), "https://[fec0::1]/");
         assert_eq!(resolve("[2606:4700::1111]"), "https://[2606:4700::1111]");
     }
@@ -352,7 +293,10 @@ mod tests {
     #[test]
     fn domains_use_https() {
         assert_eq!(resolve("wikipedia.org"), "https://wikipedia.org");
-        assert_eq!(resolve("en.wikipedia.org/wiki/Rust"), "https://en.wikipedia.org/wiki/Rust");
+        assert_eq!(
+            resolve("en.wikipedia.org/wiki/Rust"),
+            "https://en.wikipedia.org/wiki/Rust"
+        );
         assert_eq!(resolve("example.com:8443"), "https://example.com:8443");
         assert_eq!(resolve("8.8.8.8"), "https://8.8.8.8");
         assert_eq!(resolve("пример.рф"), "https://пример.рф");
@@ -360,7 +304,14 @@ mod tests {
 
     #[test]
     fn file_names_numbers_and_words_are_searched() {
-        for input in ["node.js", "notes.txt", "3.14", "rust", "e.g", "user@example.com"] {
+        for input in [
+            "node.js",
+            "notes.txt",
+            "3.14",
+            "rust",
+            "e.g",
+            "user@example.com",
+        ] {
             assert!(is_search(&resolve(input)), "{input} should be a search");
         }
         assert!(is_search(&resolve("how to use example.com")));
@@ -368,7 +319,10 @@ mod tests {
 
     #[test]
     fn blank_input_does_nothing() {
-        assert_eq!(resolve_with_home("   ", SearchEngine::DuckDuckGo, None), None);
+        assert_eq!(
+            resolve_with_home("   ", SearchEngine::DuckDuckGo, None),
+            None
+        );
     }
 
     #[test]
@@ -395,11 +349,15 @@ mod tests {
     #[test]
     fn non_english_urls_decode_to_human_readable_text() {
         assert_eq!(
-            format_url_for_display("https://zh.wikipedia.org/wiki/%E7%BB%B4%E5%9F%BA%E7%99%BE%E7%A7%91"),
+            format_url_for_display(
+                "https://zh.wikipedia.org/wiki/%E7%BB%B4%E5%9F%BA%E7%99%BE%E7%A7%91"
+            ),
             "https://zh.wikipedia.org/wiki/维基百科"
         );
         assert_eq!(
-            format_url_for_display("https://de.wikipedia.org/wiki/M%C3%BCnchen?q=test%20space%26more"),
+            format_url_for_display(
+                "https://de.wikipedia.org/wiki/M%C3%BCnchen?q=test%20space%26more"
+            ),
             "https://de.wikipedia.org/wiki/München?q=test%20space%26more"
         );
         assert_eq!(
@@ -407,7 +365,9 @@ mod tests {
             "file:///home/文档/test.html"
         );
         assert_eq!(
-            format_url_for_display("https://xn--e1afmkfd.xn--80akhbyknj4f/wiki/%E7%BB%B4%E5%9F%BA%E7%99%BE%E7%A7%91"),
+            format_url_for_display(
+                "https://xn--e1afmkfd.xn--80akhbyknj4f/wiki/%E7%BB%B4%E5%9F%BA%E7%99%BE%E7%A7%91"
+            ),
             "https://пример.испытание/wiki/维基百科"
         );
         assert_eq!(format_url_for_display("about:blank"), "about:blank");

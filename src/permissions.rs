@@ -8,28 +8,30 @@ use webkit2gtk::{
 };
 
 thread_local! {
-    /// Allow/Deny answers per (origin, permission) for this session only; they
-    /// are forgotten when the browser exits (R-8).
+    /// Deny answers per (origin, permission) for this session only. Allows are
+    /// never cached because WebKitGTK cannot attribute the requesting frame.
     static DECISIONS: RefCell<SessionDecisions> = RefCell::new(SessionDecisions::default());
 }
 
 #[derive(Default)]
 struct SessionDecisions {
-    decisions: HashMap<(String, &'static str), bool>,
+    denials: HashMap<(String, &'static str), ()>,
 }
 
 impl SessionDecisions {
-    fn get(&self, origin: &str, permission: &'static str) -> Option<bool> {
-        self.decisions.get(&(origin.to_string(), permission)).copied()
+    fn is_denied(&self, origin: &str, permission: &'static str) -> bool {
+        self.denials.contains_key(&(origin.to_string(), permission))
     }
 
-    /// Only real origins are remembered; opaque ones ("this page", local
-    /// files) are asked about every time.
-    fn remember(&mut self, origin: &str, permission: &'static str, allowed: bool) {
+    fn remember_denial(&mut self, origin: &str, permission: &'static str) {
         if origin.contains("://") {
-            self.decisions.insert((origin.to_string(), permission), allowed);
+            self.denials.insert((origin.to_string(), permission), ());
         }
     }
+}
+
+pub fn clear_session_grants() {
+    DECISIONS.with(|decisions| decisions.borrow_mut().denials.clear());
 }
 
 pub fn wire(web_view: &WebView) {
@@ -56,13 +58,8 @@ fn handle_request(view: &WebView, request: &PermissionRequest) -> bool {
         .uri()
         .map(|uri| permission_origin(&uri))
         .unwrap_or_else(|| "this page".to_string());
-    let remembered = DECISIONS.with(|decisions| decisions.borrow().get(&origin, permission));
-    if let Some(allowed) = remembered {
-        if allowed {
-            request.allow();
-        } else {
-            request.deny();
-        }
+    if DECISIONS.with(|decisions| decisions.borrow().is_denied(&origin, permission)) {
+        request.deny();
         return true;
     }
     let dialog = gtk::Dialog::with_buttons(
@@ -90,11 +87,20 @@ fn handle_request(view: &WebView, request: &PermissionRequest) -> bool {
     dialog.close();
 
     let allowed = permission_response_allows(response);
-    // Closing the prompt without choosing is not a decision to remember.
-    if matches!(response, gtk::ResponseType::Accept | gtk::ResponseType::Reject) {
-        DECISIONS.with(|decisions| decisions.borrow_mut().remember(&origin, permission, allowed));
+    let still_valid = view
+        .uri()
+        .map(|uri| permission_origin(&uri) == origin)
+        .unwrap_or(false);
+    if !still_valid {
+        request.deny();
+        return true;
     }
-    if allowed {
+    if matches!(response, gtk::ResponseType::Reject) {
+        DECISIONS.with(|decisions| {
+            decisions.borrow_mut().remember_denial(&origin, permission);
+        });
+        request.deny();
+    } else if allowed {
         request.allow();
     } else {
         request.deny();
@@ -126,7 +132,8 @@ fn permission_name(request: &PermissionRequest) -> Option<&'static str> {
 fn prompt_text(origin: &str, permission: &str) -> String {
     format!(
         "{origin} (or a site embedded in it) requests {permission}. Allow this request?\n\n\
-         Your answer applies to {origin} until you close the browser."
+         Each Allow applies only to this request. Deny answers are remembered for {origin} \
+         until you clear site permissions or close the browser."
     )
 }
 
@@ -152,23 +159,20 @@ mod tests {
     #[test]
     fn the_prompt_says_an_embedded_frame_may_be_asking() {
         let text = prompt_text("https://example.com", "your camera");
-        assert!(text.starts_with(
-            "https://example.com (or a site embedded in it) requests your camera."
-        ));
-        assert!(text.contains("until you close the browser"));
+        assert!(text
+            .starts_with("https://example.com (or a site embedded in it) requests your camera."));
+        assert!(text.contains("Each Allow applies only to this request"));
     }
 
     #[test]
-    fn decisions_are_remembered_per_origin_and_permission() {
+    fn only_denials_are_remembered_per_origin_and_permission() {
         let mut decisions = SessionDecisions::default();
-        decisions.remember("https://example.com", "your camera", true);
-        decisions.remember("https://example.com", "notifications", false);
-        assert_eq!(decisions.get("https://example.com", "your camera"), Some(true));
-        assert_eq!(decisions.get("https://example.com", "notifications"), Some(false));
-        assert_eq!(decisions.get("https://example.com", "your location"), None);
-        assert_eq!(decisions.get("https://other.example", "your camera"), None);
-        decisions.remember("this local file", "your camera", true);
-        assert_eq!(decisions.get("this local file", "your camera"), None);
+        decisions.remember_denial("https://example.com", "your camera");
+        assert!(decisions.is_denied("https://example.com", "your camera"));
+        assert!(!decisions.is_denied("https://example.com", "notifications"));
+        assert!(!decisions.is_denied("https://other.example", "your camera"));
+        decisions.remember_denial("this local file", "your camera");
+        assert!(!decisions.is_denied("this local file", "your camera"));
     }
 
     #[test]
