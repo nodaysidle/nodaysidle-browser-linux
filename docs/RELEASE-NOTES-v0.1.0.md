@@ -6,12 +6,12 @@ A quiet, native Linux WebKit browser designed for focused browsing.
 
 | File | Type | Description |
 | --- | --- | --- |
-| **`nodaysidle-browser-x86_64.AppImage`** | Standalone Executable | Portable Linux x86_64 AppImage |
+| **`nodaysidle-browser-x86_64.AppImage`** | AppImage | Host-dependent AppImage, requires system GTK 3 + WebKitGTK 4.1 |
 
 ### Verification
 ```bash
 sha256sum nodaysidle-browser-x86_64.AppImage
-# 06a91e470c0ed8b592341d09557bb0c7190858f3928a4807d778ec696dcabd48
+# f6d82efa6d7c972ff25f269f98457f0d5c99263a45c80162cfc9a085b20c4404
 ```
 
 ## Quick Start
