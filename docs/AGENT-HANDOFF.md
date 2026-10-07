@@ -1,3 +1,5 @@
+> **Historical document (marked 2026-10-07).** This handoff is partly out of date. For example, it says there is no git remote, but `origin` exists, and its "Last updated" date predates later changes. Treat it as background only and verify every statement against the code and `README.md`.
+
 # Agent handoff — nodaysidle-browser-linux
 
 Last updated: 2026-10-03, after the audit fix series on top of `30f00b6` and the follow-up series on top
