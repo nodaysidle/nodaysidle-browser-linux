@@ -3,6 +3,8 @@
 
   # nodaysidle (Linux)
 
+  ![NODAYSIDLE Browser for Linux](docs/browser-linux.gif)
+
   **A quiet, native Linux browser for focused browsing.**
 
   Minimal chrome. Native WebKit pages. Local-first privacy.
