@@ -42,7 +42,7 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 
 ### Download `.AppImage`
 
-Download the executable from the [GitHub Releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases) page. The AppImage bundles the browser binary and metadata only; **GTK 3 and WebKitGTK 4.1 must already be installed** on the system (see [docs/APPIMAGE.md](docs/APPIMAGE.md)):
+Download the [AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.1.0/nodaysidle-browser-x86_64.AppImage) (or [see all releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases)). The AppImage bundles the browser binary and metadata only; **GTK 3 and WebKitGTK 4.1 must already be installed** on the system (see [docs/APPIMAGE.md](docs/APPIMAGE.md)):
 
 ```bash
 chmod +x nodaysidle-browser-x86_64.AppImage
