@@ -38,6 +38,16 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 - Host-dependent `.AppImage` (requires system WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md))
 - No application telemetry
 
+## What's new (unreleased; not in the v0.1.0 AppImage)
+
+- **Multiple windows:** `nodaysidle-browser --new-window` (`-n`), <kbd>Ctrl</kbd>+<kbd>N</kbd>, or **New Window** in the ☰ menu. Windows share one profile (cookies, site storage, history), and only closing the last window asks to confirm active downloads.
+- **Hyprland corners:** the window frame insets itself to match Hyprland's `decoration:rounding`, read once at startup. The inset is 0 when the window is tiled, maximized or fullscreen. Set `NODAYSIDLE_CORNER_INSET=<px>` to override it.
+- **History popover:** sized to fit narrow tiles, with an empty state. The find bar hides on Home and keeps its query.
+- **Accessibility:** tabs are exposed as page tabs with names and selected state, close buttons are labelled "Close <title>", and the close icon has higher contrast (about 6:1).
+- **Fish completion and desktop action:** the installer adds a fish completion and a **New Window** desktop action.
+- **Hardening:** one shared URL display, with lookalike (mixed-script) hostnames kept in punycode and bidi or zero-width characters escaped. Clear Data now reports failures in a dialog.
+- **AppImage packaging:** the pinned `appimagetool` download is checksum-verified before use, with offline regression tests (`scripts/test-package-appimage.py`).
+
 ## Install and run
 
 ### Download `.AppImage`
