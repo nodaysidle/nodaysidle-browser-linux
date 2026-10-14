@@ -1,7 +1,7 @@
 //! Spoof-resistant URL presentation for address fields, tooltips, and titles.
 //! Canonical navigation URIs are unchanged; only human-facing text is sanitized.
 
-use url::Url;
+use url::{Position, Url};
 
 /// User-visible URL text. The underlying `uri` used for navigation must stay canonical.
 pub fn format_url_for_display(uri: &str) -> String {
@@ -24,21 +24,12 @@ pub fn format_url_for_display(uri: &str) -> String {
 }
 
 fn url_with_display_host(parsed: &Url, host: &str) -> String {
-    let mut out = format!("{}://{}", parsed.scheme(), host);
-    if let Some(port) = parsed.port() {
-        out.push(':');
-        out.push_str(&port.to_string());
-    }
-    out.push_str(parsed.path());
-    if let Some(query) = parsed.query() {
-        out.push('?');
-        out.push_str(query);
-    }
-    if let Some(fragment) = parsed.fragment() {
-        out.push('#');
-        out.push_str(fragment);
-    }
-    out
+    format!(
+        "{}{}{}",
+        &parsed[..Position::BeforeHost],
+        host,
+        &parsed[Position::AfterHost..]
+    )
 }
 
 /// Host portion for fallback tab titles and tooltips.
@@ -62,29 +53,22 @@ fn display_host(host: &str) -> String {
 }
 
 fn host_labels_safe_for_unicode_display(host: &str) -> bool {
-    let (unicode, _) = idna::domain_to_unicode(host);
-    unicode.split('.').all(|label| {
-        !label.is_empty()
-            && !label.chars().any(is_unsafe_display_char)
-            && !label_has_mixed_scripts(label)
-    })
-}
-
-/// Latin letters together with letters from another script in the same label.
-fn label_has_mixed_scripts(label: &str) -> bool {
-    let mut has_latin = false;
-    let mut has_other_letter = false;
-    for ch in label.chars() {
-        if !ch.is_alphabetic() {
-            continue;
-        }
-        if ch.is_ascii() && ch.is_ascii_alphabetic() {
-            has_latin = true;
-        } else {
-            has_other_letter = true;
-        }
-    }
-    has_latin && has_other_letter
+    let (unicode, validity) = idna::domain_to_unicode(host);
+    // shortcut: only accented Latin and Han labels display as Unicode; expand
+    // with a maintained confusable/script policy before supporting other scripts.
+    validity.is_ok()
+        && unicode.trim_end_matches('.').split('.').all(|label| {
+            !label.is_empty()
+                && (label.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric()
+                        || ch == '-'
+                        || "àáâãäåçèéêëìíîïñòóôõöùúûüýÿ".contains(ch)
+                }) || label.chars().all(|ch| {
+                    ch.is_ascii_digit()
+                        || ch == '-'
+                        || matches!(ch, '\u{3400}'..='\u{4dbf}' | '\u{4e00}'..='\u{9fff}')
+                }))
+        })
 }
 
 fn is_unsafe_display_char(ch: char) -> bool {
@@ -164,9 +148,46 @@ mod tests {
     use super::{display_host_for_title, format_url_for_display};
 
     #[test]
-    fn punycode_hosts_decode_when_labels_are_single_script() {
+    fn accepted_international_hosts_and_confusables_follow_the_policy() {
+        for host in ["bücher.de", "café.fr", "例子.测试"] {
+            let ascii = idna::domain_to_ascii(host).unwrap();
+            assert_eq!(display_host_for_title(&ascii), host);
+            assert_eq!(
+                format_url_for_display(&format!("https://{ascii}/")),
+                format!("https://{host}/")
+            );
+        }
+        for host in [
+            "аррӏе.com",
+            "раураӏ.com",
+            "οο.com",
+            "ρор.com",
+            "а例.com",
+            "é例.com",
+            "ı.com",
+            "рoypal.com",
+        ] {
+            let ascii = idna::domain_to_ascii(host).unwrap();
+            assert_eq!(display_host_for_title(&ascii), ascii, "{host}");
+            assert_eq!(
+                format_url_for_display(&format!("https://{host}/")),
+                format!("https://{ascii}/")
+            );
+        }
+    }
+
+    #[test]
+    fn unicode_host_display_preserves_the_rest_of_the_url() {
+        let canonical = "https://user:p%40ss@xn--bcher-kva.de:8443/a%2Fb?q=%26#frag";
+        let shown = format_url_for_display(canonical);
+        assert_eq!(shown, "https://user:p%40ss@bücher.de:8443/a%2Fb?q=%26#frag");
+        assert_eq!(url::Url::parse(&shown).unwrap().as_str(), canonical);
+    }
+
+    #[test]
+    fn unsupported_scripts_remain_punycode_even_when_legitimate() {
         let host = "xn--e1afmkfd.xn--80akhbyknj4f";
-        assert_eq!(display_host_for_title(host), "пример.испытание");
+        assert_eq!(display_host_for_title(host), host);
     }
 
     #[test]
@@ -187,9 +208,9 @@ mod tests {
             format_url_for_display(
                 "https://xn--e1afmkfd.xn--80akhbyknj4f/wiki/%E7%BB%B4%E5%9F%BA%E7%99%BE%E7%A7%91"
             ),
-            "https://пример.испытание/wiki/维基百科"
+            "https://xn--e1afmkfd.xn--80akhbyknj4f/wiki/维基百科"
         );
-        assert_eq!(display_host_for_title("пример.рф"), "пример.рф");
+        assert_eq!(display_host_for_title("пример.рф"), "xn--e1afmkfd.xn--p1ai");
     }
 
     #[test]
@@ -212,6 +233,22 @@ mod tests {
         assert!(bidi.contains("%E2%80%AE") || bidi.contains("%e2%80%ae"));
         let zw = format_url_for_display("https://example.com/a%E2%80%8Bb");
         assert!(!zw.contains('\u{200b}'));
+        for ch in ['\u{202e}', '\u{2066}', '\u{200b}', '\u{200d}', '\u{feff}'] {
+            let escaped: String = ch
+                .to_string()
+                .bytes()
+                .map(|byte| format!("%{byte:02X}"))
+                .collect();
+            for input in [
+                format!("https://example.com/a{ch}b?q={ch}#{ch}"),
+                format!("https://example.com/a{escaped}b?q={escaped}#{escaped}"),
+                format!("invalid URL {ch}"),
+            ] {
+                let shown = format_url_for_display(&input);
+                assert!(!shown.contains(ch), "{shown}");
+                assert!(shown.contains(&escaped), "{shown}");
+            }
+        }
     }
 
     #[test]

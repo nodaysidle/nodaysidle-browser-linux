@@ -30,3 +30,24 @@ alone.
 Release packaging uses `cargo build --release --locked`. The optional
 `appimagetool` download is pinned by `scripts/appimagetool.sha256` and stored
 under `target/appimagetool-cache/` (never trusted from `/tmp`).
+
+An executable cached tool takes precedence and is verified on every run. An
+invalid cache entry is removed and replaced only with a verified download;
+this recovery does not fall back to PATH. Downloads are hashed at their actual
+`.partial` path before becoming executable or being promoted into the cache.
+Failed downloads and catchable interruptions remove the partial file. Any stale
+partial left by an uncatchable interruption is discarded before retrying.
+
+When there is no executable cached tool, an `appimagetool` found on PATH is
+trusted as a locally managed tool and used **without checksum verification**.
+The script announces this choice. Ensure PATH contains only tools you trust;
+to use the pinned download, make sure no `appimagetool` is on PATH. The download
+URL uses the mutable `continuous` release, so changed upstream bytes fail closed
+against the fixed digest rather than silently updating the pin.
+
+Run the isolated packaging regression tests without network access or a Rust
+build:
+
+```bash
+python3 -B scripts/test-package-appimage.py
+```

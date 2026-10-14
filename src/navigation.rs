@@ -368,7 +368,7 @@ mod tests {
             format_url_for_display(
                 "https://xn--e1afmkfd.xn--80akhbyknj4f/wiki/%E7%BB%B4%E5%9F%BA%E7%99%BE%E7%A7%91"
             ),
-            "https://пример.испытание/wiki/维基百科"
+            "https://xn--e1afmkfd.xn--80akhbyknj4f/wiki/维基百科"
         );
         assert_eq!(format_url_for_display("about:blank"), "about:blank");
     }

@@ -49,6 +49,9 @@ pub(crate) use crate::find::{
     build_find_bar, hide_find_bar, hide_find_bar_for_home, run_find, set_find_status,
     show_find_bar, wire_find_bar, wire_find_feedback, FindBar, FindStatus,
 };
+/// Re-exported so the tab tests keep exercising history rendering directly.
+#[cfg(test)]
+pub(crate) use crate::history_ui::{history_row, history_row_markup};
 #[cfg(test)]
 pub(crate) use crate::popup::wire_popup_address_keys;
 /// Re-exported so the tab code and its tests keep using the pop-up policy.
@@ -1963,7 +1966,7 @@ pub(crate) fn icon_button(icon_name: &str, tooltip: &str) -> Button {
 
 #[cfg(test)]
 mod tests {
-    use super::address_activation_uri;
+    use super::{address_activation_uri, history_row_markup};
     use super::{
         find_status_text, is_sized_popup, last_tab_action, next_tab_id, pill_is_visible,
         scroll_value_to_reveal, selection_after_close, shortcut_for, truncate, url_bar_sync_value,
@@ -1989,6 +1992,34 @@ mod tests {
                 "https://edited.example/"
             );
             assert_eq!(address_activation_uri(&shown, None), shown);
+        }
+    }
+
+    #[test]
+    fn history_presentation_formats_urls_and_escapes_markup_without_mutation() {
+        for (uri, shown) in [
+            ("https://xn--bcher-kva.de/", "https://bücher.de/"),
+            ("https://xn--80ak6aa92e.com/", "https://xn--80ak6aa92e.com/"),
+            (
+                "https://example.com/%E2%80%AE?a=1&b=%2F",
+                "https://example.com/%E2%80%AE?a=1&amp;b=%2F",
+            ),
+            (
+                "file:///home/%E6%96%87%E6%A1%A3/test.html",
+                "file:///home/文档/test.html",
+            ),
+            ("about:blank", "about:blank"),
+        ] {
+            let entry = crate::history::HistoryEntry {
+                url: uri.into(),
+                title: "<Page & title>".into(),
+                visited_at: chrono::Utc::now(),
+            };
+            assert_eq!(
+                history_row_markup(&entry),
+                format!("<b>&lt;Page &amp; title&gt;</b>\n<small>{shown}</small>")
+            );
+            assert_eq!(entry.url, uri);
         }
     }
 
@@ -2410,7 +2441,22 @@ mod gtk_tests {
             );
             return;
         }
+        crate::privacy::verify_clear_data_feedback();
         verify_native_tab_selection_and_popup_address();
+        let history_entry = crate::history::HistoryEntry {
+            url: "https://user:p%40ss@xn--bcher-kva.de:8443/a%2Fb?q=1&b=2#frag".into(),
+            title: "<Page & title>".into(),
+            visited_at: chrono::Utc::now(),
+        };
+        let row = super::history_row(&history_entry);
+        assert_eq!(row.widget_name().as_str(), history_entry.url);
+        let label = row.child().unwrap().downcast::<gtk::Label>().unwrap();
+        assert_eq!(
+            label.text().as_str(),
+            "<Page & title>\nhttps://user:p%40ss@bücher.de:8443/a%2Fb?q=1&b=2#frag"
+        );
+        drop(label);
+        drop(row);
         let dir = std::env::temp_dir().join(format!(
             "nodaysidle-browser-gtk-test-{}",
             std::process::id()

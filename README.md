@@ -38,11 +38,21 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 - Host-dependent `.AppImage` (requires system WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md))
 - No application telemetry
 
+## What's new in v0.2.0
+
+- **Multiple windows:** `nodaysidle-browser --new-window` (`-n`), <kbd>Ctrl</kbd>+<kbd>N</kbd>, or **New Window** in the ☰ menu. Windows share one profile (cookies, site storage, history), and only closing the last window asks to confirm active downloads.
+- **Hyprland corners:** the window frame insets itself to match Hyprland's `decoration:rounding`, read once at startup. The inset is 0 when the window is tiled, maximized or fullscreen. Set `NODAYSIDLE_CORNER_INSET=<px>` to override it.
+- **History popover:** sized to fit narrow tiles, with an empty state. The find bar hides on Home and keeps its query.
+- **Accessibility:** tabs are exposed as page tabs with names and selected state, close buttons are labelled "Close <title>", and the close icon has higher contrast (about 6:1).
+- **Fish completion and desktop action:** the installer adds a fish completion and a **New Window** desktop action.
+- **Hardening:** one shared URL display, with lookalike (mixed-script) hostnames kept in punycode and bidi or zero-width characters escaped. Clear Data now reports failures in a dialog.
+- **AppImage packaging:** the pinned `appimagetool` download is checksum-verified before use, with offline regression tests (`scripts/test-package-appimage.py`).
+
 ## Install and run
 
 ### Download `.AppImage`
 
-Download the [AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.1.0/nodaysidle-browser-x86_64.AppImage) (or [see all releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases)). The AppImage bundles the browser binary and metadata only; **GTK 3 and WebKitGTK 4.1 must already be installed** on the system (see [docs/APPIMAGE.md](docs/APPIMAGE.md)):
+Download the [v0.2.0 AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/nodaysidle-browser-x86_64.AppImage) (previous: [v0.1.0 AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.1.0/nodaysidle-browser-x86_64.AppImage); or [see all releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases)). The AppImage bundles the browser binary and metadata only; **GTK 3 and WebKitGTK 4.1 must already be installed** on the system (see [docs/APPIMAGE.md](docs/APPIMAGE.md)):
 
 ```bash
 chmod +x nodaysidle-browser-x86_64.AppImage
@@ -120,7 +130,23 @@ A pop-up window shows one page and a read-only address bar. It has:
 - Built-in dark error pages for failed loads and web process recovery.
 - Pop-ups lack find, back/forward history, and editable address bar, and close with the parent window.
 
+## Clearing browsing data
+
+The app menu lets you clear history, cookies and site storage, cached files, and
+session permission denials independently. A failure dialog reports unsuccessful
+selected operations, including website-data failures reported asynchronously by
+WebKit. Successfully cleared categories remain cleared when another category fails.
+
 ## Address bar input
+
+URL presentation is shared by the address bar, popup addresses, tab URL tooltips,
+fallback host titles, history rows, and error pages. Approved accented Latin labels (for example,
+`bücher.de` and `café.fr`) and Han-only labels (`例子.测试`) display as Unicode.
+Other international hosts remain in punycode, including Cyrillic and Greek names
+that may resemble Latin names. Paths may display readable Unicode, while encoded
+delimiters, bidi controls, and zero-width characters remain escaped. Stored history
+URLs and navigation destinations stay canonical; submitting an unchanged displayed
+address reuses the current URI.
 
 - `http://`, `https://`, `file://` and `about:` URLs load as typed.
 - `/absolute/path` and `~/path` open local files.

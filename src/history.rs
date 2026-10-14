@@ -110,10 +110,9 @@ impl HistoryStore {
         Some(delay)
     }
 
-    /// Writes pending changes to disk, if any. Returns false if they could
-    /// not be written (the store stays dirty).
-    /// Removes all entries from memory and on disk. Pending save timers must be
-    /// cancelled by the caller (`save_pending` is cleared here).
+    /// Removes all entries from memory and writes the empty list to disk.
+    /// Existing save callbacks flush current entries, so they cannot restore
+    /// cleared visits; failed writes leave the store dirty for a later retry.
     pub fn clear(&mut self) -> bool {
         self.entries.clear();
         self.dirty = true;
@@ -122,6 +121,7 @@ impl HistoryStore {
         self.flush()
     }
 
+    /// Writes pending changes to disk; failed writes leave the store dirty.
     pub fn flush(&mut self) -> bool {
         if !self.dirty {
             return true;
@@ -293,6 +293,80 @@ mod tests {
         let reloaded = HistoryStore::load(path);
         assert!(reloaded.entries().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn clear_then_pending_timer_does_not_restore_history() {
+        for fail_clear in [false, true] {
+            let dir = test_dir(if fail_clear {
+                "clear-timer-fail"
+            } else {
+                "clear-timer"
+            });
+            let path = dir.join("history.json");
+            let mut store = HistoryStore::load(path.clone());
+            assert_eq!(
+                store.record("https://old.example/".into(), "Old".into()),
+                Some(SAVE_DELAY)
+            );
+            assert!(store.flush());
+            if fail_clear {
+                std::fs::create_dir(
+                    path.with_extension(format!("json.tmp-{}", std::process::id())),
+                )
+                .unwrap();
+            }
+            assert_eq!(store.clear(), !fail_clear);
+            if fail_clear {
+                assert_eq!(HistoryStore::load(path.clone()).entries().len(), 1);
+                assert_eq!(store.flush_from_timer(), Some(Duration::from_secs(5)));
+                std::fs::remove_dir(
+                    path.with_extension(format!("json.tmp-{}", std::process::id())),
+                )
+                .unwrap();
+            }
+            assert_eq!(store.flush_from_timer(), None);
+            assert!(HistoryStore::load(path).entries().is_empty());
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn clear_then_record_then_old_and_new_timers_save_only_new_history() {
+        for fail_clear in [false, true] {
+            let dir = test_dir(if fail_clear {
+                "clear-record-fail"
+            } else {
+                "clear-record"
+            });
+            let path = dir.join("history.json");
+            let mut store = HistoryStore::load(path.clone());
+            assert_eq!(
+                store.record("https://old.example/".into(), "Old".into()),
+                Some(SAVE_DELAY)
+            );
+            assert!(store.flush());
+            let blocker = path.with_extension(format!("json.tmp-{}", std::process::id()));
+            if fail_clear {
+                std::fs::create_dir(&blocker).unwrap();
+            }
+            assert_eq!(store.clear(), !fail_clear);
+            assert_eq!(
+                store.record("https://new.example/".into(), "New".into()),
+                Some(SAVE_DELAY)
+            );
+            if fail_clear {
+                assert_eq!(store.flush_from_timer(), Some(Duration::from_secs(5)));
+                std::fs::remove_dir(blocker).unwrap();
+            }
+            // The old callback flushes current entries; the new callback is harmless.
+            assert_eq!(store.flush_from_timer(), None);
+            assert_eq!(store.flush_from_timer(), None);
+            let reloaded = HistoryStore::load(path);
+            assert_eq!(reloaded.entries().len(), 1);
+            assert_eq!(reloaded.entries()[0].url, "https://new.example/");
+            std::fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]
