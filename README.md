@@ -38,7 +38,7 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 - Host-dependent `.AppImage` (requires system WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md))
 - No application telemetry
 
-## What's new (unreleased; not in the v0.1.0 AppImage)
+## What's new in v0.2.0
 
 - **Multiple windows:** `nodaysidle-browser --new-window` (`-n`), <kbd>Ctrl</kbd>+<kbd>N</kbd>, or **New Window** in the ☰ menu. Windows share one profile (cookies, site storage, history), and only closing the last window asks to confirm active downloads.
 - **Hyprland corners:** the window frame insets itself to match Hyprland's `decoration:rounding`, read once at startup. The inset is 0 when the window is tiled, maximized or fullscreen. Set `NODAYSIDLE_CORNER_INSET=<px>` to override it.
@@ -52,7 +52,7 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 
 ### Download `.AppImage`
 
-Download the [AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.1.0/nodaysidle-browser-x86_64.AppImage) (or [see all releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases)). The AppImage bundles the browser binary and metadata only; **GTK 3 and WebKitGTK 4.1 must already be installed** on the system (see [docs/APPIMAGE.md](docs/APPIMAGE.md)):
+Download the [v0.2.0 AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/nodaysidle-browser-x86_64.AppImage) (previous: [v0.1.0 AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.1.0/nodaysidle-browser-x86_64.AppImage); or [see all releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases)). The AppImage bundles the browser binary and metadata only; **GTK 3 and WebKitGTK 4.1 must already be installed** on the system (see [docs/APPIMAGE.md](docs/APPIMAGE.md)):
 
 ```bash
 chmod +x nodaysidle-browser-x86_64.AppImage
