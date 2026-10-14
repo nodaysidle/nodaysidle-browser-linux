@@ -120,7 +120,23 @@ A pop-up window shows one page and a read-only address bar. It has:
 - Built-in dark error pages for failed loads and web process recovery.
 - Pop-ups lack find, back/forward history, and editable address bar, and close with the parent window.
 
+## Clearing browsing data
+
+The app menu lets you clear history, cookies and site storage, cached files, and
+session permission denials independently. A failure dialog reports unsuccessful
+selected operations, including website-data failures reported asynchronously by
+WebKit. Successfully cleared categories remain cleared when another category fails.
+
 ## Address bar input
+
+URL presentation is shared by the address bar, popup addresses, tab URL tooltips,
+fallback host titles, history rows, and error pages. Approved accented Latin labels (for example,
+`bücher.de` and `café.fr`) and Han-only labels (`例子.测试`) display as Unicode.
+Other international hosts remain in punycode, including Cyrillic and Greek names
+that may resemble Latin names. Paths may display readable Unicode, while encoded
+delimiters, bidi controls, and zero-width characters remain escaped. Stored history
+URLs and navigation destinations stay canonical; submitting an unchanged displayed
+address reuses the current URI.
 
 - `http://`, `https://`, `file://` and `about:` URLs load as typed.
 - `/absolute/path` and `~/path` open local files.

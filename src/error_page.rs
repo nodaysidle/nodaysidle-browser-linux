@@ -26,7 +26,8 @@ pub fn is_error_page_title(title: Option<&str>) -> bool {
 }
 
 pub fn load_failed_html(uri: &str, message: &str) -> String {
-    page(LOAD_FAILED_TITLE, uri, &[uri, message], "Try again")
+    let shown_uri = crate::navigation::format_url_for_display(uri);
+    page(LOAD_FAILED_TITLE, uri, &[&shown_uri, message], "Try again")
 }
 
 pub fn web_process_ended_html(uri: &str, exceeded_memory: bool) -> String {
@@ -35,7 +36,8 @@ pub fn web_process_ended_html(uri: &str, exceeded_memory: bool) -> String {
     } else {
         "The process showing this page crashed."
     };
-    page(PROCESS_ENDED_TITLE, uri, &[uri, reason], "Reload")
+    let shown_uri = crate::navigation::format_url_for_display(uri);
+    page(PROCESS_ENDED_TITLE, uri, &[&shown_uri, reason], "Reload")
 }
 
 /// JavaScript that loads `uri` again, as an HTML-escaped attribute value.
@@ -102,7 +104,7 @@ mod tests {
     #[test]
     fn error_pages_show_the_escaped_url_and_reason_with_a_retry_button() {
         let html = load_failed_html("https://x.test/?q=<b>", "Could not connect: refused");
-        assert!(html.contains("https://x.test/?q=&lt;b&gt;"));
+        assert!(html.contains("<p>https://x.test/?q=%3Cb%3E</p>"));
         assert!(!html.contains("<b>"));
         assert!(html.contains("Could not connect: refused"));
         assert!(html.contains("location.replace(&quot;https://x.test/?q=%3Cb%3E&quot;)"));
@@ -116,5 +118,25 @@ mod tests {
         assert!(!is_error_page_title(Some("Example Domain")));
         // No retry button for URLs a page must not be able to smuggle in.
         assert!(!load_failed_html("javascript:alert(1)", "x").contains("<button"));
+    }
+
+    #[test]
+    fn error_url_presentation_keeps_retry_destinations_canonical() {
+        let uri = "https://user:p%40ss@xn--bcher-kva.de:8443/%E2%80%AE?q=1&b=%2F#frag";
+        for html in [
+            load_failed_html(uri, "<failed>"),
+            web_process_ended_html(uri, false),
+        ] {
+            assert!(html.contains(
+                "<p>https://user:p%40ss@bücher.de:8443/%E2%80%AE?q=1&amp;b=%2F#frag</p>"
+            ));
+            assert!(html.contains(&format!(
+                "location.replace(&quot;{}&quot;)",
+                html_escape(uri)
+            )));
+            assert!(!html.contains('\u{202e}'));
+        }
+        assert!(load_failed_html("invalid <url> & test", "<failed>")
+            .contains("<p>invalid &lt;url&gt; &amp; test</p>"));
     }
 }

@@ -56,15 +56,16 @@ pub fn persistent_web_context(data_root: &Path) -> Result<WebContext, ProfileSet
 fn validate_trusted_dir(path: &Path, label: &str) -> Result<(), ProfileSetupError> {
     use std::os::unix::fs::MetadataExt;
 
-    if !path.exists() {
-        return Ok(());
-    }
-    let meta = std::fs::symlink_metadata(path).map_err(|err| {
-        ProfileSetupError::new(format!(
-            "could not inspect {label} at {}: {err}",
-            path.display()
-        ))
-    })?;
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(ProfileSetupError::new(format!(
+                "could not inspect {label} at {}: {err}",
+                path.display()
+            )));
+        }
+    };
     if meta.file_type().is_symlink() {
         return Err(ProfileSetupError::new(format!(
             "{label} at {} is a symbolic link and cannot be used",
@@ -99,24 +100,25 @@ fn validate_trusted_dir(_path: &Path, _label: &str) -> Result<(), ProfileSetupEr
 fn validate_trusted_file(path: &Path, label: &str) -> Result<(), ProfileSetupError> {
     use std::os::unix::fs::MetadataExt;
 
-    if !path.exists() {
-        return Ok(());
-    }
-    let meta = std::fs::symlink_metadata(path).map_err(|err| {
-        ProfileSetupError::new(format!(
-            "could not inspect {label} at {}: {err}",
-            path.display()
-        ))
-    })?;
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(ProfileSetupError::new(format!(
+                "could not inspect {label} at {}: {err}",
+                path.display()
+            )));
+        }
+    };
     if meta.file_type().is_symlink() {
         return Err(ProfileSetupError::new(format!(
             "{label} at {} is a symbolic link and cannot be used",
             path.display()
         )));
     }
-    if meta.is_dir() {
+    if !meta.is_file() {
         return Err(ProfileSetupError::new(format!(
-            "{label} at {} is a directory, not a file",
+            "{label} at {} is not a regular file",
             path.display()
         )));
     }
@@ -316,7 +318,7 @@ fn claim_private_dir(path: &Path, uid: u32) -> std::io::Result<()> {
 mod tests {
     use super::{
         claim_private_dir, ensure_private_cookie_file, ensure_private_dir, persistent_web_context,
-        validate_trusted_dir,
+        validate_trusted_dir, validate_trusted_file,
     };
     use super::{temp_data_dir, xdg_data_dir};
     use std::os::unix::fs::PermissionsExt;
@@ -447,9 +449,40 @@ mod tests {
 
         ensure_private_cookie_file(&cookie_file).unwrap();
 
+        assert_eq!(
+            std::fs::read(&cookie_file).unwrap(),
+            b"existing cookie database"
+        );
         let permissions = std::fs::metadata(&cookie_file).unwrap().permissions();
         assert_eq!(permissions.mode() & 0o777, 0o600);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn dangling_profile_and_cookie_symlinks_are_rejected() {
+        let temp = scratch("dangling");
+        let target = temp.join("absent");
+        let link = temp.join("linked");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        assert!(validate_trusted_dir(&link, "profile directory").is_err());
+        assert!(validate_trusted_file(&link, "cookie database").is_err());
+        assert!(!target.exists());
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn special_cookie_files_are_rejected_before_opening() {
+        let temp = scratch("fifo");
+        let fifo = temp.join("cookies.sqlite");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        assert!(validate_trusted_file(&fifo, "cookie database").is_err());
+        assert!(validate_trusted_file(&temp, "cookie database").is_err());
+        assert!(validate_trusted_file(&temp.join("missing"), "cookie database").is_ok());
+        std::fs::remove_dir_all(temp).unwrap();
     }
 
     #[test]

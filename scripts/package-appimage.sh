@@ -45,39 +45,31 @@ RUN
 chmod +x "${APP_DIR}/AppRun"
 
 verify_appimagetool() {
-  local expected
-  expected="$(awk '{print $1}' "${CHECKSUM_FILE}")"
-  local actual
-  actual="$(sha256sum "${TOOL}" | awk '{print $1}')"
+  local artifact="$1" expected actual
+  expected="$(awk '{print $1}' "${CHECKSUM_FILE}")" || return 1
+  actual="$(sha256sum "${artifact}" | awk '{print $1}')" || return 1
   if [[ "${actual}" != "${expected}" ]]; then
     echo "appimagetool checksum mismatch (expected ${expected}, got ${actual})" >&2
-    rm -f "${TOOL}"
     return 1
   fi
 }
 
 download_appimagetool() {
   local tmp="${TOOL}.partial"
+  trap 'rm -f "${TOOL}.partial"' EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   rm -f "${tmp}"
   echo "Downloading pinned appimagetool..."
-  curl -L -s -f -o "${tmp}" "${APPIMAGETOOL_URL}"
+  curl -L -s -f -o "${tmp}" "${APPIMAGETOOL_URL}" || return 1
+  verify_appimagetool "${tmp}" || return 1
   chmod 0755 "${tmp}"
-  if ! sha256sum -c "${CHECKSUM_FILE}" --status 2>/dev/null; then
-    # checksum file names the final artifact; verify the download explicitly
-    local expected actual
-    expected="$(awk '{print $1}' "${CHECKSUM_FILE}")"
-    actual="$(sha256sum "${tmp}" | awk '{print $1}')"
-    if [[ "${actual}" != "${expected}" ]]; then
-      rm -f "${tmp}"
-      echo "Downloaded appimagetool failed checksum verification" >&2
-      exit 1
-    fi
-  fi
   mv "${tmp}" "${TOOL}"
 }
 
 if [[ -x "${TOOL}" ]]; then
-  verify_appimagetool || download_appimagetool
+  verify_appimagetool "${TOOL}" || { rm -f "${TOOL}"; download_appimagetool; }
 elif command -v appimagetool >/dev/null 2>&1; then
   TOOL="$(command -v appimagetool)"
   echo "Using system appimagetool at ${TOOL} (not checksum-pinned)."
