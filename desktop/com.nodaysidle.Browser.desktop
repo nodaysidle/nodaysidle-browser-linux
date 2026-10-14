@@ -11,3 +11,8 @@ MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme
 StartupWMClass=com.nodaysidle.Browser
 Keywords=browser;web;nodaysidle;
 StartupNotify=true
+Actions=new-window;
+
+[Desktop Action new-window]
+Name=New Window
+Exec=nodaysidle-browser --new-window %u

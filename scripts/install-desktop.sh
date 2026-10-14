@@ -49,10 +49,16 @@ install -d "${BIN_DIR}"
 install -m 0755 "${ROOT}/target/release/nodaysidle-browser" "${BIN}"
 
 install -d "${APP_DIR}"
-EXEC_LINE="Exec=$(desktop_exec_quote "${BIN}") %u"
+QUOTED_BIN="$(desktop_exec_quote "${BIN}")"
+EXEC_LINE="Exec=${QUOTED_BIN} %u"
+ACTION_EXEC_LINE="Exec=${QUOTED_BIN} --new-window %u"
 tmp="$(mktemp "${APP_DIR}/.com.nodaysidle.Browser.XXXXXX")"
 while IFS= read -r line || [[ -n "${line}" ]]; do
-  if [[ "${line}" == Exec=* ]]; then
+  # The `New Window` desktop action keeps its --new-window flag; every other
+  # Exec key (the main launcher) is rewritten to the plain binary path.
+  if [[ "${line}" == "Exec=nodaysidle-browser --new-window "* ]]; then
+    printf '%s\n' "${ACTION_EXEC_LINE}"
+  elif [[ "${line}" == Exec=* ]]; then
     printf '%s\n' "${EXEC_LINE}"
   else
     printf '%s\n' "${line}"
@@ -172,6 +178,13 @@ if [[ -f "${OLD_PIXMAP}" ]] && cmp -s "${OLD_PIXMAP}" "${ICON_SRC}"; then
   rm -f "${OLD_PIXMAP}"
 fi
 
+# Fish completions, so `nodaysidle-browser --new-window <TAB>` works out of the
+# box in an Omarchy/Ghostty shell.
+FISH_COMP_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/fish/completions"
+install -d "${FISH_COMP_DIR}"
+install -m 0644 "${ROOT}/completions/nodaysidle-browser.fish" \
+  "${FISH_COMP_DIR}/nodaysidle-browser.fish"
+
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
   gtk-update-icon-cache -q -t -f "${ICON_DIR}" || true
 fi
@@ -193,3 +206,4 @@ fi
 
 echo "Installed nodaysidle-browser to ${BIN}"
 echo "Desktop entry: ${DESKTOP_DST}"
+echo "Fish completions: ${FISH_COMP_DIR}/nodaysidle-browser.fish"

@@ -83,6 +83,7 @@ This builds a release binary and installs:
 - `~/.local/bin/nodaysidle-browser`
 - `${XDG_DATA_HOME:-~/.local/share}/applications/com.nodaysidle.Browser.desktop` (quoted only when path characters require it)
 - `${XDG_DATA_HOME:-~/.local/share}/icons/hicolor/scalable/apps/nodaysidle-browser.svg` (plus 48/128/256 px PNGs when `rsvg-convert` is available)
+- `${XDG_CONFIG_HOME:-~/.config}/fish/completions/nodaysidle-browser.fish`
 
 The launcher name matches the application ID `com.nodaysidle.Browser`, so Hyprland window rules match `class:^(com\.nodaysidle\.Browser)$`.
 
@@ -98,6 +99,7 @@ Versions before the rename installed `nodaysidle-browser.desktop`. Running `./sc
 | Action | Shortcut |
 | --- | --- |
 | New tab | <kbd>Ctrl</kbd>+<kbd>T</kbd> |
+| New window | <kbd>Ctrl</kbd>+<kbd>N</kbd> |
 | Close tab | <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F4</kbd> |
 | Next tab | <kbd>Ctrl</kbd>+<kbd>Tab</kbd>, <kbd>Ctrl</kbd>+<kbd>Page Down</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Page Down</kbd> |
 | Previous tab | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Tab</kbd>, <kbd>Ctrl</kbd>+<kbd>Page Up</kbd> |
@@ -114,6 +116,7 @@ In the main window, shortcuts work wherever the focus is, including inside web p
 
 A pop-up window shows one page and a read-only address bar. It has:
 - <kbd>Ctrl</kbd>+<kbd>W</kbd> or <kbd>Ctrl</kbd>+<kbd>F4</kbd> to close it, <kbd>Ctrl</kbd>+<kbd>R</kbd> or <kbd>F5</kbd> to reload, and <kbd>Esc</kbd> to close it unless the page handles the key itself.
+- <kbd>Ctrl</kbd>+<kbd>L</kbd>, <kbd>Alt</kbd>+<kbd>D</kbd>, or <kbd>F6</kbd> to select the read-only address for copying with <kbd>Ctrl</kbd>+<kbd>C</kbd>; Tab can also focus it.
 - Built-in dark error pages for failed loads and web process recovery.
 - Pop-ups lack find, back/forward history, and editable address bar, and close with the parent window.
 
@@ -129,9 +132,10 @@ A pop-up window shows one page and a read-only address bar. It has:
 
 ```bash
 nodaysidle-browser [URL-or-file …]
+nodaysidle-browser --new-window [URL-or-file …]   # -n
 ```
 
-An argument naming an existing file (or starting with `./` or `../`) opens that file; anything else is resolved like address-bar input (e.g. `nodaysidle-browser wikipedia.org` opens `https://wikipedia.org`). Running the command again raises the existing window.
+An argument naming an existing file (or starting with `./` or `../`) opens that file; anything else is resolved like address-bar input (e.g. `nodaysidle-browser wikipedia.org` opens `https://wikipedia.org`). Running the command again reuses the existing window unless `--new-window` (`-n`) is given, which opens a new window on the current workspace sharing the same profile (cookies, site storage and history). <kbd>Ctrl</kbd>+<kbd>N</kbd> and the ☰ menu's **New Window** do the same in-app.
 
 ## Privacy model
 

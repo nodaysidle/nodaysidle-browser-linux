@@ -1,8 +1,14 @@
 use gtk::prelude::*;
 use gtk::{CssProvider, StyleContext};
+use std::sync::OnceLock;
 
 /// Fallback inset when compositor rounding cannot be detected (pixels).
 pub const WINDOW_CORNER_INSET_PX: i32 = 8;
+
+/// `hyprctl` is spawned at most once per process: the decoration rounding never
+/// changes while the browser runs, and the old code shelled out on startup and
+/// on every `is-maximized` notification, which could block the main loop.
+static HYPRLAND_ROUNDING: OnceLock<Option<i32>> = OnceLock::new();
 
 const STYLESHEET: &str = r#"
 /* Only the browser's own windows are dark; dialogs (permissions, downloads,
@@ -45,8 +51,11 @@ window.browser-window.tiled .browser-frame {
 }
 
 .tab-pill.selected {
-  background-color: #202022;
-  box-shadow: inset 0 -2px 0 #75aaff;
+  background-color: #242427;
+  box-shadow:
+    inset 3px 0 0 #75aaff,
+    inset 0 -2px 0 #75aaff,
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
 }
 
 .tab-pill-label {
@@ -57,17 +66,25 @@ window.browser-window.tiled .browser-frame {
 }
 
 .tab-pill-label-selected {
-  color: #e8e8ec;
+  color: #f2f2f5;
+  font-weight: 600;
 }
 
-.tab-focusable:focus {
+.tab-focus-list,
+.tab-focus-list > .tab-focusable,
+.tab-focus-list > .tab-focusable:selected {
+  background-color: transparent;
+  padding: 0;
+}
+
+.tab-focus-list > .tab-focusable:focus {
   background-color: rgba(116, 170, 255, 0.28);
   box-shadow: inset 0 0 0 1px #75aaff;
   border-radius: 6px;
 }
 
 .tab-close {
-  color: #8a8a90;
+  color: #a0a0a8;
   padding: 2px;
   min-width: 20px;
   min-height: 20px;
@@ -75,6 +92,8 @@ window.browser-window.tiled .browser-frame {
 
 .tab-close:hover {
   color: #e8e8ec;
+  background-color: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
 }
 
 .tab-new-btn:focus,
@@ -209,6 +228,8 @@ window.browser-window.tiled .browser-frame {
 "#;
 
 pub fn window_corner_inset_px() -> i32 {
+    // The environment override stays dynamic so tests and runtime tweaks can
+    // change it; only the `hyprctl` probe is cached.
     if let Ok(raw) = std::env::var("NODAYSIDLE_CORNER_INSET") {
         if let Ok(value) = raw.parse::<i32>() {
             if value >= 0 {
@@ -216,7 +237,10 @@ pub fn window_corner_inset_px() -> i32 {
             }
         }
     }
-    hyprland_rounding_px().unwrap_or(WINDOW_CORNER_INSET_PX)
+    HYPRLAND_ROUNDING
+        .get_or_init(hyprland_rounding_px)
+        .to_owned()
+        .unwrap_or(WINDOW_CORNER_INSET_PX)
 }
 
 /// Reads Hyprland `decoration:rounding` when `hyprctl` is available.
@@ -278,21 +302,67 @@ box#{css_id}.browser-frame .chrome.popup-chrome {{
     }
 }
 
-fn sync_frame_margins(window: &gtk::Window, frame: &gtk::Box) {
-    let inset = if window.is_maximized() {
+/// Decides the frame inset from the window's edge-flush state. A maximized,
+/// fullscreen or tiled window has no compositor rounding to keep the chrome
+/// away from, so its frame must sit flush (0). Pure so it can be unit-tested
+/// without a display.
+fn effective_frame_inset(
+    default_inset: i32,
+    maximized: bool,
+    fullscreen: bool,
+    gdk_state: gdk::WindowState,
+    tiled_class: bool,
+    maximized_class: bool,
+) -> i32 {
+    let edge_flush = maximized
+        || fullscreen
+        || tiled_class
+        || maximized_class
+        || gdk_state.intersects(
+            gdk::WindowState::TILED | gdk::WindowState::MAXIMIZED | gdk::WindowState::FULLSCREEN,
+        );
+    if edge_flush {
         0
     } else {
-        window_corner_inset_px()
-    };
-    set_frame_margins(frame, inset);
+        default_inset
+    }
 }
 
-/// Keeps chrome flush to the screen edge while maximized (Hyprland uses rounding 0).
+/// The inset this realization of `window` should use right now.
+fn frame_inset_for_window(window: &gtk::Window) -> i32 {
+    let gdk_state = window
+        .window()
+        .map(|gdk_window| gdk_window.state())
+        .unwrap_or_else(gdk::WindowState::empty);
+    let style = window.style_context();
+    effective_frame_inset(
+        window_corner_inset_px(),
+        window.is_maximized(),
+        // GTK 3 has no `is_fullscreen`; the GDK window state is authoritative.
+        gdk_state.contains(gdk::WindowState::FULLSCREEN),
+        gdk_state,
+        style.has_class("tiled"),
+        style.has_class("maximized"),
+    )
+}
+
+fn sync_frame_margins(window: &gtk::Window, frame: &gtk::Box) {
+    set_frame_margins(frame, frame_inset_for_window(window));
+}
+
+/// Keeps chrome flush to the screen edge while maximized, fullscreen or tiled
+/// (Hyprland tiles are not `is_maximized()`, so the GDK window state and the
+/// `tiled` style class are checked as well).
 pub fn wire_window_corner_insets(window: &gtk::Window, frame: &gtk::Box) {
     sync_frame_margins(window, frame);
-    let frame = frame.clone();
+    let frame_for_notify = frame.clone();
     window.connect_notify_local(Some("is-maximized"), move |window, _| {
-        sync_frame_margins(window, &frame);
+        sync_frame_margins(window, &frame_for_notify);
+    });
+    let frame_for_state = frame.clone();
+    window.connect_window_state_event(move |window, _| {
+        sync_frame_margins(window, &frame_for_state);
+        glib::Propagation::Proceed
     });
 }
 
@@ -312,7 +382,7 @@ pub fn install() {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_hyprland_rounding_json;
+    use super::{effective_frame_inset, parse_hyprland_rounding_json};
 
     #[test]
     fn hyprland_rounding_json_is_parsed_from_hyprctl_output() {
@@ -320,6 +390,60 @@ mod tests {
             parse_hyprland_rounding_json(br#"{"int":20,"set":true}"#),
             Some(20)
         );
+        assert_eq!(
+            parse_hyprland_rounding_json(br#"{"int":0,"set":true}"#),
+            Some(0)
+        );
         assert_eq!(parse_hyprland_rounding_json(b"not json"), None);
+        assert_eq!(parse_hyprland_rounding_json(br#"{"set":true}"#), None);
+    }
+
+    #[test]
+    fn frame_inset_is_zero_when_the_window_is_edge_flush() {
+        use gdk::WindowState;
+
+        // Normal floating window: keep the compositor rounding inset.
+        assert_eq!(
+            effective_frame_inset(18, false, false, WindowState::empty(), false, false),
+            18
+        );
+
+        // `is_maximized()` alone is enough.
+        assert_eq!(
+            effective_frame_inset(18, true, false, WindowState::empty(), false, false),
+            0
+        );
+        // Fullscreen is enough too.
+        assert_eq!(
+            effective_frame_inset(18, false, true, WindowState::empty(), false, false),
+            0
+        );
+        // Hyprland tiles are not `is_maximized()`: the GDK state must count.
+        assert_eq!(
+            effective_frame_inset(18, false, false, WindowState::TILED, false, false),
+            0
+        );
+        assert_eq!(
+            effective_frame_inset(18, false, false, WindowState::MAXIMIZED, false, false),
+            0
+        );
+        assert_eq!(
+            effective_frame_inset(18, false, false, WindowState::FULLSCREEN, false, false),
+            0
+        );
+        // The style class signal counted as well.
+        assert_eq!(
+            effective_frame_inset(18, false, false, WindowState::empty(), true, false),
+            0
+        );
+        assert_eq!(
+            effective_frame_inset(18, false, false, WindowState::empty(), false, true),
+            0
+        );
+        // An inset of 0 stays 0 regardless.
+        assert_eq!(
+            effective_frame_inset(0, false, false, WindowState::empty(), false, false),
+            0
+        );
     }
 }
