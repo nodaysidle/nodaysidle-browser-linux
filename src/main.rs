@@ -1,10 +1,13 @@
 mod downloads;
 mod error_page;
+mod find;
 mod history;
+mod history_ui;
 mod home;
 mod icon;
 mod navigation;
 mod permissions;
+mod popup;
 mod privacy;
 mod profile;
 mod tabs;
@@ -22,6 +25,20 @@ use tabs::{build_chrome_layout, TabManager};
 
 const APP_ID: &str = "com.nodaysidle.Browser";
 
+/// Profile state shared by every browser window in one process: a single
+/// WebKit `WebContext` (so cookies and site storage are common to all windows)
+/// and one `HistoryStore` (so history is written once). Built on the first
+/// window and reused by every window opened afterwards.
+struct SharedProfile {
+    web_context: webkit2gtk::WebContext,
+    history: Rc<RefCell<HistoryStore>>,
+}
+
+/// `None` until the first window initialises the profile.
+type SharedProfileSlot = Rc<RefCell<Option<Rc<SharedProfile>>>>;
+/// Every open main browser window. Closed windows are pruned on destroy.
+type WindowList = Rc<RefCell<Vec<TabManager>>>;
+
 fn main() -> glib::ExitCode {
     // GTK 3 uses the program name as the Wayland app_id and as X11's WM_CLASS
     // instance, and the program class as the WM_CLASS class. Set both to the
@@ -30,147 +47,156 @@ fn main() -> glib::ExitCode {
     // be initialized before the class can be set, hence the startup handler.
     glib::set_prgname(Some(APP_ID));
     glib::set_application_name("nodaysidle");
+    // HANDLES_COMMAND_LINE (rather than HANDLES_OPEN) so `--new-window` and the
+    // target arguments reach the primary instance verbatim when a second
+    // launch is forwarded to it; that is how `--new-window` and Ctrl+N share
+    // one WebContext and one HistoryStore.
     let app = Application::builder()
         .application_id(APP_ID)
-        .flags(gio::ApplicationFlags::HANDLES_OPEN)
+        .flags(gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
-    let tab_manager = Rc::new(RefCell::new(None::<TabManager>));
+    let shared: SharedProfileSlot = Rc::new(RefCell::new(None));
+    let windows: WindowList = Rc::new(RefCell::new(Vec::new()));
+
     app.connect_startup(|_| {
         gdk::set_program_class(APP_ID);
         theme::install();
         icon::install_default_icon();
     });
-    let manager_for_shutdown = tab_manager.clone();
+
+    let shared_for_shutdown = shared.clone();
     app.connect_shutdown(move |_| {
-        let manager = { manager_for_shutdown.borrow().clone() };
-        if let Some(manager) = manager {
-            manager.flush_history();
-        }
+        flush_shared_history(&shared_for_shutdown);
     });
     for &sig in &[1, 2, 15] {
-        let manager_for_sig = tab_manager.clone();
+        let shared_for_sig = shared.clone();
         let app_for_sig = app.clone();
         glib::unix_signal_add_local(sig, move || {
-            if let Some(manager) = manager_for_sig.borrow().clone() {
-                manager.flush_history();
-            }
+            flush_shared_history(&shared_for_sig);
             app_for_sig.quit();
             glib::ControlFlow::Break
         });
     }
-    let manager_for_activate = tab_manager.clone();
+
+    // Activation (e.g. clicking the dock icon) ensures a window exists and
+    // raises the most recent one.
+    let windows_for_activate = windows.clone();
+    let shared_for_activate = shared.clone();
     app.connect_activate(move |app| {
-        // A second launch activates the primary instance: bring its window
-        // to the front instead of doing nothing visible (R-4).
-        if let Some(manager) = get_or_build_ui(app, &manager_for_activate) {
-            manager.present();
+        let existing = { windows_for_activate.borrow().last().cloned() };
+        match existing {
+            Some(manager) => manager.present(),
+            None => {
+                let _ = build_window(app, &windows_for_activate, &shared_for_activate);
+            }
         }
     });
-    app.connect_open(move |app, files, _hint| {
-        let uris = files
+
+    let windows_for_cmd = windows.clone();
+    let shared_for_cmd = shared.clone();
+    app.connect_command_line(move |app, command_line| {
+        let args = command_line
+            .arguments()
             .iter()
-            .filter_map(|file| external_uri_to_open(file.uri().as_str()))
+            .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
-        let Some(manager) = get_or_build_ui(app, &tab_manager) else {
-            return;
-        };
-        for uri in uris {
-            manager.open_external_uri(&uri);
-        }
-        manager.present();
+        let cwd = std::env::current_dir().ok();
+        let options = command_line_options(&args, cwd.as_deref(), &|path: &Path| path.exists());
+        open_command_line(app, &windows_for_cmd, &shared_for_cmd, &options);
+        0
     });
-    let args = command_line_args(std::env::args().collect(), |path| path.exists());
+
+    let args = std::env::args().collect::<Vec<String>>();
     app.run_with_args(&args)
 }
 
-/// GApplication turns every non-URI argument into a file relative to the
-/// working directory, so `nodaysidle-browser wikipedia.org` used to open
-/// file:///<cwd>/wikipedia.org (R-10). Resolve arguments here instead: an
-/// existing file opens as a file, and anything else goes through the same
-/// resolution as the address bar.
-fn command_line_args(args: Vec<String>, exists: impl Fn(&Path) -> bool) -> Vec<String> {
-    let cwd = std::env::current_dir().ok();
-    let mut options_done = false;
-    args.into_iter()
-        .enumerate()
-        .map(|(index, arg)| {
-            if index == 0 {
-                return arg;
-            }
-            if !options_done && arg.starts_with('-') {
-                options_done = arg == "--";
-                return arg;
-            }
-            command_line_target(&arg, cwd.as_deref(), &exists).unwrap_or(arg)
-        })
-        .collect()
+fn flush_shared_history(shared: &SharedProfileSlot) {
+    let history = {
+        shared
+            .borrow()
+            .as_ref()
+            .map(|profile| profile.history.clone())
+    };
+    if let Some(history) = history {
+        history.borrow_mut().flush();
+    }
 }
 
-fn command_line_target(
-    arg: &str,
+/// Flags and targets parsed from a GApplication command line. `--new-window`
+/// is handled here (not as a GApplication option) so it survives the handoff
+/// to the primary instance when a second launch forwards its command line.
+#[derive(Debug, PartialEq, Eq)]
+struct CommandLineOptions {
+    new_window: bool,
+    targets: Vec<String>,
+}
+
+fn command_line_options(
+    args: &[String],
     cwd: Option<&Path>,
     exists: &impl Fn(&Path) -> bool,
-) -> Option<String> {
-    let path = Path::new(arg);
-    let absolute = match cwd {
-        Some(cwd) if path.is_relative() => cwd.join(path),
-        _ => path.to_path_buf(),
+) -> CommandLineOptions {
+    let mut options = CommandLineOptions {
+        new_window: false,
+        targets: Vec::new(),
     };
-    let looks_like_path = arg.starts_with("./") || arg.starts_with("../");
-    if exists(&absolute) || (looks_like_path && cwd.is_some()) {
-        let absolute = absolute.canonicalize().unwrap_or(absolute);
-        return url::Url::from_file_path(&absolute).ok().map(String::from);
+    // `args[0]` is the program name; `--` is already consumed by GApplication.
+    for arg in args.iter().skip(1) {
+        match arg.as_str() {
+            "--new-window" | "-n" => options.new_window = true,
+            // Unknown options are ignored rather than treated as destinations.
+            _ if arg.starts_with('-') => {}
+            _ => {
+                if let Some(uri) = command_line_target(arg, cwd, exists) {
+                    options.targets.push(uri);
+                }
+            }
+        }
     }
-    navigation::resolve(arg, navigation::SearchEngine::default())
+    options
 }
 
-fn get_or_build_ui(
+fn open_command_line(
     app: &Application,
-    manager_slot: &Rc<RefCell<Option<TabManager>>>,
+    windows: &WindowList,
+    shared: &SharedProfileSlot,
+    options: &CommandLineOptions,
+) {
+    // `--new-window` always opens a fresh window; otherwise the most recent
+    // window is reused (or created when none exists). The borrow that reads the
+    // list ends before `build_window` mutates it.
+    let existing = windows.borrow().last().cloned();
+    let manager = if options.new_window {
+        build_window(app, windows, shared)
+    } else {
+        match existing {
+            Some(manager) => Some(manager),
+            None => build_window(app, windows, shared),
+        }
+    };
+    let Some(manager) = manager else {
+        return;
+    };
+    for uri in &options.targets {
+        manager.open_external_uri(uri);
+    }
+    manager.present();
+}
+
+/// Whether closing a window must ask about cancelling downloads. Only the last
+/// main browser window asks; closing an extra window keeps them running.
+fn should_confirm_quit(is_last_window: bool, has_active_downloads: bool) -> bool {
+    is_last_window && has_active_downloads
+}
+
+/// Initialises the shared profile on first use and builds a new browser window
+/// on top of it.
+fn build_window(
+    app: &Application,
+    windows: &WindowList,
+    shared: &SharedProfileSlot,
 ) -> Option<TabManager> {
-    if let Some(manager) = manager_slot.borrow().clone() {
-        return Some(manager);
-    }
-    match build_ui(app) {
-        Some(manager) => {
-            *manager_slot.borrow_mut() = Some(manager.clone());
-            Some(manager)
-        }
-        None => None,
-    }
-}
-
-#[allow(dead_code)] // used by unit tests in this module
-fn get_or_insert_manager<T: Clone>(slot: &RefCell<Option<T>>, build: impl FnOnce() -> T) -> T {
-    let existing = { slot.borrow().clone() };
-    if let Some(value) = existing {
-        return value;
-    }
-    let value = build();
-    *slot.borrow_mut() = Some(value.clone());
-    value
-}
-
-fn build_ui(app: &Application) -> Option<TabManager> {
-    let Some(data_dir) = app_data_dir() else {
-        // Never fall back to a directory another user could control (V-4).
-        show_fatal_profile_error(
-            app,
-            "no private profile directory is available for this user",
-        );
-        return None;
-    };
-    let web_context = match persistent_web_context(&data_dir) {
-        Ok(ctx) => ctx,
-        Err(err) => {
-            show_fatal_profile_error(app, &err.to_string());
-            return None;
-        }
-    };
-    downloads::wire(&web_context);
-    let history = Rc::new(RefCell::new(HistoryStore::load(
-        data_dir.join("history.json"),
-    )));
+    let profile = ensure_profile(app, shared)?;
 
     let window = ApplicationWindow::builder()
         .application(app)
@@ -178,8 +204,13 @@ fn build_ui(app: &Application) -> Option<TabManager> {
         .default_width(1_200)
         .default_height(800)
         .build();
-    window.connect_delete_event(|window, _| {
-        if downloads::has_active_downloads() {
+
+    // Downloads are shared across windows through the WebContext, so only the
+    // last main window needs to confirm cancellation (V-2).
+    let windows_for_delete = windows.clone();
+    window.connect_delete_event(move |window, _| {
+        let is_last_window = windows_for_delete.borrow().len() <= 1;
+        if should_confirm_quit(is_last_window, downloads::has_active_downloads()) {
             if downloads::confirm_quit(window.upcast_ref()) {
                 downloads::cancel_all_active();
                 glib::Propagation::Proceed
@@ -199,15 +230,104 @@ fn build_ui(app: &Application) -> Option<TabManager> {
     window.add(&frame);
 
     let (chrome, new_tab_btn) = build_chrome_layout(&frame);
-    let tab_manager = TabManager::new(&window, chrome, web_context.clone(), history.clone());
+    let tab_manager = TabManager::new(
+        &window,
+        chrome,
+        profile.web_context.clone(),
+        profile.history.clone(),
+    );
     tab_manager.wire_toolbar(&new_tab_btn);
     tab_manager.wire_keyboard(&window);
-    tab_manager.wire_app_menu(web_context.clone());
-    tab_manager.wire_history(history);
+    tab_manager.wire_app_menu(profile.web_context.clone());
+    tab_manager.wire_history(profile.history.clone());
+    tab_manager.set_new_window_handler(make_spawner(app, windows, shared));
+
+    windows.borrow_mut().push(tab_manager.clone());
+    let windows_for_destroy = windows.clone();
+    window.connect_destroy(move |window| {
+        windows_for_destroy
+            .borrow_mut()
+            .retain(|manager| !manager.owns_window(window));
+    });
 
     tab_manager.open_initial_home();
     window.show_all();
     Some(tab_manager)
+}
+
+/// Creates (once) and returns the shared WebKit context and history store.
+fn ensure_profile(app: &Application, shared: &SharedProfileSlot) -> Option<Rc<SharedProfile>> {
+    let existing = shared.borrow().clone();
+    if let Some(profile) = existing {
+        return Some(profile);
+    }
+    let Some(data_dir) = app_data_dir() else {
+        // Never fall back to a directory another user could control (V-4).
+        show_fatal_profile_error(
+            app,
+            "no private profile directory is available for this user",
+        );
+        return None;
+    };
+    let web_context = match persistent_web_context(&data_dir) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            show_fatal_profile_error(app, &err.to_string());
+            return None;
+        }
+    };
+    downloads::wire(&web_context);
+    let history = Rc::new(RefCell::new(HistoryStore::load(
+        data_dir.join("history.json"),
+    )));
+    let profile = Rc::new(SharedProfile {
+        web_context,
+        history,
+    });
+    *shared.borrow_mut() = Some(profile.clone());
+    Some(profile)
+}
+
+/// The Ctrl+N / menu callback: build another window over the same profile.
+fn make_spawner(
+    app: &Application,
+    windows: &WindowList,
+    shared: &SharedProfileSlot,
+) -> Rc<dyn Fn()> {
+    let app = app.clone();
+    let windows = Rc::downgrade(windows);
+    let shared = Rc::downgrade(shared);
+    Rc::new(move || {
+        let (Some(windows), Some(shared)) = (windows.upgrade(), shared.upgrade()) else {
+            return;
+        };
+        if let Some(manager) = build_window(&app, &windows, &shared) {
+            manager.present();
+        }
+    })
+}
+
+/// GApplication turns every non-URI argument into a file relative to the
+/// working directory, so `nodaysidle-browser wikipedia.org` used to open
+/// file:///<cwd>/wikipedia.org (R-10). Resolve arguments here instead: an
+/// existing file opens as a file, and anything else goes through the same
+/// resolution as the address bar.
+fn command_line_target(
+    arg: &str,
+    cwd: Option<&Path>,
+    exists: &impl Fn(&Path) -> bool,
+) -> Option<String> {
+    let path = Path::new(arg);
+    let absolute = match cwd {
+        Some(cwd) if path.is_relative() => cwd.join(path),
+        _ => path.to_path_buf(),
+    };
+    let looks_like_path = arg.starts_with("./") || arg.starts_with("../");
+    if exists(&absolute) || (looks_like_path && cwd.is_some()) {
+        let absolute = absolute.canonicalize().unwrap_or(absolute);
+        return url::Url::from_file_path(&absolute).ok().map(String::from);
+    }
+    navigation::resolve(arg, navigation::SearchEngine::default())
 }
 
 fn show_fatal_profile_error(app: &Application, message: &str) {
@@ -231,26 +351,21 @@ fn show_fatal_profile_error(app: &Application, message: &str) {
     app.quit();
 }
 
-fn external_uri_to_open(uri: &str) -> Option<String> {
-    let parsed = url::Url::parse(uri).ok()?;
-    match parsed.scheme() {
-        "http" | "https" | "file" | "about" => Some(parsed.into()),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::external_uri_to_open;
-    use super::get_or_insert_manager;
-    use super::{command_line_args, command_line_target};
-    use std::cell::{Cell, RefCell};
+    use super::{command_line_options, should_confirm_quit};
+    use super::{command_line_target, CommandLineOptions};
     use std::path::Path;
 
     fn target(arg: &str, existing: &[&str]) -> Option<String> {
         command_line_target(arg, Some(Path::new("/work")), &|path: &Path| {
             existing.iter().any(|existing| path == Path::new(existing))
         })
+    }
+
+    fn options(args: &[&str]) -> CommandLineOptions {
+        let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        command_line_options(&args, Some(Path::new("/work")), &|_| false)
     }
 
     #[test]
@@ -286,74 +401,48 @@ mod tests {
     }
 
     #[test]
+    fn new_window_flags_are_recognized_and_stripped_from_targets() {
+        assert_eq!(
+            options(&["prog", "--new-window", "wikipedia.org"]),
+            CommandLineOptions {
+                new_window: true,
+                targets: vec!["https://wikipedia.org".into()],
+            }
+        );
+        assert_eq!(
+            options(&["prog", "-n"]),
+            CommandLineOptions {
+                new_window: true,
+                targets: Vec::new(),
+            }
+        );
+        assert_eq!(
+            options(&["prog"]),
+            CommandLineOptions {
+                new_window: false,
+                targets: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
     fn options_and_program_name_are_left_alone() {
-        let args = [
-            "prog",
-            "--gapplication-service",
-            "wikipedia.org",
-            "--",
-            "-dash.org",
-        ]
-        .map(String::from)
-        .to_vec();
+        // `--` is consumed by GApplication before the handler sees the args, so
+        // the flag is only checked for recognition; unknown options are ignored.
         assert_eq!(
-            command_line_args(args, |_| false),
-            [
-                "prog",
-                "--gapplication-service",
-                "https://wikipedia.org",
-                "--",
-                "https://-dash.org"
-            ]
+            options(&["prog", "--gapplication-service", "wikipedia.org", "-x"]),
+            CommandLineOptions {
+                new_window: false,
+                targets: vec!["https://wikipedia.org".into()],
+            }
         );
     }
 
     #[test]
-    fn repeated_application_activation_reuses_the_existing_manager() {
-        let slot = RefCell::new(None);
-        let builds = Cell::new(0);
-        let first = get_or_insert_manager(&slot, || {
-            builds.set(builds.get() + 1);
-            7
-        });
-        let second = get_or_insert_manager(&slot, || {
-            builds.set(builds.get() + 1);
-            9
-        });
-
-        assert_eq!(first, 7);
-        assert_eq!(second, 7);
-        assert_eq!(builds.get(), 1);
-    }
-
-    #[test]
-    fn external_http_https_and_html_file_uris_are_accepted() {
-        assert_eq!(
-            external_uri_to_open("https://example.com/path"),
-            Some("https://example.com/path".to_string())
-        );
-        assert_eq!(
-            external_uri_to_open("http://localhost:3000/"),
-            Some("http://localhost:3000/".to_string())
-        );
-        assert_eq!(
-            external_uri_to_open("file:///tmp/page.html"),
-            Some("file:///tmp/page.html".to_string())
-        );
-    }
-
-    #[test]
-    fn external_about_blank_is_accepted() {
-        assert_eq!(
-            external_uri_to_open("about:blank"),
-            Some("about:blank".to_string())
-        );
-    }
-
-    #[test]
-    fn external_uri_open_rejects_unsupported_schemes_and_invalid_input() {
-        assert_eq!(external_uri_to_open("javascript:alert(1)"), None);
-        assert_eq!(external_uri_to_open("data:text/html,hello"), None);
-        assert_eq!(external_uri_to_open("not a URI"), None);
+    fn only_the_last_window_confirms_quit_for_downloads() {
+        assert!(should_confirm_quit(true, true));
+        assert!(!should_confirm_quit(false, true));
+        assert!(!should_confirm_quit(true, false));
+        assert!(!should_confirm_quit(false, false));
     }
 }
