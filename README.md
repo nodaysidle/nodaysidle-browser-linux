@@ -59,6 +59,8 @@ chmod +x nodaysidle-browser-x86_64.AppImage
 ./nodaysidle-browser-x86_64.AppImage
 ```
 
+SHA-256 (v0.2.0 AppImage): `02d7a85c3d99f5e395425722c57c46d12fabceccd063554b7f01c2b43229ad93` ([SHA256SUMS](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/SHA256SUMS)). Verify with `sha256sum -c SHA256SUMS` in the download folder.
+
 ### Build `.AppImage` locally
 
 ```bash
