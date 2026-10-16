@@ -85,13 +85,23 @@ for pass in 1 2 3 4 5; do
   echo "dependency closure pass ${pass}: added ${added}"
   [[ "${added}" -eq 0 ]] && break
 done
-# Fallback fontconfig setup and a font for hosts without any (used only when the host has no fonts.conf).
-mkdir -p "${APP_DIR}/usr/etc" "${APP_DIR}/usr/share/fonts"
-cp -a /etc/fonts "${APP_DIR}/usr/etc/fonts"
+# Fallback fontconfig setup and a font for hosts without any (used only when the host
+# has no /etc/fonts/fonts.conf). Self-contained: the host's conf.d symlinks would dangle.
+# prefix="cwd" resolves against ${APPDIR}/usr, where AppRun runs the browser.
+mkdir -p "${APP_DIR}/usr/etc/fonts" "${APP_DIR}/usr/share/fonts"
 cp -a /usr/share/fonts/truetype/dejavu "${APP_DIR}/usr/share/fonts/" 2>/dev/null || true
-cat > "${APP_DIR}/usr/etc/fonts/local.conf" << 'FC'
-<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd">
-<fontconfig><dir prefix="relative">../../share/fonts</dir></fontconfig>
+cat > "${APP_DIR}/usr/etc/fonts/fonts.conf" << 'FC'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir prefix="cwd">share/fonts</dir>
+  <cachedir prefix="xdg">fontconfig</cachedir>
+  <alias><family>sans-serif</family><prefer><family>DejaVu Sans</family></prefer></alias>
+  <alias><family>serif</family><prefer><family>DejaVu Serif</family></prefer></alias>
+  <alias><family>monospace</family><prefer><family>DejaVu Sans Mono</family></prefer></alias>
+  <alias><family>system-ui</family><prefer><family>DejaVu Sans</family></prefer></alias>
+  <match target="pattern"><edit name="family" mode="append_last"><string>DejaVu Sans</string></edit></match>
+</fontconfig>
 FC
 
 # MIME database (gdk-pixbuf needs it to detect PNG) and icon themes.
