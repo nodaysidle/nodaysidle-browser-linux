@@ -66,13 +66,24 @@ DEPLOY_GTK_VERSION=3 NO_STRIP=1 ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "${LINUXD
   "${deploy_args[@]}" \
   --plugin gtk
 
-# linuxdeploy's excludelist skips these because most desktops provide them, but
-# minimal systems do not; copy them so the bundle runs there too.
-for lib in libharfbuzz.so.0 libfontconfig.so.1 libfribidi.so.0 libwayland-client.so.0 \
-           libasound.so.2 libcom_err.so.2 libgpg-error.so.0 libEGL.so.1 libGLdispatch.so.0 \
-           libexpat.so.1 libfreetype.so.6; do
-  src="$(ls "${SYSLIB}/${lib}" "/lib/${MULTIARCH}/${lib}" 2>/dev/null | head -n1 || true)"
-  [[ -n "${src}" && ! -e "${APP_DIR}/usr/lib/${lib}" ]] && cp -L "${src}" "${APP_DIR}/usr/lib/${lib}"
+# linuxdeploy's excludelist skips libraries most desktops provide (libgbm, libEGL,
+# libharfbuzz, ...), but minimal systems do not. Copy the full dependency closure of
+# every bundled ELF, except the glibc core that must come from the host.
+GLIBC_RE='^(ld-linux.*|libc|libm|libdl|libpthread|librt|libresolv|libutil|libnsl|libanl|libmvec|libBrokenLocale)\.so'
+for pass in 1 2 3 4 5; do
+  added=0
+  while IFS= read -r src; do
+    base="$(basename "${src}")"
+    [[ "${base}" =~ ${GLIBC_RE} ]] && continue
+    [[ -e "${APP_DIR}/usr/lib/${base}" ]] && continue
+    cp -L "${src}" "${APP_DIR}/usr/lib/${base}"; added=$((added + 1))
+  done < <(find "${APP_DIR}" -type f \( -name '*.so*' -o -perm -u+x \) -print0 \
+             | xargs -0 file -L | awk -F: '/ELF/{print $1}' \
+             | LD_LIBRARY_PATH="${APP_DIR}/usr/lib" xargs -r ldd 2>/dev/null \
+             | awk '$2=="=>" && $3 ~ /^\// {print $3}' | sort -u \
+             | while read -r l; do case "${l}" in "${APP_DIR}"/*) ;; *) echo "${l}";; esac; done)
+  echo "dependency closure pass ${pass}: added ${added}"
+  [[ "${added}" -eq 0 ]] && break
 done
 # Fallback fontconfig setup and a font for hosts without any (used only when the host has no fonts.conf).
 mkdir -p "${APP_DIR}/usr/etc" "${APP_DIR}/usr/share/fonts"
