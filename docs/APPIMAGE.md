@@ -51,3 +51,16 @@ build:
 ```bash
 python3 -B scripts/test-package-appimage.py
 ```
+
+## Bundled AppImage (experimental)
+
+`scripts/package-appimage-bundled.sh` builds `dist/nodaysidle-browser-bundled-x86_64.AppImage`
+with linuxdeploy + linuxdeploy-plugin-gtk. It bundles GTK 3, WebKitGTK 4.1 and their
+libraries, the WebKit helper processes (`WebKitNetworkProcess`, `WebKitWebProcess`,
+`WebKitGPUProcess`), the injected bundle, gdk-pixbuf loaders, GIO modules and GSettings
+schemas. The compiled-in WebKit helper path in the bundled `libwebkit2gtk-4.1.so.0` is
+rewritten to a relative path, so `AppRun` starts the browser from `$APPDIR/usr` (existing
+file arguments are converted to absolute paths first). WebKit's sandbox still needs `bwrap`
+on the host. The slim build (`scripts/package-appimage.sh`) is unchanged. The
+`appimage-bundled.yml` workflow builds it, test-runs it in `debian:bookworm-slim`, and
+uploads it as a CI artifact. It is not a release.
