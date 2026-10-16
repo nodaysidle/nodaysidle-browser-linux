@@ -35,7 +35,7 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 - Downloads with folder chooser, progress dialog, cancel protection, and close confirmation
 - Local-first persistence: bounded history (`0600`) flushed on exit/signals, and persistent cookies (`0600` SQLite)
 - Desktop integration with Wayland `app_id` and X11 `WM_CLASS` (`com.nodaysidle.Browser`)
-- Slim host-dependent `.AppImage` (~1.5 MB; requires system GTK 3 and WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md)). Fully bundled AppImage: in progress.
+- Slim host-dependent `.AppImage` (~1.5 MB; requires system GTK 3 and WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md)). Fully bundled AppImage (experimental, CI artifact only, not released): ~113 MB.
 - No application telemetry
 
 ## What's new in v0.2.0
@@ -66,7 +66,7 @@ Size: 1,530,360 bytes (~1.5 MB). This is the Rust + GTK shell only, not a self-c
 - WebKitGTK 4.1 (`libwebkit2gtk-4.1`, with `libjavascriptcoregtk-4.1` and `libsoup-3.0`)
 - GTK 3 (`libgtk-3`, with GLib/GIO, Pango, Cairo, GDK-Pixbuf)
 
-A fully bundled AppImage that includes GTK 3 and WebKitGTK 4.1 is in progress.
+An experimental fully bundled AppImage that includes GTK 3, WebKitGTK 4.1 and their libraries is built by `./scripts/package-appimage-bundled.sh` (see [docs/APPIMAGE.md](docs/APPIMAGE.md)). A local build measured 113,003,000 bytes (~113 MB). It is not published as a release yet.
 
 ### Build `.AppImage` locally
 
