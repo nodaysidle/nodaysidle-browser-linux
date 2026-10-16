@@ -20,7 +20,7 @@
 
 ## What is nodaysidle?
 
-`nodaysidle` is a deliberately small native Linux browser built with Rust, GTK 3, and WebKitGTK 4.1. It keeps the browser controls close at hand and lets websites own the page experience—without an Electron runtime, heavy JavaScript chrome layer, start-page clutter, or application telemetry.
+`nodaysidle` is a Rust + GTK 3 browser shell that renders pages with the system's WebKitGTK 4.1. The ~1.5 MB AppImage contains only that shell (binary, desktop file, icon); the web engine and toolkit come from your distribution. It keeps the browser controls close at hand and lets websites own the page experience—without an Electron runtime, heavy JavaScript chrome layer, start-page clutter, or application telemetry.
 
 The visual language is warm charcoal, silver, and quiet motion: a focused surface for everyday browsing that stays out of the way.
 
@@ -35,7 +35,7 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 - Downloads with folder chooser, progress dialog, cancel protection, and close confirmation
 - Local-first persistence: bounded history (`0600`) flushed on exit/signals, and persistent cookies (`0600` SQLite)
 - Desktop integration with Wayland `app_id` and X11 `WM_CLASS` (`com.nodaysidle.Browser`)
-- Host-dependent `.AppImage` (requires system WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md))
+- Slim host-dependent `.AppImage` (~1.5 MB; requires system GTK 3 and WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md)). Fully bundled AppImage: in progress.
 - No application telemetry
 
 ## What's new in v0.2.0
@@ -60,6 +60,13 @@ chmod +x nodaysidle-browser-x86_64.AppImage
 ```
 
 SHA-256 (v0.2.0 AppImage): `02d7a85c3d99f5e395425722c57c46d12fabceccd063554b7f01c2b43229ad93` ([SHA256SUMS](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/SHA256SUMS)). Verify with `sha256sum -c SHA256SUMS` in the download folder.
+
+Size: 1,530,360 bytes (~1.5 MB). This is the Rust + GTK shell only, not a self-contained browser. Runtime dependencies that must come from the system:
+
+- WebKitGTK 4.1 (`libwebkit2gtk-4.1`, with `libjavascriptcoregtk-4.1` and `libsoup-3.0`)
+- GTK 3 (`libgtk-3`, with GLib/GIO, Pango, Cairo, GDK-Pixbuf)
+
+A fully bundled AppImage that includes GTK 3 and WebKitGTK 4.1 is in progress.
 
 ### Build `.AppImage` locally
 
@@ -170,7 +177,7 @@ An argument naming an existing file (or starting with `./` or `../`) opens that 
 - No analytics, telemetry, or application-owned browsing backend.
 - Website cookies persist locally in `~/.local/share/nodaysidle-browser/webkit-data/cookies.sqlite` (`0600`).
 - Local browsing history is stored in `~/.local/share/nodaysidle-browser/history.json` (`0600`) and flushed atomically on exit or signals (`SIGTERM`, `SIGINT`, `SIGHUP`). Use **Menu → Clear Browsing Data** to erase history, site storage, cache, or remembered permission denials.
-- WebKit sandbox is enabled by default.
+- Web content runs in WebKitGTK's own sandboxed web process; the app does not disable it.
 - Site requests for location, camera, microphone, notifications, and pointer lock require explicit user permission.
 
 ## Related
