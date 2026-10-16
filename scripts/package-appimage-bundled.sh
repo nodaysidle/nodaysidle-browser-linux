@@ -66,6 +66,30 @@ DEPLOY_GTK_VERSION=3 NO_STRIP=1 ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "${LINUXD
   "${deploy_args[@]}" \
   --plugin gtk
 
+# linuxdeploy's excludelist skips these because most desktops provide them, but
+# minimal systems do not; copy them so the bundle runs there too.
+for lib in libharfbuzz.so.0 libfontconfig.so.1 libfribidi.so.0 libwayland-client.so.0 \
+           libasound.so.2 libcom_err.so.2 libgpg-error.so.0 libEGL.so.1 libGLdispatch.so.0 \
+           libexpat.so.1 libfreetype.so.6; do
+  src="$(ls "${SYSLIB}/${lib}" "/lib/${MULTIARCH}/${lib}" 2>/dev/null | head -n1 || true)"
+  [[ -n "${src}" && ! -e "${APP_DIR}/usr/lib/${lib}" ]] && cp -L "${src}" "${APP_DIR}/usr/lib/${lib}"
+done
+# Fallback fontconfig setup and a font for hosts without any (used only when the host has no fonts.conf).
+mkdir -p "${APP_DIR}/usr/etc" "${APP_DIR}/usr/share/fonts"
+cp -a /etc/fonts "${APP_DIR}/usr/etc/fonts"
+cp -a /usr/share/fonts/truetype/dejavu "${APP_DIR}/usr/share/fonts/" 2>/dev/null || true
+cat > "${APP_DIR}/usr/etc/fonts/local.conf" << 'FC'
+<?xml version="1.0"?><!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig><dir prefix="relative">../../share/fonts</dir></fontconfig>
+FC
+
+# MIME database (gdk-pixbuf needs it to detect PNG) and icon themes.
+cp -a /usr/share/mime "${APP_DIR}/usr/share/mime"
+mkdir -p "${APP_DIR}/usr/share/icons"
+for theme in Adwaita hicolor; do
+  [[ -d "/usr/share/icons/${theme}" ]] && cp -an "/usr/share/icons/${theme}" "${APP_DIR}/usr/share/icons/"
+done
+
 # Rewrite the WebKit helper/injected-bundle path inside the bundled library.
 WKLIB="$(ls "${APP_DIR}"/usr/lib/libwebkit2gtk-4.1.so.0* | head -n1)"
 python3 - "${WKLIB}" "${WK_SYS}" << 'PY'
@@ -93,6 +117,9 @@ for hook in "${HERE}"/apprun-hooks/*.sh; do [ -f "${hook}" ] && . "${hook}"; don
 export LD_LIBRARY_PATH="${HERE}/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export GIO_MODULE_DIR="${HERE}/usr/lib/gio/modules"
 export GSETTINGS_SCHEMA_DIR="${HERE}/usr/share/glib-2.0/schemas"
+if [ ! -e /etc/fonts/fonts.conf ]; then
+  export FONTCONFIG_PATH="${HERE}/usr/etc/fonts" FONTCONFIG_FILE="${HERE}/usr/etc/fonts/fonts.conf"
+fi
 export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 n=$#
 while [ "${n}" -gt 0 ]; do
