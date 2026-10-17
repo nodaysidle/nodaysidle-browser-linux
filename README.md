@@ -20,7 +20,7 @@
 
 ## What is nodaysidle?
 
-`nodaysidle` is a Rust + GTK 3 browser shell that renders pages with the system's WebKitGTK 4.1. The ~1.5 MB AppImage contains only that shell (binary, desktop file, icon); the web engine and toolkit come from your distribution. It keeps the browser controls close at hand and lets websites own the page experience—without an Electron runtime, heavy JavaScript chrome layer, start-page clutter, or application telemetry.
+`nodaysidle` is a Rust + GTK 3 browser shell that renders pages with WebKitGTK 4.1. The v0.2.1 AppImage (~92 MB) bundles GTK 3, WebKitGTK 4.1 and their libraries. The older slim v0.2.0 AppImage (~1.5 MB) and builds from source use the GTK 3 and WebKitGTK 4.1 installed on the system. It keeps the browser controls close at hand and lets websites own the page experience—without an Electron runtime, heavy JavaScript chrome layer, start-page clutter, or application telemetry.
 
 The visual language is warm charcoal, silver, and quiet motion: a focused surface for everyday browsing that stays out of the way.
 
@@ -35,8 +35,12 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 - Downloads with folder chooser, progress dialog, cancel protection, and close confirmation
 - Local-first persistence: bounded history (`0600`) flushed on exit/signals, and persistent cookies (`0600` SQLite)
 - Desktop integration with Wayland `app_id` and X11 `WM_CLASS` (`com.nodaysidle.Browser`)
-- Slim host-dependent `.AppImage` (~1.5 MB; requires system GTK 3 and WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md)). Fully bundled AppImage (experimental, CI artifact only, not released): ~113 MB.
+- Fully bundled `.AppImage` (v0.2.1, ~92 MB; ships GTK 3 and WebKitGTK 4.1, no system web engine needed). The slim host-dependent `.AppImage` (v0.2.0, ~1.5 MB) requires system GTK 3 and WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md).
 - No application telemetry
+
+## What's new in v0.2.1
+
+- **Fully bundled AppImage:** `nodaysidle-browser-bundled-x86_64.AppImage` ships GTK 3, WebKitGTK 4.1 and their libraries, so it runs on systems without them. CI test-runs it in a clean `debian:bookworm-slim` image with no GTK or WebKitGTK installed.
 
 ## What's new in v0.2.0
 
@@ -52,21 +56,25 @@ The visual language is warm charcoal, silver, and quiet motion: a focused surfac
 
 ### Download `.AppImage`
 
-Download the [v0.2.0 AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/nodaysidle-browser-x86_64.AppImage) (previous: [v0.1.0 AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.1.0/nodaysidle-browser-x86_64.AppImage); or [see all releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases)). The AppImage bundles the browser binary and metadata only; **GTK 3 and WebKitGTK 4.1 must already be installed** on the system (see [docs/APPIMAGE.md](docs/APPIMAGE.md)):
+Download the [v0.2.1 bundled AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.1/nodaysidle-browser-bundled-x86_64.AppImage) ([see all releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases)). It bundles GTK 3, WebKitGTK 4.1 and their libraries, so they do not need to be installed (see [docs/APPIMAGE.md](docs/APPIMAGE.md)):
 
 ```bash
-chmod +x nodaysidle-browser-x86_64.AppImage
-./nodaysidle-browser-x86_64.AppImage
+chmod +x nodaysidle-browser-bundled-x86_64.AppImage
+./nodaysidle-browser-bundled-x86_64.AppImage
 ```
 
-SHA-256 (v0.2.0 AppImage): `02d7a85c3d99f5e395425722c57c46d12fabceccd063554b7f01c2b43229ad93` ([SHA256SUMS](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/SHA256SUMS)). Verify with `sha256sum -c SHA256SUMS` in the download folder.
+SHA-256 (v0.2.1 AppImage): `4fa962df7cc6cd405de863289b17436dfae57a8321491a580939f204db31c7a6` ([.sha256](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.1/nodaysidle-browser-bundled-x86_64.AppImage.sha256)). Verify with `sha256sum -c nodaysidle-browser-bundled-x86_64.AppImage.sha256` in the download folder.
 
-Size: 1,530,360 bytes (~1.5 MB). This is the Rust + GTK shell only, not a self-contained browser. Runtime dependencies that must come from the system:
+Size: 91,916,792 bytes (~92 MB).
+
+#### Older slim AppImage (v0.2.0, needs system GTK 3 and WebKitGTK 4.1)
+
+The [v0.2.0 AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/nodaysidle-browser-x86_64.AppImage) (1,530,360 bytes, ~1.5 MB) contains only the browser binary, desktop file and icon. SHA-256: `02d7a85c3d99f5e395425722c57c46d12fabceccd063554b7f01c2b43229ad93` ([SHA256SUMS](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/SHA256SUMS)). Runtime dependencies that must come from the system:
 
 - WebKitGTK 4.1 (`libwebkit2gtk-4.1`, with `libjavascriptcoregtk-4.1` and `libsoup-3.0`)
 - GTK 3 (`libgtk-3`, with GLib/GIO, Pango, Cairo, GDK-Pixbuf)
 
-An experimental fully bundled AppImage that includes GTK 3, WebKitGTK 4.1 and their libraries is built by `./scripts/package-appimage-bundled.sh` (see [docs/APPIMAGE.md](docs/APPIMAGE.md)). A local build measured 113,003,000 bytes (~113 MB). It is not published as a release yet.
+The bundled AppImage is built by `./scripts/package-appimage-bundled.sh`; the slim one by `./scripts/package-appimage.sh`.
 
 ### Build `.AppImage` locally
 
