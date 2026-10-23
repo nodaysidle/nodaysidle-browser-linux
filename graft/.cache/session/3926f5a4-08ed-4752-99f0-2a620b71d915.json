@@ -1,0 +1,9 @@
+{
+  "lastQuery": "Repo nodaysidle/nodaysidle-browser-linux (default branch master). Bug: Browser for Linux v0.2.1 (the AppImage/packaged build) crashes on its first page load because the GLib it bundles clashes with the host xdg-dbus-proxy (WebKitGTK sandbox). Find the cause in the packaging/build scripts, fix it properly (e.g. stop bundling GLib/gio and related libs that must match the host, or use the host libs for the WebKit sandbox/dbus proxy path) and verify by building and launching if possible, otherwise explain what you checked. Work on a new branch nds/fix-browser-linux. Commit with a message whose trailer is: Agent: SHIP. Push only that branch and open a PR against master with gh pr create, body describing cause, fix and how it was tested, ending with Agent: SHIP. Never merge, never push to master, never cut or edit a release, never read tokens or credential files. Finish with RESULT: and at most 10 lines including the PR URL.\n\n---\nYou run unattended for the nodaysidle team; nobody can answer questions mid-run.\nFinish with a final block that starts with a line 'RESULT:' followed by at most 10 short lines:\nwhat you changed (paths), what you verified, and anything blocked. No other recap.",
+  "perAgentQuery": {},
+  "graftReads": 0,
+  "sourceReads": 0,
+  "savedTokens": 0,
+  "injectedPointers": [],
+  "nudges": 0
+}
