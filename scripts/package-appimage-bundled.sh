@@ -39,8 +39,11 @@ mkdir -p "${APP_DIR}/usr/lib"
 
 # WebKit helper processes and injected bundle. libwebkit2gtk looks them up at a
 # compiled-in absolute path; below that path is rewritten (same length) to a
-# relative one that AppRun resolves by running from ${APPDIR}/usr.
+# relative one that AppRun resolves by running from ${APPDIR}/usr. It goes through
+# usr/webkit because WebKit's sandbox bind-mounts the path at /<path>: under lib/ that
+# lands in the read-only host /usr/lib and fails on hosts without WebKitGTK installed.
 cp -a "${WK_SYS}" "${APP_DIR}/usr/lib/webkit2gtk-4.1"
+ln -s lib/webkit2gtk-4.1 "${APP_DIR}/usr/webkit"
 rm -f "${APP_DIR}/usr/lib/webkit2gtk-4.1/MiniBrowser"
 
 # GIO modules (TLS via glib-networking) and schemas.
@@ -122,7 +125,7 @@ WKLIB="$(ls "${APP_DIR}"/usr/lib/libwebkit2gtk-4.1.so.0* | head -n1)"
 python3 - "${WKLIB}" "${WK_SYS}" << 'PY'
 import sys
 path, old = sys.argv[1], sys.argv[2].encode()
-tail = b"lib/webkit2gtk-4.1"
+tail = b"webkit"
 pad = len(old) - len(tail)
 assert pad > 0 and pad % 2 == 0, "unexpected WebKit path length"
 new = b"./" * (pad // 2) + tail
