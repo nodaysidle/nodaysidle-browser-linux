@@ -50,6 +50,21 @@ jobs:
             # 124 = still running when the timeout hit, i.e. the window stayed up.
             [ "$rc" = 124 ] || { echo "unexpected exit $rc" >&2; exit 1; }
           '
+      - name: Test-run with the WebKit sandbox in archlinux (newer host GLib, host bwrap + xdg-dbus-proxy)
+        run: |
+          docker run --rm --privileged -v "$PWD/dist:/dist:ro" archlinux:latest sh -euc '
+            pacman -Sy --noconfirm --needed bubblewrap xdg-dbus-proxy xorg-server-xvfb xorg-xauth >/dev/null
+            cd /tmp && /dist/nodaysidle-browser-bundled-x86_64.AppImage --appimage-extract >/dev/null
+            export HOME=/tmp/home
+            mkdir -p "$HOME"
+            set +e
+            timeout 25 xvfb-run -a /tmp/squashfs-root/AppRun "data:text/html,<title>ok</title>ok" > /tmp/run.log 2>&1
+            rc=$?
+            set -e
+            cat /tmp/run.log
+            if grep -Ei "symbol lookup error|error while loading shared libraries|Failed to fully launch|Unable to spawn|^bwrap:" /tmp/run.log; then exit 1; fi
+            [ "$rc" = 124 ] || { echo "unexpected exit $rc" >&2; exit 1; }
+          '
       - name: appimagelint
         continue-on-error: true
         run: |

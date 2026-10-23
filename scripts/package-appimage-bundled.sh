@@ -39,8 +39,11 @@ mkdir -p "${APP_DIR}/usr/lib"
 
 # WebKit helper processes and injected bundle. libwebkit2gtk looks them up at a
 # compiled-in absolute path; below that path is rewritten (same length) to a
-# relative one that AppRun resolves by running from ${APPDIR}/usr.
+# relative one that AppRun resolves by running from ${APPDIR}/usr. It goes through
+# usr/webkit because WebKit's sandbox bind-mounts the path at /<path>: under lib/ that
+# lands in the read-only host /usr/lib and fails on hosts without WebKitGTK installed.
 cp -a "${WK_SYS}" "${APP_DIR}/usr/lib/webkit2gtk-4.1"
+ln -s lib/webkit2gtk-4.1 "${APP_DIR}/usr/webkit"
 rm -f "${APP_DIR}/usr/lib/webkit2gtk-4.1/MiniBrowser"
 
 # GIO modules (TLS via glib-networking) and schemas.
@@ -85,6 +88,12 @@ for pass in 1 2 3 4 5; do
   echo "dependency closure pass ${pass}: added ${added}"
   [[ "${added}" -eq 0 ]] && break
 done
+# Bundled ELFs must find bundled libraries through RUNPATH, not LD_LIBRARY_PATH (see AppRun).
+while IFS= read -r elf; do
+  readelf -d "${elf}" | grep -qE '\((RUNPATH|RPATH)\)' && continue
+  patchelf --set-rpath "\$ORIGIN/$(realpath --relative-to="$(dirname "${elf}")" "${APP_DIR}/usr/lib")" "${elf}"
+done < <(find "${APP_DIR}/usr" -type f \( -name '*.so*' -o -perm -u+x \) -print0 \
+           | xargs -0 file -L | awk -F: '/ELF/{print $1}')
 # Fallback fontconfig setup and a font for hosts without any (used only when the host
 # has no /etc/fonts/fonts.conf). Self-contained: the host's conf.d symlinks would dangle.
 # prefix="cwd" resolves against ${APPDIR}/usr, where AppRun runs the browser.
@@ -116,7 +125,7 @@ WKLIB="$(ls "${APP_DIR}"/usr/lib/libwebkit2gtk-4.1.so.0* | head -n1)"
 python3 - "${WKLIB}" "${WK_SYS}" << 'PY'
 import sys
 path, old = sys.argv[1], sys.argv[2].encode()
-tail = b"lib/webkit2gtk-4.1"
+tail = b"webkit"
 pad = len(old) - len(tail)
 assert pad > 0 and pad % 2 == 0, "unexpected WebKit path length"
 new = b"./" * (pad // 2) + tail
@@ -135,7 +144,10 @@ cat << 'RUN' > "${APP_DIR}/AppRun"
 HERE="$(dirname "$(readlink -f "${0}")")"
 export APPDIR="${APPDIR:-${HERE}}"
 for hook in "${HERE}"/apprun-hooks/*.sh; do [ -f "${hook}" ] && . "${hook}"; done
-export LD_LIBRARY_PATH="${HERE}/usr/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+# WebKit bind-mounts LD_LIBRARY_PATH entries into its bwrap sandbox and passes the variable to
+# the host xdg-dbus-proxy it runs there. ${HERE}/usr holds no libraries, so host helpers keep
+# their own GLib while the bundle (resolved via RUNPATH) is still visible inside the sandbox.
+export LD_LIBRARY_PATH="${HERE}/usr${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 export GIO_MODULE_DIR="${HERE}/usr/lib/gio/modules"
 export GSETTINGS_SCHEMA_DIR="${HERE}/usr/share/glib-2.0/schemas"
 if [ ! -e /etc/fonts/fonts.conf ]; then
