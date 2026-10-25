@@ -61,6 +61,10 @@ libraries, the WebKit helper processes (`WebKitNetworkProcess`, `WebKitWebProces
 schemas. The compiled-in WebKit helper path in the bundled `libwebkit2gtk-4.1.so.0` is
 rewritten to a relative path, so `AppRun` starts the browser from `$APPDIR/usr` (existing
 file arguments are converted to absolute paths first). WebKit's sandbox still needs `bwrap`
-on the host. The slim build (`scripts/package-appimage.sh`) is unchanged. The
+and `xdg-dbus-proxy` on the host. Bundled binaries and libraries find each other through
+RUNPATH; `AppRun` sets `LD_LIBRARY_PATH` to `$APPDIR/usr`, which contains no libraries, only
+so WebKit bind-mounts the bundle into its sandbox. Host helpers that WebKit runs there
+(`bwrap`, `xdg-dbus-proxy`) keep loading the host's GLib. The slim build
+(`scripts/package-appimage.sh`) is unchanged. The
 `appimage-bundled.yml` workflow builds it, test-runs it in `debian:bookworm-slim`, and
 uploads it as a CI artifact. It is not a release.
