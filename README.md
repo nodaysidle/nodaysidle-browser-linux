@@ -136,8 +136,48 @@ Versions before the rename installed `nodaysidle-browser.desktop`. Running `./sc
 | Find in page | <kbd>Ctrl</kbd>+<kbd>F</kbd> |
 | Navigate back / forward | <kbd>Alt</kbd>+<kbd>Left</kbd> / <kbd>Alt</kbd>+<kbd>Right</kbd> |
 | Full screen | <kbd>F11</kbd> |
+| Reopen closed tab | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
+| Reload, ignoring cache | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>, <kbd>Ctrl</kbd>+<kbd>F5</kbd> |
+| Find next / previous | <kbd>Ctrl</kbd>+<kbd>G</kbd>, <kbd>F3</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>, <kbd>Shift</kbd>+<kbd>F3</kbd> |
+| Zoom in / out / reset | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>0</kbd> |
+| History | <kbd>Ctrl</kbd>+<kbd>H</kbd> |
+| Print | <kbd>Ctrl</kbd>+<kbd>P</kbd> |
+| Ask about this page | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> |
+| Main menu | <kbd>F10</kbd> |
+| All shortcuts | <kbd>Ctrl</kbd>+<kbd>?</kbd> |
+| Quit | <kbd>Ctrl</kbd>+<kbd>Q</kbd> |
 
-In the main window, shortcuts work wherever the focus is, including inside web pages. Tab titles can be reached with Tab and activated with Enter or Space.
+In the main window, shortcuts work wherever the focus is, including inside web pages. The selected tab is one Tab stop; Left and Right move between tabs, and middle-click closes one.
+
+## Themes
+
+Menu > Theme picks **Match System** (the default: follows your desktop's
+light/dark preference), **Dark**, or **Paper**, a warm off-white light theme
+that is never pure white. Dialogs and web pages follow the choice. It is saved
+in the profile's `settings.json`.
+
+## Ask about this page
+
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> opens a side panel. Nothing is
+sent until you click, and only for http(s) pages:
+
+- **Scam check** asks TypeSafe Jev whether the page impersonates a brand, asks
+  for passwords or card details, or pressures you to act. Needs
+  `TYPESAFE_API_KEY`.
+- **Summarize** and typed questions use Claude Haiku 5.5 through the Anthropic
+  API. Needs `ANTHROPIC_API_KEY` (override the model with
+  `NODAYSIDLE_AI_MODEL`).
+
+The panel sends the selection, or the page's main text (up to 12,000
+characters), its title, and its address without the query string. Keys are
+read from the environment and never stored. In fish:
+
+```fish
+set -Ux ANTHROPIC_API_KEY 'sk-ant-...'
+set -Ux TYPESAFE_API_KEY '...'
+# for launches from the desktop launcher rather than a terminal:
+systemctl --user set-environment ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY TYPESAFE_API_KEY=$TYPESAFE_API_KEY
+```
 
 ## Pop-up windows
 
