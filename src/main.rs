@@ -10,6 +10,7 @@ mod permissions;
 mod popup;
 mod privacy;
 mod profile;
+mod shortcuts;
 mod tabs;
 mod theme;
 mod url_display;
@@ -67,6 +68,7 @@ fn main() -> glib::ExitCode {
     let shared_for_shutdown = shared.clone();
     app.connect_shutdown(move |_| {
         flush_shared_history(&shared_for_shutdown);
+        profile::remove_session_only_dir();
     });
     for &sig in &[1, 2, 15] {
         let shared_for_sig = shared.clone();

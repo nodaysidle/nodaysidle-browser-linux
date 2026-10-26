@@ -60,7 +60,6 @@ window.browser-window.tiled .browser-frame {
 
 .tab-pill-label {
   color: #949499;
-  font-family: monospace;
   font-size: 12px;
   padding: 4px 8px;
 }
@@ -138,7 +137,8 @@ window.browser-window.tiled .browser-frame {
 .url-bar {
   background-color: #202022;
   color: #e8e8ec;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  /* 3:1 against the toolbar so the field edge is visible (WCAG 1.4.11). */
+  border: 1px solid #6a6a70;
   border-radius: 8px;
   padding: 7px 12px;
   font-size: 13px;
@@ -168,7 +168,7 @@ window.browser-window.tiled .browser-frame {
   box-shadow: 0 0 0 1px rgba(117, 170, 255, 0.55);
 }
 
-.toolbar {
+.browser-toolbar {
   padding: 4px 8px;
 }
 
@@ -179,9 +179,14 @@ window.browser-window.tiled .browser-frame {
 
 .home-search-pill {
   background-color: #202022;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid #6a6a70;
   border-radius: 999px;
   padding: 4px 16px;
+}
+
+.home-hint {
+  color: #949499;
+  font-size: 12px;
 }
 
 .home-search-pill.focused {
@@ -245,6 +250,8 @@ pub fn window_corner_inset_px() -> i32 {
 
 /// Reads Hyprland `decoration:rounding` when `hyprctl` is available.
 fn hyprland_rounding_px() -> Option<i32> {
+    // Only a Hyprland session sets this; skip the spawn everywhere else.
+    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
     let output = std::process::Command::new("hyprctl")
         .args(["-j", "getoption", "decoration:rounding"])
         .output()

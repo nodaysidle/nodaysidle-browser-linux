@@ -13,6 +13,7 @@ use std::rc::Rc;
 use webkit2gtk::{FindControllerExt, FindOptions, WebView, WebViewExt};
 
 pub(crate) const FIND_MAX_MATCHES: u32 = 1_000;
+const FIND_TYPING_PAUSE: std::time::Duration = std::time::Duration::from_millis(120);
 
 #[derive(Clone)]
 pub struct FindBar {
@@ -68,10 +69,26 @@ pub(crate) fn build_find_bar() -> FindBar {
 pub(crate) fn wire_find_bar(mgr: &Rc<RefCell<TabManagerInner>>) {
     let find_bar = mgr.borrow().find_bar.clone();
 
+    // Each search walks the whole page twice (search + count), so wait for a
+    // short pause in typing; clearing the field still takes effect at once.
     let mgr_changed = mgr.clone();
-    find_bar
-        .entry
-        .connect_changed(move |_| run_find(&mgr_changed));
+    let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+    find_bar.entry.connect_changed(move |entry| {
+        if let Some(source) = pending.borrow_mut().take() {
+            source.remove();
+        }
+        if entry.text().is_empty() {
+            run_find(&mgr_changed);
+            return;
+        }
+        let (mgr, fired) = (mgr_changed.clone(), pending.clone());
+        let source = glib::timeout_add_local_once(FIND_TYPING_PAUSE, move || {
+            // Forget the id first: removing a source that already ran panics.
+            fired.borrow_mut().take();
+            run_find(&mgr);
+        });
+        *pending.borrow_mut() = Some(source);
+    });
 
     let mgr_activate = mgr.clone();
     find_bar
@@ -187,7 +204,7 @@ pub(crate) fn run_find(mgr: &Rc<RefCell<TabManagerInner>>) {
     }
 }
 
-fn find_step(mgr: &Rc<RefCell<TabManagerInner>>, backwards: bool) {
+pub(crate) fn find_step(mgr: &Rc<RefCell<TabManagerInner>>, backwards: bool) {
     let (find_bar, view) = find_target(mgr);
     let text = find_bar.entry.text();
     let Some(controller) = view.and_then(|view| view.find_controller()) else {

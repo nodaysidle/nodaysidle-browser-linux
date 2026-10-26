@@ -187,10 +187,17 @@ pub fn title_for_url(url: &str) -> String {
 }
 
 pub fn title_for_page(title: Option<&str>, url: &str) -> String {
+    // Page titles are page-controlled: drop bidi overrides and invisible characters.
     title
-        .map(str::trim)
+        .map(|title| {
+            title
+                .chars()
+                .filter(|ch| !crate::url_display::is_unsafe_display_char(*ch))
+                .collect::<String>()
+                .trim()
+                .to_string()
+        })
         .filter(|title| !title.is_empty())
-        .map(str::to_string)
         .unwrap_or_else(|| title_for_url(url))
 }
 
@@ -336,6 +343,10 @@ mod tests {
             "example.com"
         );
         assert_eq!(title_for_page(None, "https://example.com/a"), "example.com");
+        assert_eq!(
+            title_for_page(Some("pay\u{202e}lap\u{200b}"), "https://example.com"),
+            "paylap"
+        );
     }
 
     #[test]

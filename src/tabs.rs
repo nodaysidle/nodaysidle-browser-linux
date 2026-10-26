@@ -111,6 +111,10 @@ pub(crate) struct TabManagerInner {
     /// `WebContext` and `HistoryStore` (Ctrl+N, menu, `--new-window`).
     /// Injected by `main` so the tab module does not own profile wiring.
     pub(crate) new_window: NewWindowHandler,
+    /// Pages of recently closed tabs, newest last, for Ctrl+Shift+T.
+    pub(crate) closed_tabs: Vec<String>,
+    /// Set by `history_ui` so Ctrl+H can open the history popover.
+    pub(crate) history_btn: Option<Button>,
 }
 
 impl TabManager {
@@ -145,6 +149,8 @@ impl TabManager {
             user_fullscreen: false,
             reveal: Rc::new(RefCell::new(None)),
             new_window: Rc::new(RefCell::new(None)),
+            closed_tabs: Vec::new(),
+            history_btn: None,
         };
         wire_tab_reveal(&inner.tab_scroll, &inner.tab_strip, &inner.reveal);
         Self {
@@ -247,6 +253,38 @@ impl TabManager {
                 let current_uri = mgr.borrow().selected_webview().and_then(|view| view.uri());
                 TabManager::navigate_selected(&mgr, address_activation_uri(&text, current_uri.as_deref()));
             }));
+
+        // Esc in the address bar drops the edit and hands focus back to the page.
+        let mgr_esc = self.inner.clone();
+        self.inner
+            .borrow()
+            .url_entry
+            .connect_key_press_event(move |entry, event| {
+                if event.keyval() != gdk::keys::constants::Escape {
+                    return glib::Propagation::Proceed;
+                }
+                let (view, home_search) = {
+                    let inner = mgr_esc.borrow();
+                    (
+                        inner.selected_webview(),
+                        inner.selected_tab().map(|tab| tab.home_search.clone()),
+                    )
+                };
+                match view {
+                    Some(view) => {
+                        let uri = view.uri().unwrap_or_default();
+                        entry.set_text(&crate::navigation::format_url_for_display(&uri));
+                        view.grab_focus();
+                    }
+                    None => {
+                        entry.set_text("");
+                        if let Some(home_search) = home_search {
+                            home_search.grab_focus();
+                        }
+                    }
+                }
+                glib::Propagation::Stop
+            });
 
         self.inner.borrow().url_entry.connect_changed(|entry| {
             if entry.is_focus() {
@@ -374,6 +412,10 @@ impl TabManager {
                 // Keep native row handling from moving focus back out of the page.
                 return glib::Propagation::Stop;
             }
+            if event.button() == 2 {
+                TabManager::close_tab(&mgr_click, tab_id);
+                return glib::Propagation::Stop;
+            }
             glib::Propagation::Proceed
         });
 
@@ -382,6 +424,17 @@ impl TabManager {
             let key = event.keyval();
             if key == gdk::keys::constants::Return || key == gdk::keys::constants::space {
                 TabManager::select_tab_id(&mgr_key, tab_id);
+                glib::Propagation::Stop
+            } else if key == gdk::keys::constants::Left || key == gdk::keys::constants::Right {
+                cycle_selected_tab(&mgr_key, key == gdk::keys::constants::Left);
+                // Selecting moves focus into the page; keep it on the strip.
+                let focus = {
+                    let inner = mgr_key.borrow();
+                    inner.selected_tab().map(|tab| tab.tab_focus.clone())
+                };
+                if let Some(focus) = focus {
+                    focus.grab_focus();
+                }
                 glib::Propagation::Stop
             } else {
                 glib::Propagation::Proceed
@@ -553,12 +606,28 @@ impl TabManager {
             sync_page_status(&mgr_uri, tab_id, view);
         });
 
-        for property in ["estimated-load-progress", "is-loading"] {
-            let mgr_progress = mgr.clone();
-            webview.connect_notify_local(Some(property), move |view, _| {
-                sync_page_status(&mgr_progress, tab_id, view);
-            });
-        }
+        let mgr_loading = mgr.clone();
+        webview.connect_notify_local(Some("is-loading"), move |view, _| {
+            sync_page_status(&mgr_loading, tab_id, view);
+        });
+        // Progress ticks many times per load: only the bar changes, so skip
+        // the icon, tooltip and style updates that `sync_page_status` does.
+        let mgr_progress = mgr.clone();
+        webview.connect_notify_local(Some("estimated-load-progress"), move |view, _| {
+            let url_entry = {
+                let Ok(inner) = mgr_progress.try_borrow() else {
+                    return;
+                };
+                if inner.selected != Some(tab_id) {
+                    return;
+                }
+                inner.url_entry.clone()
+            };
+            url_entry.set_progress_fraction(progress_fraction(
+                view.is_loading(),
+                view.estimated_load_progress(),
+            ));
+        });
 
         let mgr_title = mgr.clone();
         webview.connect_notify_local(Some("title"), move |view, _| {
@@ -851,10 +920,12 @@ impl TabManager {
                 title_label.set_text("New Tab");
                 pill.set_tooltip_text(Some("New Tab"));
                 apply_page_status(&url_entry, &reload_btn, None);
+                set_window_title(mgr, None);
                 home_search.grab_focus();
             } else if let Some(view) = webview {
                 page_stack.set_visible_child_name("web");
                 let uri = view.uri().unwrap_or_default();
+                set_window_title(mgr, Some(&title_for_page(view.title().as_deref(), &uri)));
                 url_entry.set_text(&crate::navigation::format_url_for_display(&uri));
                 apply_page_status(&url_entry, &reload_btn, Some(&view));
                 view.grab_focus();
@@ -915,6 +986,14 @@ impl TabManager {
                 return;
             };
             let tab = inner.tabs.remove(idx);
+            if let Some(uri) = tab.webview.as_ref().and_then(|view| view.uri()) {
+                if !uri.is_empty() && !is_home_marker(&uri) {
+                    if inner.closed_tabs.len() == MAX_CLOSED_TABS {
+                        inner.closed_tabs.remove(0);
+                    }
+                    inner.closed_tabs.push(uri.to_string());
+                }
+            }
             let was_selected = inner.selected == Some(id);
             let remaining_ids = inner.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>();
             let selected_after = selection_after_close(&remaining_ids, inner.selected, id, idx);
@@ -1010,6 +1089,18 @@ impl TabManager {
                 separator_before: false,
             },
             MenuItemSpec {
+                label: "History",
+                accel: Some((gdk::keys::constants::h, gdk::ModifierType::CONTROL_MASK)),
+                action: AppMenuAction::Shortcut(Shortcut::History),
+                separator_before: false,
+            },
+            MenuItemSpec {
+                label: "Print…",
+                accel: Some((gdk::keys::constants::p, gdk::ModifierType::CONTROL_MASK)),
+                action: AppMenuAction::Shortcut(Shortcut::Print),
+                separator_before: false,
+            },
+            MenuItemSpec {
                 label: "Full Screen",
                 accel: Some((gdk::keys::constants::F11, gdk::ModifierType::empty())),
                 action: AppMenuAction::Shortcut(Shortcut::ToggleFullscreen),
@@ -1022,9 +1113,24 @@ impl TabManager {
                 separator_before: true,
             },
             MenuItemSpec {
+                label: "Keyboard Shortcuts",
+                accel: Some((
+                    gdk::keys::constants::question,
+                    gdk::ModifierType::CONTROL_MASK,
+                )),
+                action: AppMenuAction::Shortcut(Shortcut::ShowShortcuts),
+                separator_before: true,
+            },
+            MenuItemSpec {
                 label: "About nodaysidle",
                 accel: None,
                 action: AppMenuAction::About,
+                separator_before: false,
+            },
+            MenuItemSpec {
+                label: "Quit",
+                accel: Some((gdk::keys::constants::q, gdk::ModifierType::CONTROL_MASK)),
+                action: AppMenuAction::Shortcut(Shortcut::Quit),
                 separator_before: true,
             },
         ];
@@ -1129,6 +1235,9 @@ enum AppMenuAction {
 }
 
 fn wire_tab_accessibility(focus: &ListBoxRow, close: &Button, title: &str, selected: bool) {
+    // Only the selected tab is a Tab stop; Left/Right move between tabs, so
+    // keyboard users do not tab through every open tab to reach the page.
+    focus.set_can_focus(selected);
     if let Some(accessible) = focus.accessible() {
         accessible.set_role(atk::Role::PageTab);
         accessible.set_name(title);
@@ -1303,6 +1412,7 @@ fn sync_view_chrome(
     if !selected {
         return;
     }
+    set_window_title(mgr, Some(title));
 
     if let Some(uri) = url_bar_sync_value(url_entry.is_focus(), uri) {
         url_entry.set_text(&crate::navigation::format_url_for_display(uri));
@@ -1310,6 +1420,13 @@ fn sync_view_chrome(
     back_btn.set_sensitive(view.can_go_back());
     forward_btn.set_sensitive(view.can_go_forward());
     reload_btn.set_sensitive(true);
+}
+
+/// The window title follows the selected page so task switchers can tell
+/// windows apart; Home shows the app name.
+fn set_window_title(mgr: &Rc<RefCell<TabManagerInner>>, page_title: Option<&str>) {
+    let window = { mgr.borrow().window.clone() };
+    window.set_title(page_title.filter(|t| !t.is_empty()).unwrap_or("nodaysidle"));
 }
 
 /// Refreshes the address bar's connection indicator for `tab_id` if it is the
@@ -1476,8 +1593,41 @@ pub(crate) enum Shortcut {
     Find,
     ToggleFullscreen,
     Reload,
+    HardReload,
     Back,
     Forward,
+    Quit,
+    ReopenClosedTab,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
+    FindNext,
+    FindPrevious,
+    Print,
+    History,
+    ShowShortcuts,
+}
+
+const MAX_CLOSED_TABS: usize = 20;
+/// Zoom stops, matching the steps users know from other browsers.
+const ZOOM_STEPS: [f64; 14] = [
+    0.3, 0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.7, 2.0, 2.4, 3.0,
+];
+
+/// Next zoom stop above (`zoom_in`) or below the current level.
+fn next_zoom(current: f64, zoom_in: bool) -> f64 {
+    if zoom_in {
+        ZOOM_STEPS
+            .into_iter()
+            .find(|step| *step > current + 0.001)
+            .unwrap_or(ZOOM_STEPS[ZOOM_STEPS.len() - 1])
+    } else {
+        ZOOM_STEPS
+            .into_iter()
+            .rev()
+            .find(|step| *step < current - 0.001)
+            .unwrap_or(ZOOM_STEPS[0])
+    }
 }
 
 fn apply_close_buttons(states: Vec<(Button, bool)>) {
@@ -1490,10 +1640,21 @@ fn apply_close_buttons(states: Vec<(Button, bool)>) {
 /// backoff delay so one error does not stop saving for the session (V-3).
 fn schedule_history_save(history: Rc<RefCell<HistoryStore>>, delay: std::time::Duration) {
     glib::timeout_add_local_once(delay, move || {
-        let retry = history.borrow_mut().flush_from_timer();
-        if let Some(delay) = retry {
-            schedule_history_save(history, delay);
-        }
+        let save = history.borrow_mut().begin_background_save();
+        let Some(save) = save else {
+            return;
+        };
+        // The write fsyncs, which can take long on a busy disk: keep it off
+        // the GTK thread and apply the result back here (P1).
+        let generation = save.generation();
+        let write = gio::spawn_blocking(move || save.write());
+        glib::MainContext::default().spawn_local(async move {
+            let ok = write.await.unwrap_or(false);
+            let retry = history.borrow_mut().finish_background_save(generation, ok);
+            if let Some(delay) = retry {
+                schedule_history_save(history, delay);
+            }
+        });
     });
 }
 
@@ -1539,7 +1700,31 @@ pub(crate) fn shortcut_for(keyval: &gdk::keys::Key, state: gdk::ModifierType) ->
             return Some(Shortcut::LastTab);
         }
     }
-    let shortcut = if ctrl && keyval == key::t {
+    let shortcut = if ctrl_shift && keyval == key::t {
+        Shortcut::ReopenClosedTab
+    } else if ctrl && keyval == key::q {
+        Shortcut::Quit
+    } else if (ctrl || ctrl_shift)
+        && (keyval == key::plus || keyval == key::equal || keyval == key::KP_Add)
+    {
+        Shortcut::ZoomIn
+    } else if ctrl && (keyval == key::minus || keyval == key::KP_Subtract) {
+        Shortcut::ZoomOut
+    } else if ctrl && (keyval == key::_0 || keyval == key::KP_0) {
+        Shortcut::ZoomReset
+    } else if (ctrl && keyval == key::g) || (none && keyval == key::F3) {
+        Shortcut::FindNext
+    } else if (ctrl_shift && keyval == key::g) || (mods == M::SHIFT_MASK && keyval == key::F3) {
+        Shortcut::FindPrevious
+    } else if (ctrl_shift && keyval == key::r) || (ctrl && keyval == key::F5) {
+        Shortcut::HardReload
+    } else if ctrl && keyval == key::p {
+        Shortcut::Print
+    } else if ctrl && keyval == key::h {
+        Shortcut::History
+    } else if (ctrl || ctrl_shift) && keyval == key::question {
+        Shortcut::ShowShortcuts
+    } else if ctrl && keyval == key::t {
         Shortcut::NewTab
     } else if ctrl && keyval == key::n {
         Shortcut::NewWindow
@@ -1607,8 +1792,68 @@ fn run_shortcut(mgr: &Rc<RefCell<TabManagerInner>>, shortcut: Shortcut) {
         Shortcut::Reload => {
             let view = { mgr.borrow().selected_webview() };
             if let Some(view) = view {
-                view.reload();
+                // Same as the toolbar button: Reload turns into Stop while loading.
+                if view.is_loading() {
+                    view.stop_loading();
+                } else {
+                    view.reload();
+                }
             }
+        }
+        Shortcut::HardReload => {
+            let view = { mgr.borrow().selected_webview() };
+            if let Some(view) = view {
+                view.reload_bypass_cache();
+            }
+        }
+        Shortcut::Quit => {
+            // close() goes through delete-event, so the active-download prompt still runs.
+            let window = { mgr.borrow().window.clone() };
+            window.close();
+        }
+        Shortcut::ReopenClosedTab => {
+            let uri = { mgr.borrow_mut().closed_tabs.pop() };
+            if let Some(uri) = uri {
+                TabManager::open_tab(mgr, TabOpen::Url(uri), true);
+            }
+        }
+        Shortcut::ZoomIn | Shortcut::ZoomOut | Shortcut::ZoomReset => {
+            let view = { mgr.borrow().selected_webview() };
+            if let Some(view) = view {
+                let level = match shortcut {
+                    Shortcut::ZoomReset => 1.0,
+                    _ => next_zoom(view.zoom_level(), shortcut == Shortcut::ZoomIn),
+                };
+                view.set_zoom_level(level);
+            }
+        }
+        Shortcut::FindNext | Shortcut::FindPrevious => {
+            let visible = { mgr.borrow().find_bar.bar.is_visible() };
+            if visible {
+                crate::find::find_step(mgr, shortcut == Shortcut::FindPrevious);
+            } else {
+                show_find_bar(mgr);
+            }
+        }
+        Shortcut::Print => {
+            let (view, window) = {
+                let inner = mgr.borrow();
+                (inner.selected_webview(), inner.window.clone())
+            };
+            if let Some(view) = view {
+                let print = webkit2gtk::PrintOperation::new(&view);
+                webkit2gtk::PrintOperationExt::run_dialog(&print, Some(&window));
+            }
+        }
+        Shortcut::History => {
+            let button = { mgr.borrow().history_btn.clone() };
+            if let Some(button) = button {
+                button.emit_clicked();
+            }
+        }
+        Shortcut::ShowShortcuts => {
+            let window = { mgr.borrow().window.clone() };
+            crate::shortcuts::show_shortcuts_window(&window);
         }
         Shortcut::Back => {
             let view = { mgr.borrow().selected_tab_view() };
@@ -1897,7 +2142,7 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     let toolbar = GtkBox::new(Orientation::Horizontal, 6);
     toolbar.set_height_request(TOOLBAR_HEIGHT);
     toolbar.style_context().add_class("chrome");
-    toolbar.style_context().add_class("toolbar");
+    toolbar.style_context().add_class("browser-toolbar");
 
     let home_btn = icon_button("go-home-symbolic", "Home");
     let back_btn = icon_button("go-previous-symbolic", "Back");
@@ -2067,10 +2312,62 @@ mod tests {
             shortcut_for(&key::F11, locks),
             Some(Shortcut::ToggleFullscreen)
         );
-        // Ctrl+Shift+T and plain letters are not ours.
-        assert_eq!(shortcut_for(&key::t, M::CONTROL_MASK | M::SHIFT_MASK), None);
+        // Shift changes Ctrl+T into reopen; plain letters are not ours.
+        assert_eq!(
+            shortcut_for(&key::T, M::CONTROL_MASK | M::SHIFT_MASK | locks),
+            Some(Shortcut::ReopenClosedTab)
+        );
         assert_eq!(shortcut_for(&key::t, M::empty()), None);
         assert_eq!(shortcut_for(&key::n, M::empty()), None);
+    }
+
+    #[test]
+    fn common_browser_shortcuts_are_bound() {
+        let cases = [
+            (key::q, M::CONTROL_MASK, Shortcut::Quit),
+            (key::plus, M::CONTROL_MASK | M::SHIFT_MASK, Shortcut::ZoomIn),
+            (key::equal, M::CONTROL_MASK, Shortcut::ZoomIn),
+            (key::minus, M::CONTROL_MASK, Shortcut::ZoomOut),
+            (key::_0, M::CONTROL_MASK, Shortcut::ZoomReset),
+            (key::g, M::CONTROL_MASK, Shortcut::FindNext),
+            (key::F3, M::empty(), Shortcut::FindNext),
+            (
+                key::G,
+                M::CONTROL_MASK | M::SHIFT_MASK,
+                Shortcut::FindPrevious,
+            ),
+            (key::F3, M::SHIFT_MASK, Shortcut::FindPrevious),
+            (
+                key::R,
+                M::CONTROL_MASK | M::SHIFT_MASK,
+                Shortcut::HardReload,
+            ),
+            (key::r, M::CONTROL_MASK, Shortcut::Reload),
+            (key::p, M::CONTROL_MASK, Shortcut::Print),
+            (key::h, M::CONTROL_MASK, Shortcut::History),
+            (
+                key::question,
+                M::CONTROL_MASK | M::SHIFT_MASK,
+                Shortcut::ShowShortcuts,
+            ),
+        ];
+        for (keyval, mods, expected) in cases {
+            assert_eq!(
+                shortcut_for(&keyval, mods),
+                Some(expected),
+                "{keyval:?} {mods:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn zoom_moves_between_fixed_stops_and_stops_at_the_ends() {
+        use super::next_zoom;
+        assert_eq!(next_zoom(1.0, true), 1.1);
+        assert_eq!(next_zoom(1.0, false), 0.9);
+        assert_eq!(next_zoom(1.05, true), 1.1);
+        assert_eq!(next_zoom(3.0, true), 3.0);
+        assert_eq!(next_zoom(0.3, false), 0.3);
     }
 
     #[test]
@@ -2453,7 +2750,7 @@ mod gtk_tests {
         let label = row.child().unwrap().downcast::<gtk::Label>().unwrap();
         assert_eq!(
             label.text().as_str(),
-            "<Page & title>\nhttps://user:p%40ss@bücher.de:8443/a%2Fb?q=1&b=2#frag"
+            "<Page & title>\nhttps://bücher.de:8443/a%2Fb?q=1&b=2#frag"
         );
         drop(label);
         drop(row);

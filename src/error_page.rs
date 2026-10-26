@@ -17,17 +17,44 @@ pub fn html_escape(text: &str) -> String {
     out
 }
 
-const LOAD_FAILED_TITLE: &str = "This page could not be loaded";
-const PROCESS_ENDED_TITLE: &str = "This page stopped working";
+// Short enough to read in a tab pill.
+const LOAD_FAILED_TITLE: &str = "Could not load page";
+const PROCESS_ENDED_TITLE: &str = "Page stopped working";
+const TLS_FAILED_TITLE: &str = "Connection not secure";
 
 /// True for the title of one of these pages, so they stay out of history.
 pub fn is_error_page_title(title: Option<&str>) -> bool {
-    matches!(title, Some(LOAD_FAILED_TITLE | PROCESS_ENDED_TITLE))
+    matches!(
+        title,
+        Some(LOAD_FAILED_TITLE | PROCESS_ENDED_TITLE | TLS_FAILED_TITLE)
+    )
 }
 
 pub fn load_failed_html(uri: &str, message: &str) -> String {
     let shown_uri = crate::navigation::format_url_for_display(uri);
     page(LOAD_FAILED_TITLE, uri, &[&shown_uri, message], "Try again")
+}
+
+/// Certificate problems get their own page instead of the generic failure:
+/// the user needs to know the site may not be who it claims to be. There is
+/// deliberately no "continue anyway".
+pub fn tls_failed_html(uri: &str, problems: &[&str]) -> String {
+    let shown_uri = crate::navigation::format_url_for_display(uri);
+    let reason = if problems.is_empty() {
+        "The site's certificate could not be verified.".to_string()
+    } else {
+        format!("The site's certificate {}.", problems.join(", "))
+    };
+    page(
+        TLS_FAILED_TITLE,
+        uri,
+        &[
+            &shown_uri,
+            &reason,
+            "Someone could be pretending to be this site. Nothing was sent to it.",
+        ],
+        "Try again",
+    )
 }
 
 pub fn web_process_ended_html(uri: &str, exceeded_memory: bool) -> String {
@@ -78,7 +105,7 @@ main {{ max-width: 560px; padding: 32px; }}
 h1 {{ font-size: 20px; font-weight: 600; margin: 0 0 12px; }}
 p {{ color: #949499; margin: 6px 0; overflow-wrap: anywhere; }}
 button {{ margin-top: 20px; background: #202022; color: #e8e8ec;
-  border: 1px solid rgba(255,255,255,0.14); border-radius: 999px;
+  border: 1px solid #6a6a70; border-radius: 999px;
   padding: 8px 20px; font: inherit; cursor: pointer; }}
 button:hover, button:focus {{ border-color: #75aaff; outline: none; }}
 </style></head>
@@ -90,7 +117,9 @@ button:hover, button:focus {{ border-color: #75aaff; outline: none; }}
 
 #[cfg(test)]
 mod tests {
-    use super::{html_escape, is_error_page_title, load_failed_html, web_process_ended_html};
+    use super::{
+        html_escape, is_error_page_title, load_failed_html, tls_failed_html, web_process_ended_html,
+    };
 
     #[test]
     fn html_escape_neutralises_markup_and_quotes() {
@@ -114,7 +143,11 @@ mod tests {
         assert!(crashed.contains("crashed"));
         assert!(crashed.contains(">Reload</button>"));
         assert!(web_process_ended_html("https://example.com/", true).contains("memory"));
-        assert!(is_error_page_title(Some("This page could not be loaded")));
+        assert!(is_error_page_title(Some("Could not load page")));
+        let tls = tls_failed_html("https://bad.example/", &["has expired"]);
+        assert!(tls.contains("<title>Connection not secure</title>"));
+        assert!(tls.contains("certificate has expired."));
+        assert!(!tls.to_lowercase().contains("continue"));
         assert!(!is_error_page_title(Some("Example Domain")));
         // No retry button for URLs a page must not be able to smuggle in.
         assert!(!load_failed_html("javascript:alert(1)", "x").contains("<button"));
@@ -127,9 +160,7 @@ mod tests {
             load_failed_html(uri, "<failed>"),
             web_process_ended_html(uri, false),
         ] {
-            assert!(html.contains(
-                "<p>https://user:p%40ss@bücher.de:8443/%E2%80%AE?q=1&amp;b=%2F#frag</p>"
-            ));
+            assert!(html.contains("<p>https://bücher.de:8443/%E2%80%AE?q=1&amp;b=%2F#frag</p>"));
             assert!(html.contains(&format!(
                 "location.replace(&quot;{}&quot;)",
                 html_escape(uri)

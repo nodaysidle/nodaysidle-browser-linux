@@ -95,7 +95,7 @@ fn handle_request(view: &WebView, request: &PermissionRequest) -> bool {
         request.deny();
         return true;
     }
-    if matches!(response, gtk::ResponseType::Reject) {
+    if permission_response_remembers_denial(response) {
         DECISIONS.with(|decisions| {
             decisions.borrow_mut().remember_denial(&origin, permission);
         });
@@ -106,6 +106,14 @@ fn handle_request(view: &WebView, request: &PermissionRequest) -> bool {
         request.deny();
     }
     true
+}
+
+/// Esc or closing the dialog counts as Deny, so a page cannot re-ask in a loop.
+fn permission_response_remembers_denial(response: gtk::ResponseType) -> bool {
+    matches!(
+        response,
+        gtk::ResponseType::Reject | gtk::ResponseType::DeleteEvent
+    )
 }
 
 fn permission_name(request: &PermissionRequest) -> Option<&'static str> {
@@ -132,8 +140,8 @@ fn permission_name(request: &PermissionRequest) -> Option<&'static str> {
 fn prompt_text(origin: &str, permission: &str) -> String {
     format!(
         "{origin} (or a site embedded in it) requests {permission}. Allow this request?\n\n\
-         Each Allow applies only to this request. Deny answers are remembered for {origin} \
-         until you clear site permissions or close the browser."
+         Each Allow applies only to this request. Deny, or closing this dialog, is remembered \
+         for {origin} until you clear site permissions or close the browser."
     )
 }
 
@@ -154,7 +162,10 @@ fn permission_response_allows(response: gtk::ResponseType) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{permission_origin, permission_response_allows, prompt_text, SessionDecisions};
+    use super::{
+        permission_origin, permission_response_allows, permission_response_remembers_denial,
+        prompt_text, SessionDecisions,
+    };
 
     #[test]
     fn the_prompt_says_an_embedded_frame_may_be_asking() {
@@ -192,5 +203,11 @@ mod tests {
         assert!(permission_response_allows(gtk::ResponseType::Accept));
         assert!(!permission_response_allows(gtk::ResponseType::Reject));
         assert!(!permission_response_allows(gtk::ResponseType::DeleteEvent));
+        assert!(permission_response_remembers_denial(
+            gtk::ResponseType::DeleteEvent
+        ));
+        assert!(!permission_response_remembers_denial(
+            gtk::ResponseType::Accept
+        ));
     }
 }

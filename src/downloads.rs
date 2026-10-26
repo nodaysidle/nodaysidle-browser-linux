@@ -301,8 +301,12 @@ fn show_progress(download: &Download, parent: &gtk::Window, filename: &str) {
             progress.set_fraction(fraction);
             progress.set_text(Some(&format!("{:.0}%", fraction * 100.0)));
         }
-        if let Some(status) = status_weak.upgrade() {
-            status.set_text("Downloading… (closing this window asks before cancelling)");
+        const DOWNLOADING: &str = "Downloading… (closing this window asks before cancelling)";
+        if let Some(status) = status_weak
+            .upgrade()
+            .filter(|status| status.text() != DOWNLOADING)
+        {
+            status.set_text(DOWNLOADING);
         }
     });
 
@@ -418,7 +422,7 @@ fn safe_suggested_filename(suggested: &str) -> String {
     let basename = suggested.rsplit(['/', '\\']).next().unwrap_or_default();
     let filename = basename
         .chars()
-        .filter(|character| !character.is_control())
+        .filter(|character| !crate::url_display::is_unsafe_display_char(*character))
         .collect::<String>();
     let filename = filename.trim();
     if filename.is_empty() || filename == "." || filename == ".." {
@@ -466,6 +470,10 @@ mod tests {
     #[test]
     fn suggested_download_names_cannot_escape_the_chosen_directory() {
         assert_eq!(safe_suggested_filename("../../etc/passwd"), "passwd");
+        assert_eq!(
+            safe_suggested_filename("invoice\u{202e}gpj.exe"),
+            "invoicegpj.exe"
+        );
         assert_eq!(safe_suggested_filename(r"..\..\secret.txt"), "secret.txt");
     }
 

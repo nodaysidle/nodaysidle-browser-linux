@@ -235,6 +235,19 @@ fn current_uid() -> Option<u32> {
     None
 }
 
+/// The unpredictable fallback profile created for this session, if any.
+static SESSION_ONLY_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Deletes the fallback profile on shutdown, so "for this session only" holds.
+/// The predictable or XDG profile is never touched.
+pub fn remove_session_only_dir() {
+    if let Some(dir) = SESSION_ONLY_DIR.get() {
+        if let Err(err) = std::fs::remove_dir_all(dir) {
+            eprintln!("Could not remove session profile {}: {err}", dir.display());
+        }
+    }
+}
+
 /// Profile in the shared temporary directory, used only without a usable
 /// XDG data dir or HOME. The predictable `nodaysidle-browser-$USER` name is
 /// used only if it is a real directory owned by us and private after chmod;
@@ -267,6 +280,7 @@ fn temp_data_dir(temp: &Path, user: &str, uid: Option<u32>) -> Option<PathBuf> {
                 preferred.display(),
                 fresh.display()
             );
+            let _ = SESSION_ONLY_DIR.set(fresh.clone());
             return Some(fresh);
         }
     }

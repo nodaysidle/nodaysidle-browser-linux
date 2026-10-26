@@ -42,6 +42,25 @@ pub(crate) fn wire_error_pages(webview: &WebView) {
         true
     });
 
+    webview.connect_load_failed_with_tls_errors(|view, failing_uri, _certificate, errors| {
+        use gio::TlsCertificateFlags as F;
+        let problems = [
+            (F::UNKNOWN_CA, "is not from a trusted authority"),
+            (F::BAD_IDENTITY, "is for a different site"),
+            (F::NOT_ACTIVATED, "is not valid yet"),
+            (F::EXPIRED, "has expired"),
+            (F::REVOKED, "was revoked"),
+            (F::INSECURE, "uses insecure cryptography"),
+        ]
+        .into_iter()
+        .filter(|(flag, _)| errors.contains(*flag))
+        .map(|(_, text)| text)
+        .collect::<Vec<_>>();
+        let html = crate::error_page::tls_failed_html(failing_uri, &problems);
+        view.load_alternate_html(&html, failing_uri, None);
+        true
+    });
+
     // A crashed or killed web process used to leave a blank, dead tab
     // (X-27): explain it and offer Reload.
     webview.connect_web_process_terminated(|view, reason| {
@@ -153,7 +172,7 @@ pub(crate) fn open_popup_window(
     address.style_context().add_class("popup-address");
     let header = GtkBox::new(Orientation::Horizontal, 0);
     header.style_context().add_class("chrome");
-    header.style_context().add_class("toolbar");
+    header.style_context().add_class("browser-toolbar");
     header.style_context().add_class("popup-chrome");
     header.pack_start(&address, true, true, 0);
     root.pack_start(&header, false, false, 0);
