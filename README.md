@@ -10,7 +10,7 @@
   Minimal chrome. Native WebKit pages. Local-first privacy.
 
   <p>
-    <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases"><img src="https://img.shields.io/badge/version-0.2.0-8e8e96?style=flat-square" alt="Version 0.2.0"></a>
+    <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases"><img src="https://img.shields.io/badge/version-0.2.1-8e8e96?style=flat-square" alt="Version 0.2.1"></a>
     <a href="https://www.kernel.org/"><img src="https://img.shields.io/badge/Linux-x86__64-151518?style=flat-square&logo=linux&logoColor=white" alt="Linux x86_64"></a>
     <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-2021-DEA584?style=flat-square&logo=rust&logoColor=white" alt="Rust 2021"></a>
     <a href="https://webkitgtk.org/"><img src="https://img.shields.io/badge/WebKitGTK-4.1-1f5b82?style=flat-square&logo=webkit&logoColor=white" alt="WebKitGTK 4.1"></a>
@@ -20,23 +20,41 @@
 
 ## What is nodaysidle?
 
-`nodaysidle` is a Rust + GTK 3 browser shell that renders pages with WebKitGTK 4.1. The v0.2.1 AppImage (~92 MB) bundles GTK 3, WebKitGTK 4.1 and their libraries. The older slim v0.2.0 AppImage (~1.5 MB) and builds from source use the GTK 3 and WebKitGTK 4.1 installed on the system. It keeps the browser controls close at hand and lets websites own the page experience—without an Electron runtime, heavy JavaScript chrome layer, start-page clutter, or application telemetry.
+`nodaysidle` is a Rust + GTK 3 browser shell that renders pages with WebKitGTK 4.1. The v0.2.1 AppImage (~92 MB) bundles GTK 3, WebKitGTK 4.1 and their libraries. The older slim v0.2.0 AppImage (~1.5 MB) and builds from source use the GTK 3 and WebKitGTK 4.1 installed on the system. It keeps the browser controls close at hand and lets websites own the page experience, without an Electron runtime, a heavy JavaScript chrome layer, start-page clutter, or application telemetry.
 
-The visual language is warm charcoal, silver, and quiet motion: a focused surface for everyday browsing that stays out of the way.
+Two themes share one quiet look: **Dark** (warm charcoal and silver) and **Paper** (a warm off-white that is never pure white). By default the browser follows your desktop's light or dark setting.
 
 ## Highlights
 
 - Native GTK 3 browser chrome backed by WebKitGTK 4.1 (`libsoup3`)
+- Dark and Paper themes, switched live from the menu; dialogs and web pages follow the choice
 - Built-in search-first Home screen on new tabs with DuckDuckGo resolution
-- Multi-tab browsing with auto-scrolling active pills, minimum-width shrinking, and tab tooltips
-- Address bar with instant search / URL resolution, real-time HTTPS indicator, load progress, and decoded Unicode URLs
-- `Ctrl+F` in-page find bar with accurate match counts and narrow tiling support
-- Safe tab lifecycle and sized pop-up windows (e.g. OAuth sign-in) with error and crash surfaces
+- Multi-tab browsing with auto-scrolling active pills, reopen closed tab, middle-click close, and arrow-key tab navigation
+- Address bar with instant search / URL resolution, real-time HTTPS indicator, load progress, and spoof-resistant URL display
+- `Ctrl+F` in-page find bar with match counts, find next / previous, and narrow tiling support
+- Optional page assistant (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>): a scam check with TypeSafe Jev and page summaries with Claude Haiku 5.5, using your own API keys and sending nothing until you click
+- Pop-up protection: links open as unrelated tabs (no `window.opener`), and scripts get one new window per second
 - Downloads with folder chooser, progress dialog, cancel protection, and close confirmation
-- Local-first persistence: bounded history (`0600`) flushed on exit/signals, and persistent cookies (`0600` SQLite)
+- Local-first persistence: bounded history (`0600`) saved in the background and on exit/signals, and persistent cookies (`0600` SQLite)
+- Keyboard-first: zoom, print, history, shortcuts window (<kbd>Ctrl</kbd>+<kbd>?</kbd>), main menu on <kbd>F10</kbd>
 - Desktop integration with Wayland `app_id` and X11 `WM_CLASS` (`com.nodaysidle.Browser`)
 - Fully bundled `.AppImage` (v0.2.1, ~92 MB; ships GTK 3 and WebKitGTK 4.1, no system web engine needed). The slim host-dependent `.AppImage` (v0.2.0, ~1.5 MB) requires system GTK 3 and WebKitGTK 4.1; see [docs/APPIMAGE.md](docs/APPIMAGE.md).
 - No application telemetry
+
+## What's new (unreleased, on `master`)
+
+These changes are in the source but not yet in a release; the v0.2.1 AppImage does not have them.
+
+- **Paper theme:** a warm off-white light theme next to Dark. **Menu → Theme** picks Match System (default), Dark or Paper. It switches live, is remembered, and dialogs, menus and web pages follow it. Every text colour pair meets WCAG AA contrast.
+- **Ask about this page** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>): an optional side panel with a **Scam check** (TypeSafe Jev) and **Summarize** / follow-up questions (Claude Haiku 5.5). See [Ask about this page](#ask-about-this-page).
+- **Safer pop-ups and links:** a link that opens a new window becomes an ordinary tab with no `window.opener`; page scripts get one new window per second, and the address bar shows when pop-ups were blocked.
+- **Clearer permission prompts:** the prompt explains that embedded sites can only ask when the page allows them; pressing Esc counts as Deny; the browser can quit while a prompt is open.
+- **Certificate errors** get their own "Connection not secure" page, with no "continue anyway".
+- **Spoofing fixes:** the address never shows `user:password@`, and page titles and download names drop invisible and right-to-left override characters.
+- **Clear Browsing Data** also removes Cache API storage and old history backups, and "Cached files" is ticked by default. The temporary profile used when no private profile folder is available is deleted on quit.
+- **Keyboard:** <kbd>Ctrl</kbd>+<kbd>Q</kbd>, reopen closed tab, zoom, find next / previous, hard reload, print, history, <kbd>F10</kbd> main menu, and a shortcuts window. <kbd>Esc</kbd> leaves the address bar, and Reload turns into Stop while a page loads.
+- **Small things:** the window title follows the page, a hint under the Home search field, search in the history popover, shorter error titles.
+- **Speed:** history is written off the UI thread; the history list, load progress, find-as-you-type and download progress no longer redo work.
 
 ## What's new in v0.2.1
 
@@ -147,26 +165,29 @@ Versions before the rename installed `nodaysidle-browser.desktop`. Running `./sc
 | All shortcuts | <kbd>Ctrl</kbd>+<kbd>?</kbd> |
 | Quit | <kbd>Ctrl</kbd>+<kbd>Q</kbd> |
 
-In the main window, shortcuts work wherever the focus is, including inside web pages. The selected tab is one Tab stop; Left and Right move between tabs, and middle-click closes one.
+In the main window, shortcuts work wherever the focus is, including inside web pages. The selected tab is one Tab stop; <kbd>Left</kbd> and <kbd>Right</kbd> move between tabs, and middle-click closes one. <kbd>Esc</kbd> in the address bar drops your edit and returns to the page.
 
 ## Themes
 
-Menu > Theme picks **Match System** (the default: follows your desktop's
-light/dark preference), **Dark**, or **Paper**, a warm off-white light theme
-that is never pure white. Dialogs and web pages follow the choice. It is saved
-in the profile's `settings.json`.
+**Menu → Theme** picks:
+
+- **Match System** (default): follows the desktop's `color-scheme` setting (`org.gnome.desktop.interface`). Without a light preference it stays Dark.
+- **Dark:** warm charcoal and silver.
+- **Paper:** a warm off-white (`#f3efe6`), never pure white, for daylight.
+
+The choice applies at once to every window and is saved in the profile's `settings.json`. Dialogs use the matching light or dark GTK theme, and web pages see the matching `prefers-color-scheme`.
 
 ## Ask about this page
 
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> opens a side panel. Nothing is
-sent until you click, and only for http(s) pages:
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> (or **Menu → Ask About This Page**) opens an optional side panel. It does nothing without your own API keys. Nothing is sent until you click, and only for http(s) pages; local files are never sent:
 
 - **Scam check** asks TypeSafe Jev whether the page impersonates a brand, asks
-  for passwords or card details, or pressures you to act. Needs
+  for passwords or card details, or pressures you to act, and shows a verdict
+  with the three estimates. They are estimates and can be wrong. Needs
   `TYPESAFE_API_KEY`.
-- **Summarize** and typed questions use Claude Haiku 5.5 through the Anthropic
-  API. Needs `ANTHROPIC_API_KEY` (override the model with
-  `NODAYSIDLE_AI_MODEL`).
+- **Summarize** and typed follow-up questions use Claude Haiku 5.5 through the
+  Anthropic API, streamed into the panel, with **Stop**. Needs
+  `ANTHROPIC_API_KEY` (override the model with `NODAYSIDLE_AI_MODEL`).
 
 The panel sends the selection, or the page's main text (up to 12,000
 characters), its title, and its address without the query string. Keys are
@@ -181,16 +202,20 @@ systemctl --user set-environment ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY TYPESAFE_A
 
 ## Pop-up windows
 
+A page script that calls `window.open` with a size (for example an OAuth sign-in) gets a pop-up window; without a size it gets a new tab. A page can open one new window per second; extra requests are blocked and the address bar shows a blocked-pop-up icon. Links that open a new window always become ordinary tabs with no `window.opener`, so the new page cannot redirect the one that opened it.
+
 A pop-up window shows one page and a read-only address bar. It has:
 - <kbd>Ctrl</kbd>+<kbd>W</kbd> or <kbd>Ctrl</kbd>+<kbd>F4</kbd> to close it, <kbd>Ctrl</kbd>+<kbd>R</kbd> or <kbd>F5</kbd> to reload, and <kbd>Esc</kbd> to close it unless the page handles the key itself.
 - <kbd>Ctrl</kbd>+<kbd>L</kbd>, <kbd>Alt</kbd>+<kbd>D</kbd>, or <kbd>F6</kbd> to select the read-only address for copying with <kbd>Ctrl</kbd>+<kbd>C</kbd>; Tab can also focus it.
-- Built-in dark error pages for failed loads and web process recovery.
+- Built-in error pages (in the active theme) for failed loads, certificate errors, and web process recovery.
 - Pop-ups lack find, back/forward history, and editable address bar, and close with the parent window.
 
 ## Clearing browsing data
 
-The app menu lets you clear history, cookies and site storage, cached files, and
-session permission denials independently. A failure dialog reports unsuccessful
+The app menu lets you clear history, cookies and site storage (including Cache API
+storage), cached files, and session permission denials independently. History,
+site storage, cached files and denials are ticked by default; clearing history also
+removes old history backups. A failure dialog reports unsuccessful
 selected operations, including website-data failures reported asynchronously by
 WebKit. Successfully cleared categories remain cleared when another category fails.
 
@@ -201,7 +226,8 @@ fallback host titles, history rows, and error pages. Approved accented Latin lab
 `bücher.de` and `café.fr`) and Han-only labels (`例子.测试`) display as Unicode.
 Other international hosts remain in punycode, including Cyrillic and Greek names
 that may resemble Latin names. Paths may display readable Unicode, while encoded
-delimiters, bidi controls, and zero-width characters remain escaped. Stored history
+delimiters, bidi controls, zero-width and tag characters remain escaped, and
+`user:password@` credentials are never shown (navigation keeps them). Stored history
 URLs and navigation destinations stay canonical; submitting an unchanged displayed
 address reuses the current URI.
 
@@ -223,10 +249,12 @@ An argument naming an existing file (or starting with `./` or `../`) opens that 
 ## Privacy model
 
 - No analytics, telemetry, or application-owned browsing backend.
+- The browser itself contacts no server except the pages you open, and, only when you click a button in the optional assistant panel, `api.typesafe.ai` (Scam check) and `api.anthropic.com` (Summarize, questions). API keys are read from the environment and never written to disk.
 - Website cookies persist locally in `~/.local/share/nodaysidle-browser/webkit-data/cookies.sqlite` (`0600`).
-- Local browsing history is stored in `~/.local/share/nodaysidle-browser/history.json` (`0600`) and flushed atomically on exit or signals (`SIGTERM`, `SIGINT`, `SIGHUP`). Use **Menu → Clear Browsing Data** to erase history, site storage, cache, or remembered permission denials.
+- Local browsing history is stored in `~/.local/share/nodaysidle-browser/history.json` (`0600`), saved in the background and flushed atomically on exit or signals (`SIGTERM`, `SIGINT`, `SIGHUP`). The theme choice is in `settings.json` next to it. Use **Menu → Clear Browsing Data** to erase history, site storage, cache, or remembered permission denials.
 - Web content runs in WebKitGTK's own sandboxed web process; the app does not disable it.
-- Site requests for location, camera, microphone, notifications, and pointer lock require explicit user permission.
+- Site requests for location, camera, microphone, notifications, and pointer lock require explicit user permission. A Deny (or closing the prompt) is remembered for that site until you clear it or quit.
+- Invalid certificates stop the load with a warning page; there is no way to continue anyway.
 
 ## Related
 
