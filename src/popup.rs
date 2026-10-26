@@ -210,7 +210,7 @@ pub(crate) fn open_popup_window(
     wire_popup_keys(&window, view, &address);
     let mgr_create = mgr.clone();
     view.connect_create(move |parent, action| {
-        Some(TabManager::create_related_view(&mgr_create, parent, action).upcast())
+        TabManager::create_related_view(&mgr_create, parent, action).map(|view| view.upcast())
     });
     let window_weak = window.downgrade();
     view.connect_close(move |_| {

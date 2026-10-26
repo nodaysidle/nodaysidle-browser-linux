@@ -115,6 +115,8 @@ pub(crate) struct TabManagerInner {
     pub(crate) closed_tabs: Vec<String>,
     /// Set by `history_ui` so Ctrl+H can open the history popover.
     pub(crate) history_btn: Option<Button>,
+    /// When page scripts last opened windows, to stop pop-up floods.
+    pub(crate) script_window_times: Vec<std::time::Instant>,
 }
 
 impl TabManager {
@@ -151,6 +153,7 @@ impl TabManager {
             new_window: Rc::new(RefCell::new(None)),
             closed_tabs: Vec::new(),
             history_btn: None,
+            script_window_times: Vec::new(),
         };
         wire_tab_reveal(&inner.tab_scroll, &inner.tab_strip, &inner.reveal);
         Self {
@@ -601,6 +604,7 @@ impl TabManager {
                 return;
             }
             show_web_surface(&mgr_uri, tab_id);
+            clear_popup_blocked(&mgr_uri, tab_id);
             let title = title_for_page(view.title().as_deref(), &uri);
             sync_view_chrome(&mgr_uri, tab_id, view, &title, &uri);
             sync_page_status(&mgr_uri, tab_id, view);
@@ -677,7 +681,7 @@ impl TabManager {
 
         let mgr_create = mgr.clone();
         webview.connect_create(move |parent, action| {
-            Some(TabManager::create_related_view(&mgr_create, parent, action).upcast())
+            TabManager::create_related_view(&mgr_create, parent, action).map(|view| view.upcast())
         });
 
         let mgr_close = mgr.clone();
@@ -711,7 +715,34 @@ impl TabManager {
         mgr: &Rc<RefCell<TabManagerInner>>,
         parent: &WebView,
         action: &webkit2gtk::NavigationAction,
-    ) -> WebView {
+    ) -> Option<WebView> {
+        let link_uri = (action.navigation_type() == webkit2gtk::NavigationType::LinkClicked)
+            .then(|| {
+                action
+                    .request()
+                    .and_then(|request| webkit2gtk::URIRequestExt::uri(&request))
+            })
+            .flatten()
+            .map(|uri| uri.to_string())
+            .filter(|uri| !uri.is_empty());
+        if let Some(uri) = link_uri {
+            // A link that opens a new window becomes an ordinary tab with no
+            // tie to the page that opened it, so it can never reach
+            // `window.opener` (reverse tabnabbing), whatever WebKit's default.
+            let mgr = mgr.clone();
+            glib::idle_add_local_once(move || {
+                TabManager::open_tab(&mgr, TabOpen::Url(uri), true);
+            });
+            return None;
+        }
+        let allowed = {
+            let mut inner = mgr.borrow_mut();
+            allow_script_window(&mut inner.script_window_times, std::time::Instant::now())
+        };
+        if !allowed {
+            show_popup_blocked(mgr);
+            return None;
+        }
         let view = WebView::with_related_view(parent);
         configure_view(&view);
         let link_clicked = action.navigation_type() == webkit2gtk::NavigationType::LinkClicked;
@@ -747,7 +778,7 @@ impl TabManager {
                 }
             }
         });
-        view
+        Some(view)
     }
 
     fn navigate_tab(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32, raw: &str) {
@@ -1420,6 +1451,43 @@ fn sync_view_chrome(
     back_btn.set_sensitive(view.can_go_back());
     forward_btn.set_sensitive(view.can_go_forward());
     reload_btn.set_sensitive(true);
+}
+
+/// Page scripts may open one window per second: enough for a sign-in pop-up
+/// per click, while a loop of `window.open` calls gets one window, not ten.
+const SCRIPT_WINDOW_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn allow_script_window(recent: &mut Vec<std::time::Instant>, now: std::time::Instant) -> bool {
+    recent.retain(|opened| now.duration_since(*opened) < SCRIPT_WINDOW_INTERVAL);
+    if !recent.is_empty() {
+        return false;
+    }
+    recent.push(now);
+    true
+}
+
+/// Tells the user pop-ups were stopped, in the address bar like other browsers.
+fn show_popup_blocked(mgr: &Rc<RefCell<TabManagerInner>>) {
+    let url_entry = { mgr.borrow().url_entry.clone() };
+    url_entry.set_icon_from_icon_name(
+        gtk::EntryIconPosition::Secondary,
+        Some("action-unavailable-symbolic"),
+    );
+    url_entry.set_icon_tooltip_text(
+        gtk::EntryIconPosition::Secondary,
+        Some("This page tried to open several pop-up windows at once; extra ones were blocked"),
+    );
+}
+
+fn clear_popup_blocked(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32) {
+    let url_entry = {
+        let inner = mgr.borrow();
+        if inner.selected != Some(tab_id) {
+            return;
+        }
+        inner.url_entry.clone()
+    };
+    url_entry.set_icon_from_icon_name(gtk::EntryIconPosition::Secondary, None);
 }
 
 /// The window title follows the selected page so task switchers can tell
@@ -2358,6 +2426,25 @@ mod tests {
                 "{keyval:?} {mods:?}"
             );
         }
+    }
+
+    #[test]
+    fn page_scripts_get_one_new_window_per_second() {
+        use super::allow_script_window;
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let mut recent = Vec::new();
+        assert!(allow_script_window(&mut recent, start));
+        for burst in 1..10 {
+            assert!(!allow_script_window(
+                &mut recent,
+                start + Duration::from_millis(burst)
+            ));
+        }
+        assert!(allow_script_window(
+            &mut recent,
+            start + Duration::from_millis(1100)
+        ));
     }
 
     #[test]

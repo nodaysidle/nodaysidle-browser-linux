@@ -52,8 +52,9 @@ fn handle_request(view: &WebView, request: &PermissionRequest) -> bool {
     };
 
     // WebKitGTK 4.1 does not say which frame asked (WebKitPermissionRequest
-    // carries no origin), so the prompt names the page's origin and says that
-    // an embedded frame may be the requester.
+    // carries no origin). WebKit enforces Permissions Policy, so a cross-origin
+    // frame can only ask when the page delegated it with `allow=` (checked in
+    // the app); the prompt therefore names the page's origin.
     let origin = view
         .uri()
         .map(|uri| permission_origin(&uri))
@@ -81,30 +82,33 @@ fn handle_request(view: &WebView, request: &PermissionRequest) -> bool {
     label.set_margin_bottom(16);
     label.set_margin_start(16);
     label.set_margin_end(16);
-    dialog.content_area().pack_start(&label, true, true, 0);
+    dialog.content_area().pack_start(&label, false, false, 0);
+    // Answered from the response signal, not a nested `dialog.run()` loop:
+    // that loop kept the browser from quitting (Ctrl+Q, SIGTERM) while a
+    // prompt was open. The request stays alive in the closure until answered;
+    // WebKit denies it if the dialog goes away unanswered.
+    let request = request.clone();
+    let view = view.downgrade();
+    dialog.connect_response(move |dialog, response| {
+        dialog.close();
+        let still_valid = view
+            .upgrade()
+            .and_then(|view| view.uri())
+            .is_some_and(|uri| permission_origin(&uri) == origin);
+        if !still_valid {
+            request.deny();
+        } else if permission_response_remembers_denial(response) {
+            DECISIONS.with(|decisions| {
+                decisions.borrow_mut().remember_denial(&origin, permission);
+            });
+            request.deny();
+        } else if permission_response_allows(response) {
+            request.allow();
+        } else {
+            request.deny();
+        }
+    });
     dialog.show_all();
-    let response = dialog.run();
-    dialog.close();
-
-    let allowed = permission_response_allows(response);
-    let still_valid = view
-        .uri()
-        .map(|uri| permission_origin(&uri) == origin)
-        .unwrap_or(false);
-    if !still_valid {
-        request.deny();
-        return true;
-    }
-    if permission_response_remembers_denial(response) {
-        DECISIONS.with(|decisions| {
-            decisions.borrow_mut().remember_denial(&origin, permission);
-        });
-        request.deny();
-    } else if allowed {
-        request.allow();
-    } else {
-        request.deny();
-    }
     true
 }
 
@@ -139,7 +143,9 @@ fn permission_name(request: &PermissionRequest) -> Option<&'static str> {
 
 fn prompt_text(origin: &str, permission: &str) -> String {
     format!(
-        "{origin} (or a site embedded in it) requests {permission}. Allow this request?\n\n\
+        "{origin} requests {permission}. Allow this request?\n\n\
+         The request may come from a site embedded in this page: embedded sites can only ask \
+         when {origin} lets them, so your answer applies to {origin} and the sites it chose.\n\n\
          Each Allow applies only to this request. Deny, or closing this dialog, is remembered \
          for {origin} until you clear site permissions or close the browser."
     )
@@ -170,8 +176,8 @@ mod tests {
     #[test]
     fn the_prompt_says_an_embedded_frame_may_be_asking() {
         let text = prompt_text("https://example.com", "your camera");
-        assert!(text
-            .starts_with("https://example.com (or a site embedded in it) requests your camera."));
+        assert!(text.starts_with("https://example.com requests your camera."));
+        assert!(text.contains("embedded sites can only ask when https://example.com lets them"));
         assert!(text.contains("Each Allow applies only to this request"));
     }
 
