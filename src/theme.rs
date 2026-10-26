@@ -227,6 +227,29 @@ window.browser-window.tiled .browser-frame {
   box-shadow: 0 0 0 1px alpha(@accent, 0.55);
 }
 
+/* Page assistant side panel. */
+.assistant-panel {
+  background-color: @chrome;
+  border-left: 1px solid @line;
+  padding: 10px 12px;
+}
+
+.assistant-title {
+  color: @text_strong;
+  font-weight: 600;
+}
+
+.assistant-notice {
+  color: @muted;
+  font-size: 12px;
+}
+
+.assistant-output,
+.assistant-output text {
+  background-color: @chrome;
+  color: @text;
+}
+
 .find-bar {
   padding: 4px 8px;
   min-width: 0;

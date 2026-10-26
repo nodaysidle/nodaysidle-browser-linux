@@ -36,6 +36,7 @@ pub struct TabChrome {
     pub reload_btn: Button,
     pub home_btn: Button,
     pub find_bar: FindBar,
+    pub assistant: crate::assistant::AssistantPanel,
 }
 
 #[cfg(test)]
@@ -119,6 +120,7 @@ pub(crate) struct TabManagerInner {
     pub(crate) menu_btn: Option<gtk::MenuButton>,
     /// When page scripts last opened windows, to stop pop-up floods.
     pub(crate) script_window_times: Vec<std::time::Instant>,
+    pub(crate) assistant: crate::assistant::AssistantPanel,
 }
 
 impl TabManager {
@@ -157,6 +159,7 @@ impl TabManager {
             history_btn: None,
             menu_btn: None,
             script_window_times: Vec::new(),
+            assistant: chrome.assistant,
         };
         wire_tab_reveal(&inner.tab_scroll, &inner.tab_strip, &inner.reveal);
         Self {
@@ -303,6 +306,7 @@ impl TabManager {
         });
 
         wire_find_bar(&self.inner);
+        crate::assistant::wire(&self.inner);
     }
 
     pub fn wire_keyboard(&self, window: &gtk::ApplicationWindow) {
@@ -1123,6 +1127,15 @@ impl TabManager {
                 separator_before: false,
             },
             MenuItemSpec {
+                label: "Ask About This Page",
+                accel: Some((
+                    gdk::keys::constants::a,
+                    gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
+                )),
+                action: AppMenuAction::Shortcut(Shortcut::Assistant),
+                separator_before: false,
+            },
+            MenuItemSpec {
                 label: "History",
                 accel: Some((gdk::keys::constants::h, gdk::ModifierType::CONTROL_MASK)),
                 action: AppMenuAction::Shortcut(Shortcut::History),
@@ -1719,6 +1732,7 @@ pub(crate) enum Shortcut {
     History,
     ShowShortcuts,
     OpenMenu,
+    Assistant,
 }
 
 const MAX_CLOSED_TABS: usize = 20;
@@ -1837,6 +1851,8 @@ pub(crate) fn shortcut_for(keyval: &gdk::keys::Key, state: gdk::ModifierType) ->
         Shortcut::History
     } else if (ctrl || ctrl_shift) && keyval == key::question {
         Shortcut::ShowShortcuts
+    } else if ctrl_shift && keyval == key::a {
+        Shortcut::Assistant
     } else if none && keyval == key::F10 {
         Shortcut::OpenMenu
     } else if ctrl && keyval == key::t {
@@ -1966,6 +1982,7 @@ fn run_shortcut(mgr: &Rc<RefCell<TabManagerInner>>, shortcut: Shortcut) {
                 button.emit_clicked();
             }
         }
+        Shortcut::Assistant => crate::assistant::toggle(mgr),
         Shortcut::OpenMenu => {
             let menu_btn = { mgr.borrow().menu_btn.clone() };
             if let Some(menu_btn) = menu_btn {
@@ -2295,7 +2312,11 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     let stack = Stack::new();
     stack.style_context().add_class("void");
     stack.set_vexpand(true);
-    root.pack_start(&stack, true, true, 0);
+    let assistant = crate::assistant::build_panel();
+    let page_row = GtkBox::new(Orientation::Horizontal, 0);
+    page_row.pack_start(&stack, true, true, 0);
+    page_row.pack_end(&assistant.revealer, false, false, 0);
+    root.pack_start(&page_row, true, true, 0);
 
     let chrome = TabChrome {
         stack,
@@ -2311,6 +2332,7 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
         reload_btn,
         home_btn,
         find_bar,
+        assistant,
     };
 
     (chrome, new_tab_btn)
@@ -2472,6 +2494,7 @@ mod tests {
                 Shortcut::ShowShortcuts,
             ),
             (key::F10, M::empty(), Shortcut::OpenMenu),
+            (key::A, M::CONTROL_MASK | M::SHIFT_MASK, Shortcut::Assistant),
         ];
         for (keyval, mods, expected) in cases {
             assert_eq!(

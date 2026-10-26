@@ -1,3 +1,4 @@
+mod assistant;
 mod downloads;
 mod error_page;
 mod find;

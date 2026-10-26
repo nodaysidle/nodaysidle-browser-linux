@@ -40,6 +40,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ("<Primary>minus", "Zoom out"),
             ("<Primary>0", "Reset zoom"),
             ("<Primary>p", "Print"),
+            ("<Primary><Shift>a", "Ask about this page"),
             ("F11", "Full screen"),
             ("<Primary>question", "Keyboard shortcuts"),
             ("F10", "Main menu"),
