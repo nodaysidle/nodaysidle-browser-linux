@@ -115,10 +115,16 @@ pub(crate) fn build_panel() -> AssistantPanel {
         table.add(&you);
         table.add(&gtk::TextTag::new(Some("error")));
     }
+
     let scroll = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_vexpand(true);
     scroll.add(&output);
+    // GTK measures wrapped lines lazily, so follow the content height as it
+    // grows instead of scrolling once per append (that left the last line cut).
+    scroll.vadjustment().connect_changed(|adjustment| {
+        adjustment.set_value(adjustment.upper() - adjustment.page_size())
+    });
 
     let status = gtk::Label::new(None);
     status.style_context().add_class("assistant-notice");
@@ -262,8 +268,6 @@ fn append(panel: &AssistantPanel, text: &str, tag: Option<&str>) {
     if let Some(tag) = tag {
         buffer.apply_tag_by_name(tag, &buffer.iter_at_offset(start), &buffer.end_iter());
     }
-    let mut end = buffer.end_iter();
-    panel.output.scroll_to_iter(&mut end, 0.0, false, 0.0, 1.0);
 }
 
 fn start(panel: &AssistantPanel, status: &str) -> u64 {
