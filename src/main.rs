@@ -42,6 +42,14 @@ type SharedProfileSlot = Rc<RefCell<Option<Rc<SharedProfile>>>>;
 type WindowList = Rc<RefCell<Vec<TabManager>>>;
 
 fn main() -> glib::ExitCode {
+    #[cfg(target_os = "linux")]
+    {
+        // Disable DMA-BUF renderer by default to prevent Mesa/GBM teardown segfault on Intel/Wayland
+        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+
     // GTK 3 uses the program name as the Wayland app_id and as X11's WM_CLASS
     // instance, and the program class as the WM_CLASS class. Set both to the
     // application ID so the window, com.nodaysidle.Browser.desktop and its
