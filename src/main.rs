@@ -271,6 +271,7 @@ fn ensure_profile(app: &Application, shared: &SharedProfileSlot) -> Option<Rc<Sh
         );
         return None;
     };
+    theme::load_preference(&data_dir);
     let web_context = match persistent_web_context(&data_dir) {
         Ok(ctx) => ctx,
         Err(err) => {

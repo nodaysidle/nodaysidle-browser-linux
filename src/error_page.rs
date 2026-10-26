@@ -93,21 +93,31 @@ fn page(heading: &str, uri: &str, details: &[&str], button: &str) -> String {
             )
         })
         .unwrap_or_default();
+    // Same colours as the browser chrome's active palette (theme.rs).
+    let (scheme, bg, text, muted, surface, border, accent) = if crate::theme::is_dark() {
+        (
+            "dark", "#151518", "#e8e8ec", "#949499", "#202022", "#6a6a70", "#75aaff",
+        )
+    } else {
+        (
+            "light", "#f3efe6", "#2b2925", "#5e594f", "#f8f5ee", "#8a8376", "#2c5aa0",
+        )
+    };
     format!(
         r#"<!doctype html>
 <html><head><meta charset="utf-8"><title>{heading}</title>
 <style>
-:root {{ color-scheme: dark; }}
+:root {{ color-scheme: {scheme}; }}
 body {{ margin: 0; min-height: 100vh; display: flex; align-items: center;
-  justify-content: center; background: #151518; color: #e8e8ec;
+  justify-content: center; background: {bg}; color: {text};
   font: 15px system-ui, sans-serif; }}
 main {{ max-width: 560px; padding: 32px; }}
 h1 {{ font-size: 20px; font-weight: 600; margin: 0 0 12px; }}
-p {{ color: #949499; margin: 6px 0; overflow-wrap: anywhere; }}
-button {{ margin-top: 20px; background: #202022; color: #e8e8ec;
-  border: 1px solid #6a6a70; border-radius: 999px;
+p {{ color: {muted}; margin: 6px 0; overflow-wrap: anywhere; }}
+button {{ margin-top: 20px; background: {surface}; color: {text};
+  border: 1px solid {border}; border-radius: 999px;
   padding: 8px 20px; font: inherit; cursor: pointer; }}
-button:hover, button:focus {{ border-color: #75aaff; outline: none; }}
+button:hover, button:focus {{ border-color: {accent}; outline: none; }}
 </style></head>
 <body><main><h1>{heading}</h1>{details}
 {button}</main></body></html>"#,
@@ -137,7 +147,9 @@ mod tests {
         assert!(!html.contains("<b>"));
         assert!(html.contains("Could not connect: refused"));
         assert!(html.contains("location.replace(&quot;https://x.test/?q=%3Cb%3E&quot;)"));
-        assert!(html.contains("background: #151518"));
+        // Tests run without GTK, so the theme is the default light (Paper) one.
+        assert!(html.contains("color-scheme: light"));
+        assert!(html.contains("background: #f3efe6"));
 
         let crashed = web_process_ended_html("https://example.com/", false);
         assert!(crashed.contains("crashed"));

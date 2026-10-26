@@ -42,6 +42,7 @@ const SHORTCUTS: &[(&str, &[(&str, &str)])] = &[
             ("<Primary>p", "Print"),
             ("F11", "Full screen"),
             ("<Primary>question", "Keyboard shortcuts"),
+            ("F10", "Main menu"),
         ],
     ),
 ];

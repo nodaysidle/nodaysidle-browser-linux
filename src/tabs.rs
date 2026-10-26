@@ -115,6 +115,8 @@ pub(crate) struct TabManagerInner {
     pub(crate) closed_tabs: Vec<String>,
     /// Set by `history_ui` so Ctrl+H can open the history popover.
     pub(crate) history_btn: Option<Button>,
+    /// The main menu button, opened by F10.
+    pub(crate) menu_btn: Option<gtk::MenuButton>,
     /// When page scripts last opened windows, to stop pop-up floods.
     pub(crate) script_window_times: Vec<std::time::Instant>,
 }
@@ -153,6 +155,7 @@ impl TabManager {
             new_window: Rc::new(RefCell::new(None)),
             closed_tabs: Vec::new(),
             history_btn: None,
+            menu_btn: None,
             script_window_times: Vec::new(),
         };
         wire_tab_reveal(&inner.tab_scroll, &inner.tab_strip, &inner.reveal);
@@ -1144,6 +1147,12 @@ impl TabManager {
                 separator_before: true,
             },
             MenuItemSpec {
+                label: "Theme",
+                accel: None,
+                action: AppMenuAction::Theme,
+                separator_before: false,
+            },
+            MenuItemSpec {
                 label: "Keyboard Shortcuts",
                 accel: Some((
                     gdk::keys::constants::question,
@@ -1170,6 +1179,11 @@ impl TabManager {
                 menu.append(&gtk::SeparatorMenuItem::new());
             }
             let menu_item = gtk::MenuItem::with_label(item.label);
+            if matches!(item.action, AppMenuAction::Theme) {
+                menu_item.set_submenu(Some(&theme_menu()));
+                menu.append(&menu_item);
+                continue;
+            }
             if let (Some((key, mods)), Some(accel_label)) = (
                 item.accel,
                 menu_item
@@ -1188,6 +1202,7 @@ impl TabManager {
                     let window = { mgr.borrow().window.clone() };
                     crate::privacy::show_clear_data_dialog(&window, history.clone(), &web_context);
                 }
+                AppMenuAction::Theme => {}
                 AppMenuAction::About => {
                     let window = { mgr.borrow().window.clone() };
                     show_about_dialog(&window);
@@ -1201,6 +1216,7 @@ impl TabManager {
         let toolbar = { self.inner.borrow().toolbar.clone() };
         toolbar.pack_end(&menu_btn, false, false, 0);
         menu_btn.show_all();
+        self.inner.borrow_mut().menu_btn = Some(menu_btn);
     }
 
     pub fn wire_history(&self, history: Rc<RefCell<HistoryStore>>) {
@@ -1262,7 +1278,35 @@ struct MenuItemSpec {
 enum AppMenuAction {
     Shortcut(Shortcut),
     ClearData,
+    Theme,
     About,
+}
+
+/// Match system / Dark / Paper, as radio items that show the current choice.
+fn theme_menu() -> gtk::Menu {
+    use crate::theme::ThemeChoice;
+    let menu = gtk::Menu::new();
+    let mut group: Option<gtk::RadioMenuItem> = None;
+    for (label, choice) in [
+        ("Match System", ThemeChoice::System),
+        ("Dark", ThemeChoice::Dark),
+        ("Paper", ThemeChoice::Paper),
+    ] {
+        let item = match &group {
+            Some(first) => gtk::RadioMenuItem::with_label_from_widget(first, Some(label)),
+            None => gtk::RadioMenuItem::with_label(label),
+        };
+        item.set_active(crate::theme::current_choice() == choice);
+        item.connect_toggled(move |item| {
+            if item.is_active() {
+                crate::theme::choose(choice);
+            }
+        });
+        menu.append(&item);
+        group.get_or_insert(item);
+    }
+    menu.show_all();
+    menu
 }
 
 fn wire_tab_accessibility(focus: &ListBoxRow, close: &Button, title: &str, selected: bool) {
@@ -1674,6 +1718,7 @@ pub(crate) enum Shortcut {
     Print,
     History,
     ShowShortcuts,
+    OpenMenu,
 }
 
 const MAX_CLOSED_TABS: usize = 20;
@@ -1792,6 +1837,8 @@ pub(crate) fn shortcut_for(keyval: &gdk::keys::Key, state: gdk::ModifierType) ->
         Shortcut::History
     } else if (ctrl || ctrl_shift) && keyval == key::question {
         Shortcut::ShowShortcuts
+    } else if none && keyval == key::F10 {
+        Shortcut::OpenMenu
     } else if ctrl && keyval == key::t {
         Shortcut::NewTab
     } else if ctrl && keyval == key::n {
@@ -1917,6 +1964,12 @@ fn run_shortcut(mgr: &Rc<RefCell<TabManagerInner>>, shortcut: Shortcut) {
             let button = { mgr.borrow().history_btn.clone() };
             if let Some(button) = button {
                 button.emit_clicked();
+            }
+        }
+        Shortcut::OpenMenu => {
+            let menu_btn = { mgr.borrow().menu_btn.clone() };
+            if let Some(menu_btn) = menu_btn {
+                menu_btn.set_active(true);
             }
         }
         Shortcut::ShowShortcuts => {
@@ -2418,6 +2471,7 @@ mod tests {
                 M::CONTROL_MASK | M::SHIFT_MASK,
                 Shortcut::ShowShortcuts,
             ),
+            (key::F10, M::empty(), Shortcut::OpenMenu),
         ];
         for (keyval, mods, expected) in cases {
             assert_eq!(
@@ -2825,6 +2879,7 @@ mod gtk_tests {
             );
             return;
         }
+        crate::theme::verify_live_theme_switching();
         crate::privacy::verify_clear_data_feedback();
         verify_native_tab_selection_and_popup_address();
         let history_entry = crate::history::HistoryEntry {
