@@ -36,6 +36,7 @@ pub struct TabChrome {
     pub reload_btn: Button,
     pub home_btn: Button,
     pub find_bar: FindBar,
+    pub assistant: crate::assistant::AssistantPanel,
 }
 
 #[cfg(test)]
@@ -111,6 +112,15 @@ pub(crate) struct TabManagerInner {
     /// `WebContext` and `HistoryStore` (Ctrl+N, menu, `--new-window`).
     /// Injected by `main` so the tab module does not own profile wiring.
     pub(crate) new_window: NewWindowHandler,
+    /// Pages of recently closed tabs, newest last, for Ctrl+Shift+T.
+    pub(crate) closed_tabs: Vec<String>,
+    /// Set by `history_ui` so Ctrl+H can open the history popover.
+    pub(crate) history_btn: Option<Button>,
+    /// The main menu button, opened by F10.
+    pub(crate) menu_btn: Option<gtk::MenuButton>,
+    /// When page scripts last opened windows, to stop pop-up floods.
+    pub(crate) script_window_times: Vec<std::time::Instant>,
+    pub(crate) assistant: crate::assistant::AssistantPanel,
 }
 
 impl TabManager {
@@ -145,6 +155,11 @@ impl TabManager {
             user_fullscreen: false,
             reveal: Rc::new(RefCell::new(None)),
             new_window: Rc::new(RefCell::new(None)),
+            closed_tabs: Vec::new(),
+            history_btn: None,
+            menu_btn: None,
+            script_window_times: Vec::new(),
+            assistant: chrome.assistant,
         };
         wire_tab_reveal(&inner.tab_scroll, &inner.tab_strip, &inner.reveal);
         Self {
@@ -248,6 +263,38 @@ impl TabManager {
                 TabManager::navigate_selected(&mgr, address_activation_uri(&text, current_uri.as_deref()));
             }));
 
+        // Esc in the address bar drops the edit and hands focus back to the page.
+        let mgr_esc = self.inner.clone();
+        self.inner
+            .borrow()
+            .url_entry
+            .connect_key_press_event(move |entry, event| {
+                if event.keyval() != gdk::keys::constants::Escape {
+                    return glib::Propagation::Proceed;
+                }
+                let (view, home_search) = {
+                    let inner = mgr_esc.borrow();
+                    (
+                        inner.selected_webview(),
+                        inner.selected_tab().map(|tab| tab.home_search.clone()),
+                    )
+                };
+                match view {
+                    Some(view) => {
+                        let uri = view.uri().unwrap_or_default();
+                        entry.set_text(&crate::navigation::format_url_for_display(&uri));
+                        view.grab_focus();
+                    }
+                    None => {
+                        entry.set_text("");
+                        if let Some(home_search) = home_search {
+                            home_search.grab_focus();
+                        }
+                    }
+                }
+                glib::Propagation::Stop
+            });
+
         self.inner.borrow().url_entry.connect_changed(|entry| {
             if entry.is_focus() {
                 entry.set_icon_from_icon_name(gtk::EntryIconPosition::Primary, None);
@@ -259,6 +306,7 @@ impl TabManager {
         });
 
         wire_find_bar(&self.inner);
+        crate::assistant::wire(&self.inner);
     }
 
     pub fn wire_keyboard(&self, window: &gtk::ApplicationWindow) {
@@ -374,6 +422,10 @@ impl TabManager {
                 // Keep native row handling from moving focus back out of the page.
                 return glib::Propagation::Stop;
             }
+            if event.button() == 2 {
+                TabManager::close_tab(&mgr_click, tab_id);
+                return glib::Propagation::Stop;
+            }
             glib::Propagation::Proceed
         });
 
@@ -382,6 +434,17 @@ impl TabManager {
             let key = event.keyval();
             if key == gdk::keys::constants::Return || key == gdk::keys::constants::space {
                 TabManager::select_tab_id(&mgr_key, tab_id);
+                glib::Propagation::Stop
+            } else if key == gdk::keys::constants::Left || key == gdk::keys::constants::Right {
+                cycle_selected_tab(&mgr_key, key == gdk::keys::constants::Left);
+                // Selecting moves focus into the page; keep it on the strip.
+                let focus = {
+                    let inner = mgr_key.borrow();
+                    inner.selected_tab().map(|tab| tab.tab_focus.clone())
+                };
+                if let Some(focus) = focus {
+                    focus.grab_focus();
+                }
                 glib::Propagation::Stop
             } else {
                 glib::Propagation::Proceed
@@ -548,17 +611,34 @@ impl TabManager {
                 return;
             }
             show_web_surface(&mgr_uri, tab_id);
+            clear_popup_blocked(&mgr_uri, tab_id);
             let title = title_for_page(view.title().as_deref(), &uri);
             sync_view_chrome(&mgr_uri, tab_id, view, &title, &uri);
             sync_page_status(&mgr_uri, tab_id, view);
         });
 
-        for property in ["estimated-load-progress", "is-loading"] {
-            let mgr_progress = mgr.clone();
-            webview.connect_notify_local(Some(property), move |view, _| {
-                sync_page_status(&mgr_progress, tab_id, view);
-            });
-        }
+        let mgr_loading = mgr.clone();
+        webview.connect_notify_local(Some("is-loading"), move |view, _| {
+            sync_page_status(&mgr_loading, tab_id, view);
+        });
+        // Progress ticks many times per load: only the bar changes, so skip
+        // the icon, tooltip and style updates that `sync_page_status` does.
+        let mgr_progress = mgr.clone();
+        webview.connect_notify_local(Some("estimated-load-progress"), move |view, _| {
+            let url_entry = {
+                let Ok(inner) = mgr_progress.try_borrow() else {
+                    return;
+                };
+                if inner.selected != Some(tab_id) {
+                    return;
+                }
+                inner.url_entry.clone()
+            };
+            url_entry.set_progress_fraction(progress_fraction(
+                view.is_loading(),
+                view.estimated_load_progress(),
+            ));
+        });
 
         let mgr_title = mgr.clone();
         webview.connect_notify_local(Some("title"), move |view, _| {
@@ -608,7 +688,7 @@ impl TabManager {
 
         let mgr_create = mgr.clone();
         webview.connect_create(move |parent, action| {
-            Some(TabManager::create_related_view(&mgr_create, parent, action).upcast())
+            TabManager::create_related_view(&mgr_create, parent, action).map(|view| view.upcast())
         });
 
         let mgr_close = mgr.clone();
@@ -642,7 +722,34 @@ impl TabManager {
         mgr: &Rc<RefCell<TabManagerInner>>,
         parent: &WebView,
         action: &webkit2gtk::NavigationAction,
-    ) -> WebView {
+    ) -> Option<WebView> {
+        let link_uri = (action.navigation_type() == webkit2gtk::NavigationType::LinkClicked)
+            .then(|| {
+                action
+                    .request()
+                    .and_then(|request| webkit2gtk::URIRequestExt::uri(&request))
+            })
+            .flatten()
+            .map(|uri| uri.to_string())
+            .filter(|uri| !uri.is_empty());
+        if let Some(uri) = link_uri {
+            // A link that opens a new window becomes an ordinary tab with no
+            // tie to the page that opened it, so it can never reach
+            // `window.opener` (reverse tabnabbing), whatever WebKit's default.
+            let mgr = mgr.clone();
+            glib::idle_add_local_once(move || {
+                TabManager::open_tab(&mgr, TabOpen::Url(uri), true);
+            });
+            return None;
+        }
+        let allowed = {
+            let mut inner = mgr.borrow_mut();
+            allow_script_window(&mut inner.script_window_times, std::time::Instant::now())
+        };
+        if !allowed {
+            show_popup_blocked(mgr);
+            return None;
+        }
         let view = WebView::with_related_view(parent);
         configure_view(&view);
         let link_clicked = action.navigation_type() == webkit2gtk::NavigationType::LinkClicked;
@@ -678,7 +785,7 @@ impl TabManager {
                 }
             }
         });
-        view
+        Some(view)
     }
 
     fn navigate_tab(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32, raw: &str) {
@@ -851,10 +958,12 @@ impl TabManager {
                 title_label.set_text("New Tab");
                 pill.set_tooltip_text(Some("New Tab"));
                 apply_page_status(&url_entry, &reload_btn, None);
+                set_window_title(mgr, None);
                 home_search.grab_focus();
             } else if let Some(view) = webview {
                 page_stack.set_visible_child_name("web");
                 let uri = view.uri().unwrap_or_default();
+                set_window_title(mgr, Some(&title_for_page(view.title().as_deref(), &uri)));
                 url_entry.set_text(&crate::navigation::format_url_for_display(&uri));
                 apply_page_status(&url_entry, &reload_btn, Some(&view));
                 view.grab_focus();
@@ -915,6 +1024,14 @@ impl TabManager {
                 return;
             };
             let tab = inner.tabs.remove(idx);
+            if let Some(uri) = tab.webview.as_ref().and_then(|view| view.uri()) {
+                if !uri.is_empty() && !is_home_marker(&uri) {
+                    if inner.closed_tabs.len() == MAX_CLOSED_TABS {
+                        inner.closed_tabs.remove(0);
+                    }
+                    inner.closed_tabs.push(uri.to_string());
+                }
+            }
             let was_selected = inner.selected == Some(id);
             let remaining_ids = inner.tabs.iter().map(|tab| tab.id).collect::<Vec<_>>();
             let selected_after = selection_after_close(&remaining_ids, inner.selected, id, idx);
@@ -1010,6 +1127,27 @@ impl TabManager {
                 separator_before: false,
             },
             MenuItemSpec {
+                label: "Ask About This Page",
+                accel: Some((
+                    gdk::keys::constants::a,
+                    gdk::ModifierType::CONTROL_MASK | gdk::ModifierType::SHIFT_MASK,
+                )),
+                action: AppMenuAction::Shortcut(Shortcut::Assistant),
+                separator_before: false,
+            },
+            MenuItemSpec {
+                label: "History",
+                accel: Some((gdk::keys::constants::h, gdk::ModifierType::CONTROL_MASK)),
+                action: AppMenuAction::Shortcut(Shortcut::History),
+                separator_before: false,
+            },
+            MenuItemSpec {
+                label: "Print…",
+                accel: Some((gdk::keys::constants::p, gdk::ModifierType::CONTROL_MASK)),
+                action: AppMenuAction::Shortcut(Shortcut::Print),
+                separator_before: false,
+            },
+            MenuItemSpec {
                 label: "Full Screen",
                 accel: Some((gdk::keys::constants::F11, gdk::ModifierType::empty())),
                 action: AppMenuAction::Shortcut(Shortcut::ToggleFullscreen),
@@ -1022,9 +1160,30 @@ impl TabManager {
                 separator_before: true,
             },
             MenuItemSpec {
+                label: "Theme",
+                accel: None,
+                action: AppMenuAction::Theme,
+                separator_before: false,
+            },
+            MenuItemSpec {
+                label: "Keyboard Shortcuts",
+                accel: Some((
+                    gdk::keys::constants::question,
+                    gdk::ModifierType::CONTROL_MASK,
+                )),
+                action: AppMenuAction::Shortcut(Shortcut::ShowShortcuts),
+                separator_before: true,
+            },
+            MenuItemSpec {
                 label: "About nodaysidle",
                 accel: None,
                 action: AppMenuAction::About,
+                separator_before: false,
+            },
+            MenuItemSpec {
+                label: "Quit",
+                accel: Some((gdk::keys::constants::q, gdk::ModifierType::CONTROL_MASK)),
+                action: AppMenuAction::Shortcut(Shortcut::Quit),
                 separator_before: true,
             },
         ];
@@ -1033,6 +1192,11 @@ impl TabManager {
                 menu.append(&gtk::SeparatorMenuItem::new());
             }
             let menu_item = gtk::MenuItem::with_label(item.label);
+            if matches!(item.action, AppMenuAction::Theme) {
+                menu_item.set_submenu(Some(&theme_menu()));
+                menu.append(&menu_item);
+                continue;
+            }
             if let (Some((key, mods)), Some(accel_label)) = (
                 item.accel,
                 menu_item
@@ -1051,6 +1215,7 @@ impl TabManager {
                     let window = { mgr.borrow().window.clone() };
                     crate::privacy::show_clear_data_dialog(&window, history.clone(), &web_context);
                 }
+                AppMenuAction::Theme => {}
                 AppMenuAction::About => {
                     let window = { mgr.borrow().window.clone() };
                     show_about_dialog(&window);
@@ -1064,6 +1229,7 @@ impl TabManager {
         let toolbar = { self.inner.borrow().toolbar.clone() };
         toolbar.pack_end(&menu_btn, false, false, 0);
         menu_btn.show_all();
+        self.inner.borrow_mut().menu_btn = Some(menu_btn);
     }
 
     pub fn wire_history(&self, history: Rc<RefCell<HistoryStore>>) {
@@ -1125,10 +1291,41 @@ struct MenuItemSpec {
 enum AppMenuAction {
     Shortcut(Shortcut),
     ClearData,
+    Theme,
     About,
 }
 
+/// Match system / Dark / Paper, as radio items that show the current choice.
+fn theme_menu() -> gtk::Menu {
+    use crate::theme::ThemeChoice;
+    let menu = gtk::Menu::new();
+    let mut group: Option<gtk::RadioMenuItem> = None;
+    for (label, choice) in [
+        ("Match System", ThemeChoice::System),
+        ("Dark", ThemeChoice::Dark),
+        ("Paper", ThemeChoice::Paper),
+    ] {
+        let item = match &group {
+            Some(first) => gtk::RadioMenuItem::with_label_from_widget(first, Some(label)),
+            None => gtk::RadioMenuItem::with_label(label),
+        };
+        item.set_active(crate::theme::current_choice() == choice);
+        item.connect_toggled(move |item| {
+            if item.is_active() {
+                crate::theme::choose(choice);
+            }
+        });
+        menu.append(&item);
+        group.get_or_insert(item);
+    }
+    menu.show_all();
+    menu
+}
+
 fn wire_tab_accessibility(focus: &ListBoxRow, close: &Button, title: &str, selected: bool) {
+    // Only the selected tab is a Tab stop; Left/Right move between tabs, so
+    // keyboard users do not tab through every open tab to reach the page.
+    focus.set_can_focus(selected);
     if let Some(accessible) = focus.accessible() {
         accessible.set_role(atk::Role::PageTab);
         accessible.set_name(title);
@@ -1303,6 +1500,7 @@ fn sync_view_chrome(
     if !selected {
         return;
     }
+    set_window_title(mgr, Some(title));
 
     if let Some(uri) = url_bar_sync_value(url_entry.is_focus(), uri) {
         url_entry.set_text(&crate::navigation::format_url_for_display(uri));
@@ -1310,6 +1508,50 @@ fn sync_view_chrome(
     back_btn.set_sensitive(view.can_go_back());
     forward_btn.set_sensitive(view.can_go_forward());
     reload_btn.set_sensitive(true);
+}
+
+/// Page scripts may open one window per second: enough for a sign-in pop-up
+/// per click, while a loop of `window.open` calls gets one window, not ten.
+const SCRIPT_WINDOW_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
+
+fn allow_script_window(recent: &mut Vec<std::time::Instant>, now: std::time::Instant) -> bool {
+    recent.retain(|opened| now.duration_since(*opened) < SCRIPT_WINDOW_INTERVAL);
+    if !recent.is_empty() {
+        return false;
+    }
+    recent.push(now);
+    true
+}
+
+/// Tells the user pop-ups were stopped, in the address bar like other browsers.
+fn show_popup_blocked(mgr: &Rc<RefCell<TabManagerInner>>) {
+    let url_entry = { mgr.borrow().url_entry.clone() };
+    url_entry.set_icon_from_icon_name(
+        gtk::EntryIconPosition::Secondary,
+        Some("action-unavailable-symbolic"),
+    );
+    url_entry.set_icon_tooltip_text(
+        gtk::EntryIconPosition::Secondary,
+        Some("This page tried to open several pop-up windows at once; extra ones were blocked"),
+    );
+}
+
+fn clear_popup_blocked(mgr: &Rc<RefCell<TabManagerInner>>, tab_id: u32) {
+    let url_entry = {
+        let inner = mgr.borrow();
+        if inner.selected != Some(tab_id) {
+            return;
+        }
+        inner.url_entry.clone()
+    };
+    url_entry.set_icon_from_icon_name(gtk::EntryIconPosition::Secondary, None);
+}
+
+/// The window title follows the selected page so task switchers can tell
+/// windows apart; Home shows the app name.
+fn set_window_title(mgr: &Rc<RefCell<TabManagerInner>>, page_title: Option<&str>) {
+    let window = { mgr.borrow().window.clone() };
+    window.set_title(page_title.filter(|t| !t.is_empty()).unwrap_or("nodaysidle"));
 }
 
 /// Refreshes the address bar's connection indicator for `tab_id` if it is the
@@ -1476,8 +1718,43 @@ pub(crate) enum Shortcut {
     Find,
     ToggleFullscreen,
     Reload,
+    HardReload,
     Back,
     Forward,
+    Quit,
+    ReopenClosedTab,
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
+    FindNext,
+    FindPrevious,
+    Print,
+    History,
+    ShowShortcuts,
+    OpenMenu,
+    Assistant,
+}
+
+const MAX_CLOSED_TABS: usize = 20;
+/// Zoom stops, matching the steps users know from other browsers.
+const ZOOM_STEPS: [f64; 14] = [
+    0.3, 0.5, 0.67, 0.8, 0.9, 1.0, 1.1, 1.2, 1.33, 1.5, 1.7, 2.0, 2.4, 3.0,
+];
+
+/// Next zoom stop above (`zoom_in`) or below the current level.
+fn next_zoom(current: f64, zoom_in: bool) -> f64 {
+    if zoom_in {
+        ZOOM_STEPS
+            .into_iter()
+            .find(|step| *step > current + 0.001)
+            .unwrap_or(ZOOM_STEPS[ZOOM_STEPS.len() - 1])
+    } else {
+        ZOOM_STEPS
+            .into_iter()
+            .rev()
+            .find(|step| *step < current - 0.001)
+            .unwrap_or(ZOOM_STEPS[0])
+    }
 }
 
 fn apply_close_buttons(states: Vec<(Button, bool)>) {
@@ -1490,10 +1767,21 @@ fn apply_close_buttons(states: Vec<(Button, bool)>) {
 /// backoff delay so one error does not stop saving for the session (V-3).
 fn schedule_history_save(history: Rc<RefCell<HistoryStore>>, delay: std::time::Duration) {
     glib::timeout_add_local_once(delay, move || {
-        let retry = history.borrow_mut().flush_from_timer();
-        if let Some(delay) = retry {
-            schedule_history_save(history, delay);
-        }
+        let save = history.borrow_mut().begin_background_save();
+        let Some(save) = save else {
+            return;
+        };
+        // The write fsyncs, which can take long on a busy disk: keep it off
+        // the GTK thread and apply the result back here (P1).
+        let generation = save.generation();
+        let write = gio::spawn_blocking(move || save.write());
+        glib::MainContext::default().spawn_local(async move {
+            let ok = write.await.unwrap_or(false);
+            let retry = history.borrow_mut().finish_background_save(generation, ok);
+            if let Some(delay) = retry {
+                schedule_history_save(history, delay);
+            }
+        });
     });
 }
 
@@ -1539,7 +1827,35 @@ pub(crate) fn shortcut_for(keyval: &gdk::keys::Key, state: gdk::ModifierType) ->
             return Some(Shortcut::LastTab);
         }
     }
-    let shortcut = if ctrl && keyval == key::t {
+    let shortcut = if ctrl_shift && keyval == key::t {
+        Shortcut::ReopenClosedTab
+    } else if ctrl && keyval == key::q {
+        Shortcut::Quit
+    } else if (ctrl || ctrl_shift)
+        && (keyval == key::plus || keyval == key::equal || keyval == key::KP_Add)
+    {
+        Shortcut::ZoomIn
+    } else if ctrl && (keyval == key::minus || keyval == key::KP_Subtract) {
+        Shortcut::ZoomOut
+    } else if ctrl && (keyval == key::_0 || keyval == key::KP_0) {
+        Shortcut::ZoomReset
+    } else if (ctrl && keyval == key::g) || (none && keyval == key::F3) {
+        Shortcut::FindNext
+    } else if (ctrl_shift && keyval == key::g) || (mods == M::SHIFT_MASK && keyval == key::F3) {
+        Shortcut::FindPrevious
+    } else if (ctrl_shift && keyval == key::r) || (ctrl && keyval == key::F5) {
+        Shortcut::HardReload
+    } else if ctrl && keyval == key::p {
+        Shortcut::Print
+    } else if ctrl && keyval == key::h {
+        Shortcut::History
+    } else if (ctrl || ctrl_shift) && keyval == key::question {
+        Shortcut::ShowShortcuts
+    } else if ctrl_shift && keyval == key::a {
+        Shortcut::Assistant
+    } else if none && keyval == key::F10 {
+        Shortcut::OpenMenu
+    } else if ctrl && keyval == key::t {
         Shortcut::NewTab
     } else if ctrl && keyval == key::n {
         Shortcut::NewWindow
@@ -1607,8 +1923,75 @@ fn run_shortcut(mgr: &Rc<RefCell<TabManagerInner>>, shortcut: Shortcut) {
         Shortcut::Reload => {
             let view = { mgr.borrow().selected_webview() };
             if let Some(view) = view {
-                view.reload();
+                // Same as the toolbar button: Reload turns into Stop while loading.
+                if view.is_loading() {
+                    view.stop_loading();
+                } else {
+                    view.reload();
+                }
             }
+        }
+        Shortcut::HardReload => {
+            let view = { mgr.borrow().selected_webview() };
+            if let Some(view) = view {
+                view.reload_bypass_cache();
+            }
+        }
+        Shortcut::Quit => {
+            // close() goes through delete-event, so the active-download prompt still runs.
+            let window = { mgr.borrow().window.clone() };
+            window.close();
+        }
+        Shortcut::ReopenClosedTab => {
+            let uri = { mgr.borrow_mut().closed_tabs.pop() };
+            if let Some(uri) = uri {
+                TabManager::open_tab(mgr, TabOpen::Url(uri), true);
+            }
+        }
+        Shortcut::ZoomIn | Shortcut::ZoomOut | Shortcut::ZoomReset => {
+            let view = { mgr.borrow().selected_webview() };
+            if let Some(view) = view {
+                let level = match shortcut {
+                    Shortcut::ZoomReset => 1.0,
+                    _ => next_zoom(view.zoom_level(), shortcut == Shortcut::ZoomIn),
+                };
+                view.set_zoom_level(level);
+            }
+        }
+        Shortcut::FindNext | Shortcut::FindPrevious => {
+            let visible = { mgr.borrow().find_bar.bar.is_visible() };
+            if visible {
+                crate::find::find_step(mgr, shortcut == Shortcut::FindPrevious);
+            } else {
+                show_find_bar(mgr);
+            }
+        }
+        Shortcut::Print => {
+            let (view, window) = {
+                let inner = mgr.borrow();
+                (inner.selected_webview(), inner.window.clone())
+            };
+            if let Some(view) = view {
+                let print = webkit2gtk::PrintOperation::new(&view);
+                webkit2gtk::PrintOperationExt::run_dialog(&print, Some(&window));
+            }
+        }
+        Shortcut::History => {
+            let button = { mgr.borrow().history_btn.clone() };
+            if let Some(button) = button {
+                button.emit_clicked();
+            }
+        }
+        Shortcut::Assistant => crate::assistant::toggle(mgr),
+        Shortcut::OpenMenu => {
+            let menu_btn = { mgr.borrow().menu_btn.clone() };
+            if let Some(menu_btn) = menu_btn {
+                menu_btn.set_active(true);
+            }
+        }
+        Shortcut::ShowShortcuts => {
+            let window = { mgr.borrow().window.clone() };
+            crate::shortcuts::show_shortcuts_window(&window);
         }
         Shortcut::Back => {
             let view = { mgr.borrow().selected_tab_view() };
@@ -1897,7 +2280,7 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     let toolbar = GtkBox::new(Orientation::Horizontal, 6);
     toolbar.set_height_request(TOOLBAR_HEIGHT);
     toolbar.style_context().add_class("chrome");
-    toolbar.style_context().add_class("toolbar");
+    toolbar.style_context().add_class("browser-toolbar");
 
     let home_btn = icon_button("go-home-symbolic", "Home");
     let back_btn = icon_button("go-previous-symbolic", "Back");
@@ -1929,7 +2312,11 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     let stack = Stack::new();
     stack.style_context().add_class("void");
     stack.set_vexpand(true);
-    root.pack_start(&stack, true, true, 0);
+    let assistant = crate::assistant::build_panel();
+    let page_row = GtkBox::new(Orientation::Horizontal, 0);
+    page_row.pack_start(&stack, true, true, 0);
+    page_row.pack_end(&assistant.revealer, false, false, 0);
+    root.pack_start(&page_row, true, true, 0);
 
     let chrome = TabChrome {
         stack,
@@ -1945,6 +2332,7 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
         reload_btn,
         home_btn,
         find_bar,
+        assistant,
     };
 
     (chrome, new_tab_btn)
@@ -2067,10 +2455,83 @@ mod tests {
             shortcut_for(&key::F11, locks),
             Some(Shortcut::ToggleFullscreen)
         );
-        // Ctrl+Shift+T and plain letters are not ours.
-        assert_eq!(shortcut_for(&key::t, M::CONTROL_MASK | M::SHIFT_MASK), None);
+        // Shift changes Ctrl+T into reopen; plain letters are not ours.
+        assert_eq!(
+            shortcut_for(&key::T, M::CONTROL_MASK | M::SHIFT_MASK | locks),
+            Some(Shortcut::ReopenClosedTab)
+        );
         assert_eq!(shortcut_for(&key::t, M::empty()), None);
         assert_eq!(shortcut_for(&key::n, M::empty()), None);
+    }
+
+    #[test]
+    fn common_browser_shortcuts_are_bound() {
+        let cases = [
+            (key::q, M::CONTROL_MASK, Shortcut::Quit),
+            (key::plus, M::CONTROL_MASK | M::SHIFT_MASK, Shortcut::ZoomIn),
+            (key::equal, M::CONTROL_MASK, Shortcut::ZoomIn),
+            (key::minus, M::CONTROL_MASK, Shortcut::ZoomOut),
+            (key::_0, M::CONTROL_MASK, Shortcut::ZoomReset),
+            (key::g, M::CONTROL_MASK, Shortcut::FindNext),
+            (key::F3, M::empty(), Shortcut::FindNext),
+            (
+                key::G,
+                M::CONTROL_MASK | M::SHIFT_MASK,
+                Shortcut::FindPrevious,
+            ),
+            (key::F3, M::SHIFT_MASK, Shortcut::FindPrevious),
+            (
+                key::R,
+                M::CONTROL_MASK | M::SHIFT_MASK,
+                Shortcut::HardReload,
+            ),
+            (key::r, M::CONTROL_MASK, Shortcut::Reload),
+            (key::p, M::CONTROL_MASK, Shortcut::Print),
+            (key::h, M::CONTROL_MASK, Shortcut::History),
+            (
+                key::question,
+                M::CONTROL_MASK | M::SHIFT_MASK,
+                Shortcut::ShowShortcuts,
+            ),
+            (key::F10, M::empty(), Shortcut::OpenMenu),
+            (key::A, M::CONTROL_MASK | M::SHIFT_MASK, Shortcut::Assistant),
+        ];
+        for (keyval, mods, expected) in cases {
+            assert_eq!(
+                shortcut_for(&keyval, mods),
+                Some(expected),
+                "{keyval:?} {mods:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn page_scripts_get_one_new_window_per_second() {
+        use super::allow_script_window;
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let mut recent = Vec::new();
+        assert!(allow_script_window(&mut recent, start));
+        for burst in 1..10 {
+            assert!(!allow_script_window(
+                &mut recent,
+                start + Duration::from_millis(burst)
+            ));
+        }
+        assert!(allow_script_window(
+            &mut recent,
+            start + Duration::from_millis(1100)
+        ));
+    }
+
+    #[test]
+    fn zoom_moves_between_fixed_stops_and_stops_at_the_ends() {
+        use super::next_zoom;
+        assert_eq!(next_zoom(1.0, true), 1.1);
+        assert_eq!(next_zoom(1.0, false), 0.9);
+        assert_eq!(next_zoom(1.05, true), 1.1);
+        assert_eq!(next_zoom(3.0, true), 3.0);
+        assert_eq!(next_zoom(0.3, false), 0.3);
     }
 
     #[test]
@@ -2441,6 +2902,7 @@ mod gtk_tests {
             );
             return;
         }
+        crate::theme::verify_live_theme_switching();
         crate::privacy::verify_clear_data_feedback();
         verify_native_tab_selection_and_popup_address();
         let history_entry = crate::history::HistoryEntry {
@@ -2453,7 +2915,7 @@ mod gtk_tests {
         let label = row.child().unwrap().downcast::<gtk::Label>().unwrap();
         assert_eq!(
             label.text().as_str(),
-            "<Page & title>\nhttps://user:p%40ss@bücher.de:8443/a%2Fb?q=1&b=2#frag"
+            "<Page & title>\nhttps://bücher.de:8443/a%2Fb?q=1&b=2#frag"
         );
         drop(label);
         drop(row);

@@ -44,8 +44,16 @@ pub fn build_home_surface() -> (GtkBox, Entry) {
 
     pill.pack_start(&search, true, true, 0);
 
+    // GTK 3 hides the placeholder while the field has focus, and this field is
+    // focused on every new tab, so the hint also sits under the pill.
+    let hint = Label::new(Some("Search DuckDuckGo or type a URL, then press Enter"));
+    hint.style_context().add_class("home-hint");
+    hint.set_line_wrap(true);
+    hint.set_justify(gtk::Justification::Center);
+
     center.pack_start(&title, false, false, 0);
     center.pack_start(&pill, false, false, 0);
+    center.pack_start(&hint, false, false, 0);
     page.pack_start(&center, true, true, 0);
 
     (page, search)

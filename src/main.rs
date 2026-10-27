@@ -1,3 +1,4 @@
+mod assistant;
 mod downloads;
 mod error_page;
 mod find;
@@ -10,6 +11,7 @@ mod permissions;
 mod popup;
 mod privacy;
 mod profile;
+mod shortcuts;
 mod tabs;
 mod theme;
 mod url_display;
@@ -40,6 +42,14 @@ type SharedProfileSlot = Rc<RefCell<Option<Rc<SharedProfile>>>>;
 type WindowList = Rc<RefCell<Vec<TabManager>>>;
 
 fn main() -> glib::ExitCode {
+    #[cfg(target_os = "linux")]
+    {
+        // Disable DMA-BUF renderer by default to prevent Mesa/GBM teardown segfault on Intel/Wayland
+        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+
     // GTK 3 uses the program name as the Wayland app_id and as X11's WM_CLASS
     // instance, and the program class as the WM_CLASS class. Set both to the
     // application ID so the window, com.nodaysidle.Browser.desktop and its
@@ -67,6 +77,7 @@ fn main() -> glib::ExitCode {
     let shared_for_shutdown = shared.clone();
     app.connect_shutdown(move |_| {
         flush_shared_history(&shared_for_shutdown);
+        profile::remove_session_only_dir();
     });
     for &sig in &[1, 2, 15] {
         let shared_for_sig = shared.clone();
@@ -269,6 +280,7 @@ fn ensure_profile(app: &Application, shared: &SharedProfileSlot) -> Option<Rc<Sh
         );
         return None;
     };
+    theme::load_preference(&data_dir);
     let web_context = match persistent_web_context(&data_dir) {
         Ok(ctx) => ctx,
         Err(err) => {

@@ -1,8 +1,8 @@
 //! History popover construction and its dynamic narrow-window sizing (A8).
 //!
-//! The popover is rebuilt every time it opens so it always shows current
-//! entries, and its requested size is bounded by the browser window so it
-//! stays usable in a narrow Hyprland tile.
+//! Rows are rebuilt only when history changed since the last open, a search
+//! field filters them, and the popover's requested size is bounded by the
+//! browser window so it stays usable in a narrow Hyprland tile.
 
 use crate::history::HistoryStore;
 use crate::tabs::TabManager;
@@ -30,6 +30,8 @@ pub(crate) fn wire_history(manager: &TabManager, history: Rc<RefCell<HistoryStor
         history_btn.show();
     }
 
+    manager.inner.borrow_mut().history_btn = Some(history_btn.clone());
+
     let popover = Popover::new(Some(&history_btn));
     let box_ = GtkBox::new(Orientation::Vertical, 0);
     let title = Label::new(Some("Recent history"));
@@ -37,6 +39,13 @@ pub(crate) fn wire_history(manager: &TabManager, history: Rc<RefCell<HistoryStor
     title.set_margin_start(12);
     title.set_margin_end(12);
     box_.pack_start(&title, false, false, 0);
+    let search = gtk::SearchEntry::new();
+    search.set_placeholder_text(Some("Search history"));
+    search.set_margin_top(6);
+    search.set_margin_bottom(6);
+    search.set_margin_start(12);
+    search.set_margin_end(12);
+    box_.pack_start(&search, false, false, 0);
     box_.pack_start(&Separator::new(Orientation::Horizontal), false, false, 0);
 
     let scroll = ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
@@ -45,12 +54,30 @@ pub(crate) fn wire_history(manager: &TabManager, history: Rc<RefCell<HistoryStor
     let list = ListBox::new();
     list.set_selection_mode(gtk::SelectionMode::None);
     scroll.add(&list);
+    list.set_filter_func(Some(Box::new(
+        clone!(@weak search => @default-return true, move |row| {
+            let query = search.text().to_lowercase();
+            query.is_empty()
+                || !row.is_activatable()
+                || row_text(row).to_lowercase().contains(&query)
+        }),
+    )));
+    search.connect_search_changed(clone!(@weak list => move |_| list.invalidate_filter()));
+    // Enter opens the first visible match.
+    search.connect_activate(clone!(@weak list => move |_| {
+        let first = (0..).map_while(|i| list.row_at_index(i)).find(|row| row.is_child_visible() && row.is_activatable());
+        if let Some(row) = first {
+            row.activate();
+        }
+    }));
     box_.pack_start(&scroll, true, true, 0);
     popover.add(&box_);
 
     let mgr = manager.clone_handle();
+    // (entry count, newest visit) of the rows on screen; a visit or a clear changes it.
+    let rendered = Rc::new(std::cell::Cell::new(None));
     history_btn.connect_clicked(
-        clone!(@weak popover, @weak list, @weak scroll, @strong history, @strong mgr => move |_| {
+        clone!(@weak popover, @weak list, @weak scroll, @weak search, @strong history, @strong mgr => move |_| {
             let window = { mgr.inner.borrow().window.clone() };
             // Bound the popover to the window so it stays usable in a narrow
             // Hyprland tile instead of overflowing it (A8).
@@ -59,19 +86,27 @@ pub(crate) fn wire_history(manager: &TabManager, history: Rc<RefCell<HistoryStor
             scroll.set_min_content_width(width);
             scroll.set_min_content_height(height);
             scroll.set_max_content_height(height);
-            while let Some(row) = list.row_at_index(0) {
-                list.remove(&row);
-            }
-            let entries = { history.borrow().entries().to_vec() };
-            if entries.is_empty() {
-                list.add(&history_empty_row());
-            } else {
-                for entry in &entries {
-                    list.add(&history_row(entry));
+            search.set_text("");
+            let history = history.borrow();
+            let entries = history.entries();
+            let key = (entries.len(), entries.first().map(|entry| entry.visited_at));
+            if rendered.get() != Some(key) {
+                rendered.set(Some(key));
+                while let Some(row) = list.row_at_index(0) {
+                    list.remove(&row);
                 }
+                if entries.is_empty() {
+                    list.add(&history_empty_row());
+                } else {
+                    for entry in entries {
+                        list.add(&history_row(entry));
+                    }
+                }
+                popover.show_all();
             }
-            popover.show_all();
+            drop(history);
             popover.popup();
+            search.grab_focus();
         }),
     );
 
@@ -83,6 +118,13 @@ pub(crate) fn wire_history(manager: &TabManager, history: Rc<RefCell<HistoryStor
         popover.popdown();
         mgr.navigate_from_bar_public(&url);
     }));
+}
+
+fn row_text(row: &ListBoxRow) -> String {
+    row.child()
+        .and_then(|child| child.downcast::<Label>().ok())
+        .map(|label| label.text().to_string())
+        .unwrap_or_default()
 }
 
 pub(crate) fn history_row(entry: &crate::history::HistoryEntry) -> ListBoxRow {

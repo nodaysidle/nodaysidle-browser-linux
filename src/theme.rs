@@ -11,14 +11,47 @@ pub const WINDOW_CORNER_INSET_PX: i32 = 8;
 static HYPRLAND_ROUNDING: OnceLock<Option<i32>> = OnceLock::new();
 
 const STYLESHEET: &str = r#"
-/* Only the browser's own windows are dark; dialogs (permissions, downloads,
-   About, file chooser) keep the GTK theme's colours (R-9, I-3). */
+/* Colours are tokens from DARK_PALETTE or PAPER_PALETTE below. Dialogs
+   (permissions, downloads, About, file chooser) keep the GTK theme, which
+   `apply` switches to dark or light to match (R-9, I-3). */
 window.browser-window {
-  background-color: #151518;
+  background-color: @bg;
+}
+
+/* Popovers, menus and dialogs use the same palette, so Paper never shows
+   the GTK theme's pure white and Dark never mixes in a lighter grey. */
+popover.background,
+menu,
+.menu,
+.context-menu,
+dialog,
+messagedialog {
+  background-color: @surface;
+  color: @text;
+}
+
+popover list,
+popover row,
+dialog list {
+  background-color: transparent;
+  color: @text;
+}
+
+popover entry,
+dialog entry {
+  background-color: @bg;
+  color: @text;
+  border-color: @border;
+}
+
+menu menuitem:hover,
+.menu menuitem:hover {
+  background-color: alpha(@accent, 0.18);
+  color: @text_strong;
 }
 
 .browser-frame {
-  background-color: #151518;
+  background-color: @bg;
 }
 
 window.browser-window.maximized .browser-frame,
@@ -27,15 +60,15 @@ window.browser-window.tiled .browser-frame {
 }
 
 .chrome {
-  background-color: #1a1a1b;
+  background-color: @chrome;
 }
 
 .void {
-  background-color: #151518;
+  background-color: @bg;
 }
 
 .chrome-separator {
-  background-color: rgba(255, 255, 255, 0.09);
+  background-color: @line;
   min-height: 1px;
 }
 
@@ -51,22 +84,21 @@ window.browser-window.tiled .browser-frame {
 }
 
 .tab-pill.selected {
-  background-color: #242427;
+  background-color: @selected;
   box-shadow:
-    inset 3px 0 0 #75aaff,
-    inset 0 -2px 0 #75aaff,
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    inset 3px 0 0 @accent,
+    inset 0 -2px 0 @accent,
+    inset 0 0 0 1px @hairline;
 }
 
 .tab-pill-label {
-  color: #949499;
-  font-family: monospace;
+  color: @muted;
   font-size: 12px;
   padding: 4px 8px;
 }
 
 .tab-pill-label-selected {
-  color: #f2f2f5;
+  color: @text_strong;
   font-weight: 600;
 }
 
@@ -78,33 +110,33 @@ window.browser-window.tiled .browser-frame {
 }
 
 .tab-focus-list > .tab-focusable:focus {
-  background-color: rgba(116, 170, 255, 0.28);
-  box-shadow: inset 0 0 0 1px #75aaff;
+  background-color: alpha(@accent, 0.28);
+  box-shadow: inset 0 0 0 1px @accent;
   border-radius: 6px;
 }
 
 .tab-close {
-  color: #a0a0a8;
+  color: @muted;
   padding: 2px;
   min-width: 20px;
   min-height: 20px;
 }
 
 .tab-close:hover {
-  color: #e8e8ec;
-  background-color: rgba(255, 255, 255, 0.08);
+  color: @text;
+  background-color: @hairline;
   border-radius: 4px;
 }
 
 .tab-new-btn:focus,
 .ghost-btn:focus {
-  background-color: rgba(116, 170, 255, 0.28);
-  box-shadow: inset 0 0 0 1px #75aaff;
-  color: #ffffff;
+  background-color: alpha(@accent, 0.28);
+  box-shadow: inset 0 0 0 1px @accent;
+  color: @text_strong;
 }
 
 .tab-new-btn {
-  color: #949499;
+  color: @muted;
   background: transparent;
   border: none;
   min-width: 26px;
@@ -113,11 +145,11 @@ window.browser-window.tiled .browser-frame {
 }
 
 .tab-new-btn:hover {
-  background-color: #202022;
+  background-color: @surface;
 }
 
 .ghost-btn {
-  color: #949499;
+  color: @muted;
   background: transparent;
   border: none;
   min-width: 30px;
@@ -127,34 +159,35 @@ window.browser-window.tiled .browser-frame {
 }
 
 .ghost-btn:hover {
-  background-color: #202022;
-  color: #d1d1d6;
+  background-color: @surface;
+  color: @text_hover;
 }
 
 .ghost-btn:disabled {
-  color: rgba(107, 107, 112, 0.35);
+  color: alpha(@muted, 0.4);
 }
 
 .url-bar {
-  background-color: #202022;
-  color: #e8e8ec;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background-color: @surface;
+  color: @text;
+  /* 3:1 against the toolbar so the field edge is visible (WCAG 1.4.11). */
+  border: 1px solid @border;
   border-radius: 8px;
   padding: 7px 12px;
   font-size: 13px;
 }
 
 .url-bar.secure image.left {
-  color: #7fc8a0;
+  color: @secure;
 }
 
 .url-bar.insecure image.left {
-  color: #e5a46a;
+  color: @insecure;
 }
 
 .url-bar progress {
   background-color: transparent;
-  background-image: linear-gradient(to top, #75aaff 2px, transparent 2px);
+  background-image: linear-gradient(to top, @accent 2px, transparent 2px);
   border: none;
   border-radius: 0;
   box-shadow: none;
@@ -164,29 +197,57 @@ window.browser-window.tiled .browser-frame {
 }
 
 .url-bar:focus {
-  border-color: #75aaff;
-  box-shadow: 0 0 0 1px rgba(117, 170, 255, 0.55);
+  border-color: @accent;
+  box-shadow: 0 0 0 1px alpha(@accent, 0.55);
 }
 
-.toolbar {
+.browser-toolbar {
   padding: 4px 8px;
 }
 
 .home-title {
-  color: #e8e8ec;
+  color: @text;
   letter-spacing: 0.04em;
 }
 
 .home-search-pill {
-  background-color: #202022;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background-color: @surface;
+  border: 1px solid @border;
   border-radius: 999px;
   padding: 4px 16px;
 }
 
+.home-hint {
+  color: @muted;
+  font-size: 12px;
+}
+
 .home-search-pill.focused {
-  border-color: #75aaff;
-  box-shadow: 0 0 0 1px rgba(117, 170, 255, 0.55);
+  border-color: @accent;
+  box-shadow: 0 0 0 1px alpha(@accent, 0.55);
+}
+
+/* Page assistant side panel. */
+.assistant-panel {
+  background-color: @chrome;
+  border-left: 1px solid @line;
+  padding: 10px 12px;
+}
+
+.assistant-title {
+  color: @text_strong;
+  font-weight: 600;
+}
+
+.assistant-notice {
+  color: @muted;
+  font-size: 12px;
+}
+
+.assistant-output,
+.assistant-output text {
+  background-color: @chrome;
+  color: @text;
 }
 
 .find-bar {
@@ -195,24 +256,24 @@ window.browser-window.tiled .browser-frame {
 }
 
 .find-entry {
-  background-color: #202022;
-  color: #e8e8ec;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background-color: @surface;
+  color: @text;
+  border: 1px solid @line;
   border-radius: 8px;
   padding: 4px 10px;
   min-width: 0;
 }
 
 .find-entry:focus {
-  border-color: #75aaff;
+  border-color: @accent;
 }
 
 .find-entry.find-none {
-  border-color: #e06c75;
+  border-color: @error;
 }
 
 .find-status {
-  color: #949499;
+  color: @muted;
   font-size: 12px;
   min-width: 0;
 }
@@ -222,7 +283,7 @@ window.browser-window.tiled .browser-frame {
   background: transparent;
   border: none;
   box-shadow: none;
-  color: #e8e8ec;
+  color: @text;
   font-size: 14px;
 }
 "#;
@@ -245,6 +306,8 @@ pub fn window_corner_inset_px() -> i32 {
 
 /// Reads Hyprland `decoration:rounding` when `hyprctl` is available.
 fn hyprland_rounding_px() -> Option<i32> {
+    // Only a Hyprland session sets this; skip the spawn everywhere else.
+    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
     let output = std::process::Command::new("hyprctl")
         .args(["-j", "getoption", "decoration:rounding"])
         .output()
@@ -366,6 +429,84 @@ pub fn wire_window_corner_insets(window: &gtk::Window, frame: &gtk::Box) {
     });
 }
 
+/// Colour tokens the stylesheet uses. Dark is the original look; Paper is a
+/// warm off-white for daylight, never pure white, and every text pair meets
+/// WCAG AA (4.5:1) on the surfaces it sits on.
+const DARK_PALETTE: &str = "
+@define-color bg #151518;
+@define-color chrome #1a1a1b;
+@define-color surface #202022;
+@define-color selected #242427;
+@define-color line rgba(255, 255, 255, 0.09);
+@define-color hairline rgba(255, 255, 255, 0.07);
+@define-color text_strong #f2f2f5;
+@define-color text #e8e8ec;
+@define-color text_hover #d1d1d6;
+@define-color muted #949499;
+@define-color border #6a6a70;
+@define-color accent #75aaff;
+@define-color secure #7fc8a0;
+@define-color insecure #e5a46a;
+@define-color error #e06c75;
+";
+
+const PAPER_PALETTE: &str = "
+@define-color bg #f3efe6;
+@define-color chrome #ebe6db;
+@define-color surface #f8f5ee;
+@define-color selected #ddd6c8;
+@define-color line rgba(60, 50, 30, 0.14);
+@define-color hairline rgba(60, 50, 30, 0.08);
+@define-color text_strong #1f1d1a;
+@define-color text #2b2925;
+@define-color text_hover #3a3731;
+@define-color muted #5e594f;
+@define-color border #8a8376;
+@define-color accent #2c5aa0;
+@define-color secure #2d6e47;
+@define-color insecure #9a5212;
+@define-color error #b3261e;
+";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThemeChoice {
+    System,
+    Dark,
+    Paper,
+}
+
+impl ThemeChoice {
+    fn key(self) -> &'static str {
+        match self {
+            ThemeChoice::System => "system",
+            ThemeChoice::Dark => "dark",
+            ThemeChoice::Paper => "paper",
+        }
+    }
+
+    fn from_key(key: &str) -> Option<Self> {
+        [ThemeChoice::System, ThemeChoice::Dark, ThemeChoice::Paper]
+            .into_iter()
+            .find(|choice| choice.key() == key)
+    }
+}
+
+thread_local! {
+    static THEME: std::cell::RefCell<ThemeState> = std::cell::RefCell::new(ThemeState::default());
+}
+
+#[derive(Default)]
+struct ThemeState {
+    palette: Option<CssProvider>,
+    choice: Option<ThemeChoice>,
+    dark: bool,
+    settings_file: Option<std::path::PathBuf>,
+    /// org.gnome.desktop.interface, when installed, for "Match system".
+    interface: Option<gio::Settings>,
+    /// The user's GTK theme name at startup, e.g. "Adwaita-dark".
+    gtk_theme: Option<String>,
+}
+
 pub fn install() {
     let provider = CssProvider::new();
     if provider.load_from_data(STYLESHEET.as_bytes()).is_err() {
@@ -378,11 +519,178 @@ pub fn install() {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
+    let interface = gio::SettingsSchemaSource::default()
+        .and_then(|source| source.lookup("org.gnome.desktop.interface", true))
+        .filter(|schema| schema.has_key("color-scheme"))
+        .map(|_| gio::Settings::new("org.gnome.desktop.interface"));
+    if let Some(interface) = &interface {
+        interface.connect_changed(Some("color-scheme"), |_, _| {
+            if current_choice() == ThemeChoice::System {
+                apply(ThemeChoice::System);
+            }
+        });
+    }
+    THEME.with(|theme| theme.borrow_mut().interface = interface);
+    apply(ThemeChoice::System);
+}
+
+/// Loads the saved choice from `<profile>/settings.json` and remembers where
+/// to save later changes.
+pub fn load_preference(profile_dir: &std::path::Path) {
+    let file = profile_dir.join("settings.json");
+    let saved = std::fs::read_to_string(&file)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|json| json.get("theme")?.as_str().and_then(ThemeChoice::from_key))
+        .unwrap_or(ThemeChoice::System);
+    THEME.with(|theme| theme.borrow_mut().settings_file = Some(file));
+    apply(saved);
+}
+
+pub fn current_choice() -> ThemeChoice {
+    THEME.with(|theme| theme.borrow().choice.unwrap_or(ThemeChoice::System))
+}
+
+/// True while the dark palette is active (built-in pages follow it).
+pub fn is_dark() -> bool {
+    THEME.with(|theme| theme.borrow().dark)
+}
+
+/// Switches theme now and saves the choice for the next launch.
+pub fn choose(choice: ThemeChoice) {
+    apply(choice);
+    let file = THEME.with(|theme| theme.borrow().settings_file.clone());
+    if let Some(file) = file {
+        let json = serde_json::json!({ "theme": choice.key() }).to_string();
+        if let Err(err) = std::fs::write(&file, json) {
+            eprintln!("Could not save theme to {}: {err}", file.display());
+        }
+    }
+}
+
+fn system_prefers_dark(interface: Option<&gio::Settings>) -> bool {
+    // Only an explicit light preference turns Paper on; "default" or no
+    // desktop setting keeps the original dark look.
+    interface.is_none_or(|settings| settings.string("color-scheme") != "prefer-light")
+}
+
+/// "Adwaita-dark" -> "Adwaita"; names without a dark suffix are unchanged.
+fn light_variant(theme: &str) -> String {
+    ["-dark", "-Dark", "_dark", ":dark"]
+        .iter()
+        .find_map(|suffix| theme.strip_suffix(suffix))
+        .unwrap_or(theme)
+        .to_string()
+}
+
+fn apply(choice: ThemeChoice) {
+    let dark = match choice {
+        ThemeChoice::Dark => true,
+        ThemeChoice::Paper => false,
+        ThemeChoice::System => {
+            THEME.with(|theme| system_prefers_dark(theme.borrow().interface.as_ref()))
+        }
+    };
+    let palette = CssProvider::new();
+    let source = if dark { DARK_PALETTE } else { PAPER_PALETTE };
+    if palette.load_from_data(source.as_bytes()).is_err() {
+        return;
+    }
+    let Some(screen) = gdk::Screen::default() else {
+        return;
+    };
+    // The palette must outrank the stylesheet's own priority so the tokens
+    // resolve; swapping it restyles every open window at once.
+    StyleContext::add_provider_for_screen(
+        &screen,
+        &palette,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 2,
+    );
+    let previous = THEME.with(|theme| {
+        let mut theme = theme.borrow_mut();
+        theme.choice = Some(choice);
+        theme.dark = dark;
+        theme.palette.replace(palette)
+    });
+    if let Some(previous) = previous {
+        StyleContext::remove_provider_for_screen(&screen, &previous);
+    }
+    // Dialogs use the GTK theme and WebKit derives prefers-color-scheme from
+    // it, so both follow the browser's choice instead of mixing light and
+    // dark. A theme named "*-dark" stays dark whatever prefer-dark says, so
+    // Paper switches to its light variant.
+    if let Some(settings) = gtk::Settings::default() {
+        let original = THEME.with(|theme| {
+            theme
+                .borrow_mut()
+                .gtk_theme
+                .get_or_insert_with(|| settings.gtk_theme_name().unwrap_or_default().to_string())
+                .clone()
+        });
+        let name = if dark {
+            original.clone()
+        } else {
+            light_variant(&original)
+        };
+        if !name.is_empty() && settings.gtk_theme_name().as_deref() != Some(name.as_str()) {
+            settings.set_gtk_theme_name(Some(&name));
+        }
+        settings.set_gtk_application_prefer_dark_theme(dark);
+    }
+}
+
+/// Called from the GTK test: switching theme restyles live widgets, the
+/// GTK theme follows, and the choice is saved for the next launch.
+#[cfg(test)]
+pub(crate) fn verify_live_theme_switching() {
+    install();
+    let dir = std::env::temp_dir().join(format!("nodaysidle-theme-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    load_preference(&dir);
+    let window = gtk::Window::new(gtk::WindowType::Toplevel);
+    window.style_context().add_class("browser-window");
+    let hint = gtk::Label::new(Some("hint"));
+    hint.style_context().add_class("home-hint");
+    window.add(&hint);
+    window.show_all();
+    let color = |label: &gtk::Label| {
+        let rgba = label.style_context().color(gtk::StateFlags::NORMAL);
+        (
+            (rgba.red() * 255.0).round() as u8,
+            (rgba.green() * 255.0).round() as u8,
+            (rgba.blue() * 255.0).round() as u8,
+        )
+    };
+    choose(ThemeChoice::Dark);
+    assert!(is_dark());
+    assert_eq!(color(&hint), (0x94, 0x94, 0x99));
+    choose(ThemeChoice::Paper);
+    assert!(!is_dark());
+    assert_eq!(color(&hint), (0x5e, 0x59, 0x4f));
+    let settings = gtk::Settings::default().unwrap();
+    assert!(!settings.is_gtk_application_prefer_dark_theme());
+    assert!(!settings
+        .gtk_theme_name()
+        .unwrap_or_default()
+        .ends_with("-dark"));
+    let saved = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+    assert!(saved.contains("\"paper\""));
+    choose(ThemeChoice::Dark);
+    assert_eq!(color(&hint), (0x94, 0x94, 0x99));
+    window.close();
+    std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_frame_inset, parse_hyprland_rounding_json};
+    use super::{effective_frame_inset, light_variant, parse_hyprland_rounding_json};
+
+    #[test]
+    fn paper_uses_the_light_variant_of_the_gtk_theme() {
+        assert_eq!(light_variant("Adwaita-dark"), "Adwaita");
+        assert_eq!(light_variant("Yaru-Dark"), "Yaru");
+        assert_eq!(light_variant("Adwaita"), "Adwaita");
+    }
 
     #[test]
     fn hyprland_rounding_json_is_parsed_from_hyprctl_output() {

@@ -704,8 +704,10 @@ dependencies = [
  "glib",
  "gtk",
  "idna",
+ "javascriptcore-rs",
  "serde",
  "serde_json",
+ "soup3",
  "url",
  "webkit2gtk",
 ]

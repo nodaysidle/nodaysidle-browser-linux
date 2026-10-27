@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 /// How long after the first unsaved visit the batch is written (X-17).
@@ -21,8 +22,9 @@ pub struct HistoryEntry {
 /// Browsing history kept in memory and written to disk in batches (X-17):
 /// `record` marks the store dirty and asks the owner to arm one save timer
 /// (`SAVE_DELAY` after the first unsaved visit); the timer calls
-/// `flush_from_timer`, which asks for a retry with backoff if the write fails
-/// (V-3). The owner also calls `flush` on shutdown. Writes are atomic and
+/// `begin_background_save`, writes the snapshot off the main thread and hands
+/// the result to `finish_background_save`, which asks for a retry with backoff
+/// if the write failed (V-3). The owner also calls `flush` on shutdown. Writes are atomic and
 /// private to the user, and a file that cannot be parsed is set aside instead
 /// of being overwritten.
 pub struct HistoryStore {
@@ -33,6 +35,46 @@ pub struct HistoryStore {
     /// A save timer is armed and will call `flush_from_timer`.
     save_pending: bool,
     retry_delay: Duration,
+    /// Bumped by every change, so a save knows whether it wrote the latest state.
+    generation: u64,
+    /// Serialises writes and holds the generation last written to disk, so a
+    /// slow background save can never replace a newer file (e.g. a clear).
+    disk: Arc<Mutex<u64>>,
+}
+
+/// A snapshot of the history to write on a worker thread.
+pub struct BackgroundSave {
+    path: PathBuf,
+    json: String,
+    generation: u64,
+    disk: Arc<Mutex<u64>>,
+}
+
+impl BackgroundSave {
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// Writes the snapshot unless newer history is already on disk.
+    pub fn write(self) -> bool {
+        let mut on_disk = self
+            .disk
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if *on_disk >= self.generation {
+            return true;
+        }
+        match write_private_atomically(&self.path, self.json.as_bytes()) {
+            Ok(()) => {
+                *on_disk = self.generation;
+                true
+            }
+            Err(err) => {
+                eprintln!("Could not save history to {}: {err}", self.path.display());
+                false
+            }
+        }
+    }
 }
 
 impl HistoryStore {
@@ -59,6 +101,8 @@ impl HistoryStore {
             dirty: false,
             save_pending: false,
             retry_delay: FIRST_RETRY_DELAY,
+            generation: 0,
+            disk: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -88,6 +132,7 @@ impl HistoryStore {
         }
 
         self.dirty = true;
+        self.generation += 1;
         if self.save_pending {
             return None;
         }
@@ -95,19 +140,56 @@ impl HistoryStore {
         Some(SAVE_DELAY)
     }
 
-    /// Called by the save timer. Writes pending changes; if that fails, the
-    /// timer is consumed but the store stays dirty and the returned delay
-    /// tells the caller when to try again (doubling up to a minute).
-    pub fn flush_from_timer(&mut self) -> Option<Duration> {
-        self.save_pending = false;
-        if self.flush() {
-            self.retry_delay = FIRST_RETRY_DELAY;
+    /// Called by the save timer on the main thread: snapshots pending changes
+    /// for `BackgroundSave::write`, or returns None when there is nothing to save.
+    pub fn begin_background_save(&mut self) -> Option<BackgroundSave> {
+        if !self.dirty {
+            self.save_pending = false;
             return None;
+        }
+        let json = match serde_json::to_string_pretty(&self.entries) {
+            Ok(json) => json,
+            Err(err) => {
+                eprintln!("Could not serialise history: {err}");
+                self.save_pending = false;
+                return None;
+            }
+        };
+        Some(BackgroundSave {
+            path: self.path.clone(),
+            json,
+            generation: self.generation,
+            disk: self.disk.clone(),
+        })
+    }
+
+    /// Applies a background save's result. Returns the delay after which the
+    /// caller must save again: a retry with backoff (doubling up to a minute)
+    /// after a failure, or `SAVE_DELAY` when visits arrived during the write.
+    pub fn finish_background_save(&mut self, generation: u64, ok: bool) -> Option<Duration> {
+        self.save_pending = false;
+        if ok {
+            self.retry_delay = FIRST_RETRY_DELAY;
+            if self.generation == generation {
+                self.dirty = false;
+                return None;
+            }
+            self.save_pending = true;
+            return Some(SAVE_DELAY);
         }
         let delay = self.retry_delay;
         self.retry_delay = (self.retry_delay * 2).min(MAX_RETRY_DELAY);
         self.save_pending = true;
         Some(delay)
+    }
+
+    /// The save-timer path run synchronously (begin, write, finish), for tests.
+    #[cfg(test)]
+    pub fn flush_from_timer(&mut self) -> Option<Duration> {
+        let save = self.begin_background_save()?;
+        let generation = save.generation();
+        let ok = save.write();
+        self.finish_background_save(generation, ok)
     }
 
     /// Removes all entries from memory and writes the empty list to disk.
@@ -116,9 +198,30 @@ impl HistoryStore {
     pub fn clear(&mut self) -> bool {
         self.entries.clear();
         self.dirty = true;
+        self.generation += 1;
         self.save_pending = false;
         self.retry_delay = FIRST_RETRY_DELAY;
+        self.remove_aside_files();
         self.flush()
+    }
+
+    /// Set-aside corrupt copies and leftover temp files can still hold old
+    /// visits, so clearing history removes them too.
+    fn remove_aside_files(&self) {
+        let (Some(dir), Some(name)) = (self.path.parent(), self.path.file_name()) else {
+            return;
+        };
+        let name = name.to_string_lossy();
+        let (corrupt, temp) = (format!("{name}.corrupt-"), format!("{name}.tmp-"));
+        for entry in fs::read_dir(dir).into_iter().flatten().flatten() {
+            let file = entry.file_name();
+            let file = file.to_string_lossy();
+            if file.starts_with(&corrupt) || file.starts_with(&temp) {
+                if let Err(err) = fs::remove_file(entry.path()) {
+                    eprintln!("Could not remove {}: {err}", entry.path().display());
+                }
+            }
+        }
     }
 
     /// Writes pending changes to disk; failed writes leave the store dirty.
@@ -126,11 +229,16 @@ impl HistoryStore {
         if !self.dirty {
             return true;
         }
+        let mut on_disk = self
+            .disk
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         let result = serde_json::to_string_pretty(&self.entries)
             .map_err(std::io::Error::from)
             .and_then(|json| write_private_atomically(&self.path, json.as_bytes()));
         match result {
             Ok(()) => {
+                *on_disk = self.generation;
                 self.dirty = false;
                 true
             }
@@ -370,6 +478,34 @@ mod tests {
     }
 
     #[test]
+    fn a_background_save_never_overwrites_newer_history() {
+        let dir = test_dir("background");
+        let path = dir.join("history.json");
+        let mut store = HistoryStore::load(path.clone());
+        store.record("https://a.example/".into(), "A".into());
+
+        // A visit while the write runs keeps the store dirty and asks for another save.
+        let save = store.begin_background_save().unwrap();
+        let generation = save.generation();
+        store.record("https://b.example/".into(), "B".into());
+        assert!(save.write());
+        assert_eq!(
+            store.finish_background_save(generation, true),
+            Some(SAVE_DELAY)
+        );
+        assert_eq!(store.flush_from_timer(), None);
+        assert_eq!(HistoryStore::load(path.clone()).entries().len(), 2);
+
+        // A clear that lands before an older snapshot is written wins on disk.
+        store.record("https://c.example/".into(), "C".into());
+        let stale = store.begin_background_save().unwrap();
+        assert!(store.clear());
+        assert!(stale.write());
+        assert!(HistoryStore::load(path).entries().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_corrupt_history_file_is_set_aside_not_wiped() {
         let dir = test_dir("corrupt");
         std::fs::create_dir_all(&dir).unwrap();
@@ -388,7 +524,18 @@ mod tests {
 
         store.record("https://example.com/".into(), "Example".into());
         store.flush();
-        assert_eq!(HistoryStore::load(path).entries().len(), 1);
+        assert_eq!(HistoryStore::load(path.clone()).entries().len(), 1);
+
+        // Clearing history must not leave the old visits in the backup.
+        std::fs::write(dir.join("history.json.tmp-1"), b"[]").unwrap();
+        assert!(store.clear());
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name != "history.json")
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+        assert!(HistoryStore::load(path).entries().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

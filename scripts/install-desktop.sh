@@ -50,8 +50,8 @@ install -m 0755 "${ROOT}/target/release/nodaysidle-browser" "${BIN}"
 
 install -d "${APP_DIR}"
 QUOTED_BIN="$(desktop_exec_quote "${BIN}")"
-EXEC_LINE="Exec=${QUOTED_BIN} %u"
-ACTION_EXEC_LINE="Exec=${QUOTED_BIN} --new-window %u"
+EXEC_LINE="Exec=${QUOTED_BIN} %U"
+ACTION_EXEC_LINE="Exec=${QUOTED_BIN} --new-window %U"
 tmp="$(mktemp "${APP_DIR}/.com.nodaysidle.Browser.XXXXXX")"
 while IFS= read -r line || [[ -n "${line}" ]]; do
   # The `New Window` desktop action keeps its --new-window flag; every other

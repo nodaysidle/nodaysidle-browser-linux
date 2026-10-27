@@ -6,7 +6,10 @@ use url::{Position, Url};
 /// User-visible URL text. The underlying `uri` used for navigation must stay canonical.
 pub fn format_url_for_display(uri: &str) -> String {
     match Url::parse(uri) {
-        Ok(parsed) => {
+        Ok(mut parsed) => {
+            // Credentials before `@` can push the real host out of view; navigation keeps them.
+            let _ = parsed.set_username("");
+            let _ = parsed.set_password(None);
             let rendered = if let Some(host) = parsed.host_str() {
                 let shown = display_host(host);
                 if shown != host {
@@ -71,7 +74,8 @@ fn host_labels_safe_for_unicode_display(host: &str) -> bool {
         })
 }
 
-fn is_unsafe_display_char(ch: char) -> bool {
+/// Invisible or direction-changing characters that must never reach human-facing text.
+pub(crate) fn is_unsafe_display_char(ch: char) -> bool {
     ch.is_control()
         || matches!(
             ch,
@@ -82,6 +86,7 @@ fn is_unsafe_display_char(ch: char) -> bool {
                 | '\u{202a}'..='\u{202e}' // bidi embedding/override
                 | '\u{2060}'..='\u{2069}' // word joiner, bidi isolates
                 | '\u{feff}' // BOM / ZWNBSP
+                | '\u{e0000}'..='\u{e007f}' // tag characters
         )
 }
 
@@ -180,8 +185,27 @@ mod tests {
     fn unicode_host_display_preserves_the_rest_of_the_url() {
         let canonical = "https://user:p%40ss@xn--bcher-kva.de:8443/a%2Fb?q=%26#frag";
         let shown = format_url_for_display(canonical);
-        assert_eq!(shown, "https://user:p%40ss@bücher.de:8443/a%2Fb?q=%26#frag");
-        assert_eq!(url::Url::parse(&shown).unwrap().as_str(), canonical);
+        assert_eq!(shown, "https://bücher.de:8443/a%2Fb?q=%26#frag");
+        assert_eq!(
+            url::Url::parse(&shown).unwrap().as_str(),
+            "https://xn--bcher-kva.de:8443/a%2Fb?q=%26#frag"
+        );
+    }
+
+    #[test]
+    fn credentials_never_hide_the_real_host() {
+        assert_eq!(
+            format_url_for_display("https://paypal.com-login-secure@evil.example/x"),
+            "https://evil.example/x"
+        );
+    }
+
+    #[test]
+    fn tag_characters_stay_percent_encoded() {
+        assert_eq!(
+            format_url_for_display("https://example.com/a%F3%A0%80%81b"),
+            "https://example.com/a%F3%A0%80%81b"
+        );
     }
 
     #[test]

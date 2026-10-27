@@ -3,7 +3,7 @@ Type=Application
 Name=nodaysidle
 GenericName=Web Browser
 Comment=Quiet WebKit browser for focused browsing
-Exec=nodaysidle-browser %u
+Exec=nodaysidle-browser %U
 Icon=nodaysidle-browser
 Terminal=false
 Categories=Network;WebBrowser;
@@ -15,4 +15,4 @@ Actions=new-window;
 
 [Desktop Action new-window]
 Name=New Window
-Exec=nodaysidle-browser --new-window %u
+Exec=nodaysidle-browser --new-window %U

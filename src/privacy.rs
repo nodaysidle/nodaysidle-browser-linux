@@ -21,6 +21,9 @@ pub fn show_clear_data_dialog(
         ],
     );
     dialog.set_default_response(gtk::ResponseType::Cancel);
+    if let Some(clear) = dialog.widget_for_response(gtk::ResponseType::Accept) {
+        clear.style_context().add_class("destructive-action");
+    }
 
     let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
     content.set_margin_top(12);
@@ -42,7 +45,8 @@ pub fn show_clear_data_dialog(
     let site_cb = gtk::CheckButton::with_label("Cookies and site storage");
     site_cb.set_active(true);
     let cache_cb = gtk::CheckButton::with_label("Cached files");
-    cache_cb.set_active(false);
+    // Cached pages reveal visited sites, so a default clear removes them too.
+    cache_cb.set_active(true);
     let grants_cb = gtk::CheckButton::with_label("Remembered permission denials (this session)");
     grants_cb.set_active(true);
 
@@ -58,21 +62,7 @@ pub fn show_clear_data_dialog(
     }
     dialog.close();
 
-    let mut types = WebsiteDataTypes::empty();
-    if site_cb.is_active() {
-        types |= WebsiteDataTypes::COOKIES
-            | WebsiteDataTypes::LOCAL_STORAGE
-            | WebsiteDataTypes::SESSION_STORAGE
-            | WebsiteDataTypes::INDEXEDDB_DATABASES
-            | WebsiteDataTypes::WEBSQL_DATABASES
-            | WebsiteDataTypes::OFFLINE_APPLICATION_CACHE
-            | WebsiteDataTypes::HSTS_CACHE
-            | WebsiteDataTypes::ITP
-            | WebsiteDataTypes::SERVICE_WORKER_REGISTRATIONS;
-    }
-    if cache_cb.is_active() {
-        types |= WebsiteDataTypes::DISK_CACHE | WebsiteDataTypes::MEMORY_CACHE;
-    }
+    let types = data_types(site_cb.is_active(), cache_cb.is_active());
     clear_browsing_data(
         parent,
         &history,
@@ -81,6 +71,27 @@ pub fn show_clear_data_dialog(
         web_context.website_data_manager().as_ref(),
         types,
     );
+}
+
+/// Website data removed for the "site storage" and "cached files" choices.
+fn data_types(site: bool, cache: bool) -> WebsiteDataTypes {
+    let mut types = WebsiteDataTypes::empty();
+    if site {
+        types |= WebsiteDataTypes::COOKIES
+            | WebsiteDataTypes::LOCAL_STORAGE
+            | WebsiteDataTypes::SESSION_STORAGE
+            | WebsiteDataTypes::INDEXEDDB_DATABASES
+            | WebsiteDataTypes::WEBSQL_DATABASES
+            | WebsiteDataTypes::OFFLINE_APPLICATION_CACHE
+            | WebsiteDataTypes::DOM_CACHE
+            | WebsiteDataTypes::HSTS_CACHE
+            | WebsiteDataTypes::ITP
+            | WebsiteDataTypes::SERVICE_WORKER_REGISTRATIONS;
+    }
+    if cache {
+        types |= WebsiteDataTypes::DISK_CACHE | WebsiteDataTypes::MEMORY_CACHE;
+    }
+    types
 }
 
 fn clear_browsing_data(
@@ -235,4 +246,18 @@ pub(crate) fn verify_clear_data_feedback() {
     drop(parent);
     assert!(report_clear_result(&weak, vec!["failure".into()], Ok(())).is_none());
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{data_types, WebsiteDataTypes};
+
+    #[test]
+    fn site_storage_includes_the_cache_api_and_cache_is_separate() {
+        let site = data_types(true, false);
+        assert!(site.contains(WebsiteDataTypes::DOM_CACHE | WebsiteDataTypes::COOKIES));
+        assert!(!site.contains(WebsiteDataTypes::DISK_CACHE));
+        assert!(data_types(false, true).contains(WebsiteDataTypes::DISK_CACHE));
+        assert!(data_types(false, false).is_empty());
+    }
 }
