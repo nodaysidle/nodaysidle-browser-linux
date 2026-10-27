@@ -10,7 +10,7 @@
   Minimal chrome. Native WebKit pages. Local-first privacy.
 
   <p>
-    <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases"><img src="https://img.shields.io/badge/version-0.2.1-8e8e96?style=flat-square" alt="Version 0.2.1"></a>
+    <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases"><img src="https://img.shields.io/badge/version-0.2.2-8e8e96?style=flat-square" alt="Version 0.2.2"></a>
     <a href="https://www.kernel.org/"><img src="https://img.shields.io/badge/Linux-x86__64-151518?style=flat-square&logo=linux&logoColor=white" alt="Linux x86_64"></a>
     <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-2021-DEA584?style=flat-square&logo=rust&logoColor=white" alt="Rust 2021"></a>
     <a href="https://webkitgtk.org/"><img src="https://img.shields.io/badge/WebKitGTK-4.1-1f5b82?style=flat-square&logo=webkit&logoColor=white" alt="WebKitGTK 4.1"></a>
@@ -20,21 +20,20 @@
 
 `nodaysidle` is a Rust + GTK 3 browser shell that renders pages with WebKitGTK 4.1. It keeps the browser controls close at hand and lets websites own the page, without an Electron runtime, start-page clutter, or application telemetry.
 
-The current release is **v0.2.1**. Everything above the [Unreleased](#unreleased-on-master-not-in-v021) section describes v0.2.1.
+The current release is **v0.2.2**.
 
 macOS version: [nodaysidle-browser](https://github.com/nodaysidle/nodaysidle-browser) (SwiftUI + WKWebView).
 
 ## Install
 
-Download the [v0.2.1 bundled AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.1/nodaysidle-browser-bundled-x86_64.AppImage) ([all releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases)). It bundles GTK 3, WebKitGTK 4.1 and their libraries, so they do not need to be installed.
+Download the [v0.2.2 bundled AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.2/nodaysidle-browser-bundled-x86_64.AppImage), or always get the newest one from the [latest release](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/latest/download/nodaysidle-browser-bundled-x86_64.AppImage) ([all releases](https://github.com/nodaysidle/nodaysidle-browser-linux/releases)). It bundles GTK 3, WebKitGTK 4.1 and their libraries, so they do not need to be installed.
 
 ```bash
 chmod +x nodaysidle-browser-bundled-x86_64.AppImage
 ./nodaysidle-browser-bundled-x86_64.AppImage
 ```
 
-- Size: 91,916,792 bytes (~92 MB)
-- SHA-256: `4fa962df7cc6cd405de863289b17436dfae57a8321491a580939f204db31c7a6` ([.sha256](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.1/nodaysidle-browser-bundled-x86_64.AppImage.sha256))
+- Checksums: [.sha256](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.2/nodaysidle-browser-bundled-x86_64.AppImage.sha256) and [SHA256SUMS](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.2/SHA256SUMS) on the release page
 - Verify: `sha256sum -c nodaysidle-browser-bundled-x86_64.AppImage.sha256` in the download folder
 
 **Older slim AppImage (v0.2.0).** The [v0.2.0 AppImage](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/nodaysidle-browser-x86_64.AppImage) (1,530,360 bytes, ~1.5 MB) contains only the browser binary, desktop file and icon. SHA-256: `02d7a85c3d99f5e395425722c57c46d12fabceccd063554b7f01c2b43229ad93` ([SHA256SUMS](https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.2.0/SHA256SUMS)). It needs these from the system:
@@ -58,6 +57,28 @@ More detail in [docs/APPIMAGE.md](docs/APPIMAGE.md).
 - Desktop integration with Wayland `app_id` and X11 `WM_CLASS` (`com.nodaysidle.Browser`)
 - No application telemetry
 
+### New in v0.2.2
+
+- **Paper theme:** a light theme next to Dark, with a **Menu → Theme** picker that defaults to Match System. See [Themes](#themes).
+- **Ask about this page:** an optional assistant side panel (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>) with a scam check and page summaries, using your own API keys. See [Ask about this page](#ask-about-this-page).
+- **New shortcuts:** reopen closed tab, hard reload, find next/previous, zoom, history, print, main menu, a shortcuts overview (<kbd>Ctrl</kbd>+<kbd>?</kbd>) and quit. See [Keyboard shortcuts](#keyboard-shortcuts).
+- **Security and privacy:**
+  - Links that open a new window become ordinary tabs with no `window.opener`, so the new page cannot redirect the one that opened it.
+  - A page can open one new window per second; extra requests are blocked and the address bar shows a blocked-pop-up icon.
+  - Permission prompts explain that embedded sites can only ask when the page allows them. Esc or closing the prompt counts as Deny, which is remembered for that site until you clear it or quit. The browser can quit while a prompt is open.
+  - Certificate errors get their own "Connection not secure" page, with no way to continue anyway.
+  - The address never shows `user:password@` (navigation keeps it), and page titles and download names drop invisible and right-to-left override characters. Tag characters in paths stay escaped.
+  - Clear Browsing Data also removes Cache API storage and old history backups. History, site storage, cached files and denials are ticked by default.
+  - The temporary profile used when no private profile folder is available is deleted on quit.
+- **Other changes:**
+  - The window title follows the page, a hint sits under the Home search field, the history popover has a search field, and error titles are shorter.
+  - History is written off the UI thread; the history list, load progress, find-as-you-type and download progress no longer redo work.
+  - **DMA-BUF renderer off by default.** The browser sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` at startup (`src/main.rs`) to avoid a Mesa/GBM crash on Intel with Wayland. It only does this when the variable is not already set, so you can re-enable the renderer with:
+
+    ```bash
+    WEBKIT_DISABLE_DMABUF_RENDERER=0 nodaysidle-browser
+    ```
+
 ### New in v0.2.1
 
 - **Fully bundled AppImage:** `nodaysidle-browser-bundled-x86_64.AppImage` ships GTK 3, WebKitGTK 4.1 and their libraries, so it runs on systems without them. CI test-runs it in a clean `debian:bookworm-slim` image with no GTK or WebKitGTK installed.
@@ -79,6 +100,7 @@ More detail in [docs/APPIMAGE.md](docs/APPIMAGE.md).
 | Action | Shortcut |
 | --- | --- |
 | New tab | <kbd>Ctrl</kbd>+<kbd>T</kbd> |
+| Reopen closed tab | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
 | New window | <kbd>Ctrl</kbd>+<kbd>N</kbd> |
 | Close tab | <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F4</kbd> |
 | Next tab | <kbd>Ctrl</kbd>+<kbd>Tab</kbd>, <kbd>Ctrl</kbd>+<kbd>Page Down</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Page Down</kbd> |
@@ -86,11 +108,20 @@ More detail in [docs/APPIMAGE.md](docs/APPIMAGE.md).
 | Select tab | <kbd>Ctrl</kbd>+<kbd>1</kbd> to <kbd>Ctrl</kbd>+<kbd>8</kbd>, <kbd>Ctrl</kbd>+<kbd>9</kbd> |
 | Focus address bar | <kbd>Ctrl</kbd>+<kbd>L</kbd>, <kbd>Alt</kbd>+<kbd>D</kbd>, <kbd>F6</kbd> |
 | Reload / stop | <kbd>Ctrl</kbd>+<kbd>R</kbd>, <kbd>F5</kbd> |
+| Reload, ignoring cache | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>, <kbd>Ctrl</kbd>+<kbd>F5</kbd> |
 | Find in page | <kbd>Ctrl</kbd>+<kbd>F</kbd> |
+| Find next / previous | <kbd>Ctrl</kbd>+<kbd>G</kbd>, <kbd>F3</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>, <kbd>Shift</kbd>+<kbd>F3</kbd> |
+| Zoom in / out / reset | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>0</kbd> |
 | Back / forward | <kbd>Alt</kbd>+<kbd>Left</kbd> / <kbd>Alt</kbd>+<kbd>Right</kbd> |
+| History | <kbd>Ctrl</kbd>+<kbd>H</kbd> |
+| Print | <kbd>Ctrl</kbd>+<kbd>P</kbd> |
+| Ask about this page | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> |
 | Full screen | <kbd>F11</kbd> |
+| Main menu | <kbd>F10</kbd> |
+| All shortcuts | <kbd>Ctrl</kbd>+<kbd>?</kbd> |
+| Quit | <kbd>Ctrl</kbd>+<kbd>Q</kbd> |
 
-In the main window, shortcuts work wherever the focus is, including inside web pages.
+In the main window, shortcuts work wherever the focus is, including inside web pages. <kbd>Left</kbd> and <kbd>Right</kbd> move between tabs, and middle-click closes one. <kbd>Esc</kbd> in the address bar drops your edit and returns to the page. Reload turns into Stop while a page loads.
 
 ### Command line
 
@@ -124,13 +155,35 @@ A page script that calls `window.open` with a size (for example an OAuth sign-in
 
 **Menu → Clear Browsing Data** clears history, cookies and site storage, cached files, and session permission denials independently. A failure dialog reports any selected operation that did not succeed, including website-data failures WebKit reports later. Categories that cleared stay cleared when another one fails.
 
+### Ask about this page
+
+<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> (or **Menu → Ask About This Page**) opens an optional side panel. It does nothing without your own API keys. Nothing is sent until you click, and only for http(s) pages; local files are never sent.
+
+- **Scam check** asks TypeSafe Jev whether the page impersonates a brand, asks for passwords or card details, or pressures you to act, and shows a verdict with the three estimates. They are estimates and can be wrong. Needs `TYPESAFE_API_KEY`.
+- **Summarize** and typed follow-up questions use Claude Haiku 5.5 through the Anthropic API, streamed into the panel, with **Stop**. Needs `ANTHROPIC_API_KEY` (override the model with `NODAYSIDLE_AI_MODEL`).
+
+The panel sends the selection, or the page's main text (up to 12,000 characters), its title, and its address without the query string. Keys are read from the environment and never stored. In fish:
+
+```fish
+set -Ux ANTHROPIC_API_KEY 'sk-ant-...'
+set -Ux TYPESAFE_API_KEY '...'
+# for launches from the desktop launcher rather than a terminal:
+systemctl --user set-environment ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY TYPESAFE_API_KEY=$TYPESAFE_API_KEY
+```
+
 ## Themes
 
-v0.2.1 has one theme, **Dark**: warm charcoal and silver. A light theme (Paper) and a theme menu are [unreleased](#unreleased-on-master-not-in-v021).
+**Menu → Theme** picks:
+
+- **Match System** (default): follows the desktop's `color-scheme` setting (`org.gnome.desktop.interface`). Without a light preference it stays Dark.
+- **Dark:** warm charcoal and silver.
+- **Paper:** a warm off-white (`#f3efe6`), never pure white.
+
+The choice applies at once to every window and is saved in the profile's `settings.json`. Dialogs, menus and error pages follow it, and web pages see the matching `prefers-color-scheme`. Every text colour pair meets WCAG AA contrast.
 
 ## Privacy
 
-- No analytics, telemetry, or application-owned browsing backend. The browser contacts no server except the pages you open.
+- No analytics, telemetry, or application-owned browsing backend. The only servers the browser itself contacts, besides the pages you open, are `api.typesafe.ai` (Scam check) and `api.anthropic.com` (Summarize, questions), and only when you click in the assistant panel.
 - Cookies persist locally in `~/.local/share/nodaysidle-browser/webkit-data/cookies.sqlite` (`0600`).
 - History is stored in `~/.local/share/nodaysidle-browser/history.json` (`0600`) and flushed atomically on exit or signals (`SIGTERM`, `SIGINT`, `SIGHUP`).
 - Web content runs in WebKitGTK's own sandboxed web process; the app does not disable it.
@@ -178,73 +231,3 @@ Build an AppImage:
 ## License
 
 MIT (declared in `Cargo.toml`).
-
----
-
-## Unreleased (on master, not in v0.2.1)
-
-These changes are in the source but not in any release. The v0.2.1 AppImage does not have them.
-
-### Themes
-
-**Menu → Theme** picks:
-
-- **Match System** (default): follows the desktop's `color-scheme` setting (`org.gnome.desktop.interface`). Without a light preference it stays Dark.
-- **Dark:** warm charcoal and silver.
-- **Paper:** a warm off-white (`#f3efe6`), never pure white.
-
-The choice applies at once to every window and is saved in the profile's `settings.json`. Dialogs, menus and error pages follow it, and web pages see the matching `prefers-color-scheme`. Every text colour pair meets WCAG AA contrast.
-
-### Ask about this page
-
-<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> (or **Menu → Ask About This Page**) opens an optional side panel. It does nothing without your own API keys. Nothing is sent until you click, and only for http(s) pages; local files are never sent.
-
-- **Scam check** asks TypeSafe Jev whether the page impersonates a brand, asks for passwords or card details, or pressures you to act, and shows a verdict with the three estimates. They are estimates and can be wrong. Needs `TYPESAFE_API_KEY`.
-- **Summarize** and typed follow-up questions use Claude Haiku 5.5 through the Anthropic API, streamed into the panel, with **Stop**. Needs `ANTHROPIC_API_KEY` (override the model with `NODAYSIDLE_AI_MODEL`).
-
-The panel sends the selection, or the page's main text (up to 12,000 characters), its title, and its address without the query string. Keys are read from the environment and never stored. In fish:
-
-```fish
-set -Ux ANTHROPIC_API_KEY 'sk-ant-...'
-set -Ux TYPESAFE_API_KEY '...'
-# for launches from the desktop launcher rather than a terminal:
-systemctl --user set-environment ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY TYPESAFE_API_KEY=$TYPESAFE_API_KEY
-```
-
-### Security and privacy
-
-- Links that open a new window become ordinary tabs with no `window.opener`, so the new page cannot redirect the one that opened it.
-- A page can open one new window per second; extra requests are blocked and the address bar shows a blocked-pop-up icon.
-- Permission prompts explain that embedded sites can only ask when the page allows them. Esc or closing the prompt counts as Deny, which is remembered for that site until you clear it or quit. The browser can quit while a prompt is open.
-- Certificate errors get their own "Connection not secure" page, with no way to continue anyway.
-- The address never shows `user:password@` (navigation keeps it), and page titles and download names drop invisible and right-to-left override characters. Tag characters in paths stay escaped.
-- Clear Browsing Data also removes Cache API storage and old history backups. History, site storage, cached files and denials are ticked by default.
-- The temporary profile used when no private profile folder is available is deleted on quit.
-- The only servers the browser itself contacts, besides the pages you open, are `api.typesafe.ai` (Scam check) and `api.anthropic.com` (Summarize, questions), and only when you click in the assistant panel.
-
-### Keyboard
-
-| Action | Shortcut |
-| --- | --- |
-| Reopen closed tab | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> |
-| Reload, ignoring cache | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>R</kbd>, <kbd>Ctrl</kbd>+<kbd>F5</kbd> |
-| Find next / previous | <kbd>Ctrl</kbd>+<kbd>G</kbd>, <kbd>F3</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>, <kbd>Shift</kbd>+<kbd>F3</kbd> |
-| Zoom in / out / reset | <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> / <kbd>Ctrl</kbd>+<kbd>0</kbd> |
-| History | <kbd>Ctrl</kbd>+<kbd>H</kbd> |
-| Print | <kbd>Ctrl</kbd>+<kbd>P</kbd> |
-| Ask about this page | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> |
-| Main menu | <kbd>F10</kbd> |
-| All shortcuts | <kbd>Ctrl</kbd>+<kbd>?</kbd> |
-| Quit | <kbd>Ctrl</kbd>+<kbd>Q</kbd> |
-
-<kbd>Left</kbd> and <kbd>Right</kbd> move between tabs, and middle-click closes one. <kbd>Esc</kbd> in the address bar drops your edit and returns to the page. Reload turns into Stop while a page loads.
-
-### Other changes
-
-- The window title follows the page, a hint sits under the Home search field, the history popover has a search field, and error titles are shorter.
-- History is written off the UI thread; the history list, load progress, find-as-you-type and download progress no longer redo work.
-- **DMA-BUF renderer off by default.** The browser sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` at startup (`src/main.rs`) to avoid a Mesa/GBM crash on Intel with Wayland. It only does this when the variable is not already set, so you can re-enable the renderer with:
-
-  ```bash
-  WEBKIT_DISABLE_DMABUF_RENDERER=0 nodaysidle-browser
-  ```
