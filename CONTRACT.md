@@ -2,7 +2,7 @@
 
 Feature: F01 — Persistent Google Login & Auth Session Support
 State: Proposed; agree before implementation
-Code revision under evaluation: 6cc57b4 plus uncommitted repair 1 (see HANDOFF.md)
+Code revision under evaluation: 5aee40a
 
 ## Behavior
 
@@ -14,11 +14,11 @@ Code revision under evaluation: 6cc57b4 plus uncommitted repair 1 (see HANDOFF.m
 
 | ID | Action | Expected observation | Evidence |
 |---|---|---|---|
-| C01 | Inspect WebKit settings user-agent in `profile.rs` / `main.rs` | Standard Chrome/Linux User-Agent string is applied to WebKit settings | PASS as worded: Chrome/Linux string applied via `set_user_agent` in `src/tabs.rs:1378` on both WebView paths, const in `src/profile.rs` (not set in `main.rs`). Inspection only, so it does not cover Behavior 1, which FAILED. See Evaluation Result. |
-| C02 | Check CookieManager configuration in `profile.rs` | `cookie_manager.set_accept_policy(CookieAcceptPolicy::Always)` is configured | PASS: `src/profile.rs:58`; read back as Always by the GTK test; third-party rows `tp1`-`tp4|localhost` in cookies.sqlite. `artifacts/20261105_000447_6cc57b4/eval_persistence.log` |
-| C03 | Run Rust test suite (`cargo test -- --test-threads=1`) | All unit and GTK tests pass (84+ passing, 0 failing) | PASS: 84 passed, 0 failed, with and without NODAYSIDLE_REQUIRE_DISPLAY=1. `artifacts/20261105_000447_6cc57b4/c03_test_contract_cmd.log`, `artifacts/20261105_000447_6cc57b4/c03_test_require_display.log` |
-| C04 | Run clippy (`cargo clippy -- -D warnings`) and formatter (`cargo fmt --check`) | Zero warnings or formatting issues | PASS: clippy exit 0, fmt exit 0, empty output. `artifacts/20261105_000447_6cc57b4/c04_clippy.log`, `artifacts/20261105_000447_6cc57b4/c04_fmt.log` |
-| C05 | Run `eval_ua_by_host.py` against the real binary for `example.com` and `accounts.google.com` | Both hosts receive the exact Chrome/Linux string from PRODUCT.md, on the wire and in `navigator.userAgent` | Unevaluated. Builder run: `artifacts/20261105_001255_6cc57b4-repair1/ua_by_host.log` |
+| C01 | Inspect WebKit settings user-agent in `profile.rs` / `main.rs` | Standard Chrome/Linux User-Agent string is applied to WebKit settings | PASS: Chrome/Linux string applied via `set_user_agent` in `src/tabs.rs:1378` on both WebView paths (`src/tabs.rs:525`, `src/tabs.rs:754`), const in `src/profile.rs:10`, not in `main.rs`. Read back by the GTK test; seen on the wire in C05. `artifacts/20261105_001702_5aee40a/eval_evidence.txt` |
+| C02 | Check CookieManager configuration in `profile.rs` | `cookie_manager.set_accept_policy(CookieAcceptPolicy::Always)` is configured | PASS: `src/profile.rs:58`; read back as Always by the GTK test; third-party row `third|localhost` in cookies.sqlite. `artifacts/20261105_001702_5aee40a/e2e_restart.log` |
+| C03 | Run Rust test suite (`cargo test -- --test-threads=1`) | All unit and GTK tests pass (84+ passing, 0 failing) | PASS: 84 passed, 0 failed, with and without NODAYSIDLE_REQUIRE_DISPLAY=1; GTK test ran. `artifacts/20261105_001702_5aee40a/c03_test_contract_cmd.log`, `artifacts/20261105_001702_5aee40a/c03_test_require_display.log` |
+| C04 | Run clippy (`cargo clippy -- -D warnings`) and formatter (`cargo fmt --check`) | Zero warnings or formatting issues | PASS: clippy exit 0, fmt exit 0, no output. `artifacts/20261105_001702_5aee40a/c04_clippy.log`, `artifacts/20261105_001702_5aee40a/c04_fmt.log` |
+| C05 | Run `eval_ua_by_host.py` against the real binary for `example.com` and `accounts.google.com` | Both hosts receive the exact Chrome/Linux string from PRODUCT.md, on the wire and in `navigator.userAgent` | PASS: exact string on all 8 hosts probed, including both named hosts, on the wire and in `navigator.userAgent`. Plain http through a local proxy. `artifacts/20261105_001702_5aee40a/eval_ua_by_host.log` |
 
 ## Evaluation Report Fields
 
@@ -30,20 +30,22 @@ All agreed checks pass with evidence against the current code revision. If code 
 
 ## Evaluation Result
 
-Evaluated revision: 6cc57b4 (the `Code revision under evaluation: 6cc57b4 plus uncommitted repair 1 (see HANDOFF.md)` line above is stale). Date: 2026-11-05. Method: automated tests plus manual runtime inspection of the real binary. Full log: `artifacts/20261105_000447_6cc57b4/eval_evidence.txt`.
+Evaluated revision: 5aee40a. Date: 2026-11-05. Method: automated tests plus runtime runs of the real binary. Full log: `artifacts/20261105_001702_5aee40a/eval_evidence.txt`.
 
-**Verdict: NOT COMPLETE. Behavior 1 FAILED.** All four table checks pass, but C01 only inspects the setting and cannot see what goes on the wire.
+**Verdict: all five checks PASS, so F01 meets the Completion rule. One part of Behavior 1 is UNVERIFIED: no check tests whether Google accepts the sign-in.**
 
 | Behavior | Verdict | Observed |
 |---|---|---|
-| 1. Chrome/Linux User-Agent at `accounts.google.com` | FAIL | `accounts.google.com` receives `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/60.5 Safari/605.1.15`, on the wire and in `navigator.userAgent` |
-| 1. Google's block is bypassed | UNVERIFIED | No real sign-in attempted |
-| 2. Accept policy Always, third-party cookies stored | PASS | See C02. Storing is proven; sending a `SameSite=None; Secure` cookie cross-site over HTTPS is unverified |
-| 3. Cookies persist across launches | PASS | Persistent cookies and localStorage survived SIGTERM and SIGKILL restarts; session cookies did not, as expected. Closing the window was not tested |
+| 1. Chrome/Linux User-Agent at `accounts.google.com` | PASS | Exact string on the wire and in `navigator.userAgent`. The 6cc57b4 failure is fixed |
+| 1. Google's block is bypassed | UNVERIFIED | No real sign-in attempted. Quirks are off, and pages can still tell this is not Chrome: `navigator.vendor` is `Apple Computer, Inc.`, with no `window.chrome`, `navigator.userAgentData` or `Sec-CH-UA` |
+| 2. Accept policy Always, third-party cookies stored | PASS | Third-party row in cookies.sqlite, database mode 0600. Sending a `SameSite=None; Secure` cookie cross-site over HTTPS is unverified |
+| 3. Cookies persist across launches | PASS | After a real window close and reopen, the exact random cookie value was resent and the exact localStorage value was read back (`artifacts/20261105_001702_5aee40a/eval_window_close.log`). Also survived SIGTERM and SIGKILL |
 
-Reproduce: `python3 artifacts/20261105_000447_6cc57b4/eval_ua_by_host.py target/debug/nodaysidle-browser out.json example.com accounts.google.com`
+Reproduce: `python3 artifacts/20261105_000447_6cc57b4/eval_ua_by_host.py target/debug/nodaysidle-browser out.json example.com accounts.google.com`, and `python3 artifacts/20261105_001702_5aee40a/eval_window_close.py target/debug/nodaysidle-browser out.json` (needs Hyprland).
 
-Cause: WebKit's site-specific quirks replace the custom User-Agent per host. `configure_view` leaves them on. A throwaway copy with `set_enable_site_specific_quirks(false)` sent the Chrome string (`artifacts/20261105_000447_6cc57b4/diag_quirks_off.log`).
+Prior evaluation of 6cc57b4 (Behavior 1 FAILED): `artifacts/20261105_000447_6cc57b4/eval_evidence.txt`.
+
+Returned to the human: the State line still says Proposed, C05 was added by the builder during repair 1, and `roles/EVALUATOR.md` describes F01 as saving a named revision, which does not match this product.
 
 ## Repair Policy
 

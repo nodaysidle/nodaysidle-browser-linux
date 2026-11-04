@@ -2,10 +2,10 @@
 
 Current feature: F01
 Workspace / branch: f01-google-login (not pushed)
-Current code revision: 6cc57b4 plus uncommitted repair 1
-Working-tree changes: repair 1 in src/tabs.rs and README.md, not committed; diff in artifacts/20261105_001255_6cc57b4-repair1/working-tree.diff. Commit it before evaluating so the verdict has a revision to record.
-Feature status: repair 1 ready for re-evaluation; FEATURES.json untouched (F01 still "todo")
-Evidence directory: artifacts/20261105_001255_6cc57b4-repair1/ (repair 1), artifacts/20261105_000447_6cc57b4/ (evaluator), artifacts/20261104_235023_5380982/ (builder)
+Current code revision: 5aee40a
+Working-tree changes: evaluator updates to CONTRACT.md, FEATURES.json and HANDOFF.md only, not committed
+Feature status: done in FEATURES.json at 5aee40a (C01-C05 pass); the Google sign-in itself is UNVERIFIED
+Evidence directory: artifacts/20261105_001702_5aee40a/ (evaluator, 5aee40a), artifacts/20261105_001255_6cc57b4-repair1/ (repair 1), artifacts/20261105_000447_6cc57b4/ (evaluator), artifacts/20261104_235023_5380982/ (builder)
 Attempts used / cap: 1 / 2 repair rounds
 Runtime permission and spend settings: Standard local runner
 
@@ -81,6 +81,12 @@ WebKit's quirk may exist so that Google sign-in works, so forcing Chrome could b
 
 Contract cleanup still needed: State still says Proposed. roles/EVALUATOR.md describes F01 as saving a named revision, which does not match this product.
 
+## Evaluator result (2026-11-05, 5aee40a)
+
+C01-C05 PASS, and Behavior 2 and 3 pass. Behavior 3 now covers a real window close and reopen, with the exact stored values read back. Log: artifacts/20261105_001702_5aee40a/eval_evidence.txt.
+
+F01 is marked done because the Completion rule counts checks only, and no check covers Google's response. That the sign-in works is still UNVERIFIED, and the open question above stands.
+
 ## Next action
 
-Commit repair 1, then run the evaluator against C01-C05. The human still owes one real Google sign-in; Behavior 1's bypass stays UNVERIFIED until then.
+The human does one real Google sign-in on 5aee40a, then one on 6cc57b4 if it is blocked. If it fails, set F01 back to todo and amend Behavior 1. Also settle the contract State line and the F01 text in roles/EVALUATOR.md.

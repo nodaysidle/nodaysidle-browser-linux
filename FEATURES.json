@@ -4,10 +4,12 @@
     {
       "id": "F01",
       "title": "Persistent Google Login and Auth Session Support",
-      "status": "todo",
+      "status": "done",
       "contract": "CONTRACT.md",
-      "code_revision": null,
-      "evidence": []
+      "code_revision": "5aee40aa7a73ed7ca79739a435ee2ce6948d64f0",
+      "evidence": [
+        "artifacts/20261105_001702_5aee40a/eval_evidence.txt"
+      ]
     },
     {
       "id": "F02",
