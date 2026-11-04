@@ -5,7 +5,7 @@
       "id": "F01",
       "title": "Persistent Google Login and Auth Session Support",
       "status": "done",
-      "contract": "CONTRACT.md",
+      "contract": "artifacts/20261105_001702_5aee40a/CONTRACT_F01.md",
       "code_revision": "5aee40aa7a73ed7ca79739a435ee2ce6948d64f0",
       "evidence": [
         "artifacts/20261105_001702_5aee40a/eval_evidence.txt"
@@ -14,8 +14,8 @@
     {
       "id": "F02",
       "title": "Deterministic UI Design and Navigation Polish",
-      "status": "todo",
-      "contract": null,
+      "status": "in_progress",
+      "contract": "CONTRACT.md",
       "code_revision": null,
       "evidence": []
     },

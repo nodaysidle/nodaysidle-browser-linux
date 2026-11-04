@@ -5,10 +5,11 @@ use webkit2gtk::{
     WebsiteDataManager,
 };
 
-/// Google refuses sign-in from WebKit's default identifier ("This browser or
-/// app may not be secure"), so every view presents as Chrome on Linux.
-pub const CHROME_LINUX_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
-     (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+/// Google refuses sign-in from WebKit's default identifier and blocks Chrome
+/// spoofing on WebKit due to navigator.vendor checks. Presenting as modern
+/// Firefox on Linux bypasses Google's embedded WebView block.
+pub const CHROME_LINUX_USER_AGENT: &str =
+    "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0";
 
 #[derive(Debug, Clone)]
 pub struct ProfileSetupError(String);
