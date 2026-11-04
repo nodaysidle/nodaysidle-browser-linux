@@ -1376,6 +1376,9 @@ fn configure_view(webview: &WebView) {
         settings.set_enable_html5_database(true);
         settings.set_enable_html5_local_storage(true);
         settings.set_user_agent(Some(crate::profile::CHROME_LINUX_USER_AGENT));
+        // WebKit's quirks replace a custom User-Agent per host, including
+        // accounts.google.com. The switch is global: there is no per-host one.
+        settings.set_enable_site_specific_quirks(false);
     }
 }
 
@@ -2722,11 +2725,12 @@ mod gtk_tests {
     };
 
     fn assert_chrome_user_agent(view: &WebView) {
-        let agent = WebViewExt::settings(view).and_then(|settings| settings.user_agent());
+        let settings = WebViewExt::settings(view).expect("view settings");
         assert_eq!(
-            agent.as_deref(),
+            settings.user_agent().as_deref(),
             Some(crate::profile::CHROME_LINUX_USER_AGENT)
         );
+        assert!(!settings.enables_site_specific_quirks());
     }
 
     /// Runs the main loop until `done` holds or `secs` pass.

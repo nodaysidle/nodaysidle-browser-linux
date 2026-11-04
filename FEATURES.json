@@ -1,0 +1,29 @@
+{
+  "product": "nodaysidle-browser-linux",
+  "features": [
+    {
+      "id": "F01",
+      "title": "Persistent Google Login and Auth Session Support",
+      "status": "todo",
+      "contract": "CONTRACT.md",
+      "code_revision": null,
+      "evidence": []
+    },
+    {
+      "id": "F02",
+      "title": "Deterministic UI Design and Navigation Polish",
+      "status": "todo",
+      "contract": null,
+      "code_revision": null,
+      "evidence": []
+    },
+    {
+      "id": "F03",
+      "title": "Tab Session State Restore on Restart",
+      "status": "todo",
+      "contract": null,
+      "code_revision": null,
+      "evidence": []
+    }
+  ]
+}
