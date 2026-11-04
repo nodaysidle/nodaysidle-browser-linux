@@ -272,17 +272,20 @@ impl TabManager {
                 if event.keyval() != gdk::keys::constants::Escape {
                     return glib::Propagation::Proceed;
                 }
-                let (view, home_search) = {
+                let (view, home_search, reload_btn) = {
                     let inner = mgr_esc.borrow();
                     (
                         inner.selected_webview(),
                         inner.selected_tab().map(|tab| tab.home_search.clone()),
+                        inner.reload_btn.clone(),
                     )
                 };
                 match view {
                     Some(view) => {
                         let uri = view.uri().unwrap_or_default();
                         entry.set_text(&crate::navigation::format_url_for_display(&uri));
+                        // Editing showed the neutral icon; the page's is back.
+                        apply_page_status(entry, &reload_btn, Some(&view));
                         view.grab_focus();
                     }
                     None => {
@@ -297,11 +300,7 @@ impl TabManager {
 
         self.inner.borrow().url_entry.connect_changed(|entry| {
             if entry.is_focus() {
-                entry.set_icon_from_icon_name(gtk::EntryIconPosition::Primary, None);
-                entry.set_icon_tooltip_text(gtk::EntryIconPosition::Primary, None);
-                let style = entry.style_context();
-                style.remove_class("secure");
-                style.remove_class("insecure");
+                show_security(entry, Security::None);
             }
         });
 
@@ -371,7 +370,9 @@ impl TabManager {
 
         let title_label = Label::new(Some("New Tab"));
         title_label.set_xalign(0.0);
-        title_label.set_width_chars(8);
+        // Fixed width: a title change or the bolder selected weight must not
+        // move the neighbouring pills.
+        title_label.set_width_chars(18);
         title_label.set_max_width_chars(18);
         title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         title_label.style_context().add_class("tab-pill-label");
@@ -407,6 +408,27 @@ impl TabManager {
         pill.style_context().add_class("tab-pill");
         pill.pack_start(&title_list, true, true, 0);
         pill.pack_start(&close_btn, false, false, 0);
+
+        // A GtkBox has no window, so CSS `:hover` never matches the pill; the
+        // two children that do have one report the pointer instead.
+        let title_widget = title_list.clone().upcast::<gtk::Widget>();
+        for widget in [title_widget, close_btn.clone().upcast()] {
+            widget
+                .add_events(gdk::EventMask::ENTER_NOTIFY_MASK | gdk::EventMask::LEAVE_NOTIFY_MASK);
+            let proceed = glib::Propagation::Proceed;
+            widget.connect_enter_notify_event(
+                clone!(@weak pill => @default-return proceed, move |_, _| {
+                    pill.style_context().add_class("hover");
+                    glib::Propagation::Proceed
+                }),
+            );
+            widget.connect_leave_notify_event(
+                clone!(@weak pill => @default-return proceed, move |_, _| {
+                    pill.style_context().remove_class("hover");
+                    glib::Propagation::Proceed
+                }),
+            );
+        }
 
         let tab_id = next_id;
         let name = tab_id.to_string();
@@ -863,7 +885,7 @@ impl TabManager {
             let previous_view = (inner.selected != Some(id))
                 .then(|| inner.selected_tab().and_then(|tab| tab.webview.clone()))
                 .flatten();
-            (inner.find_bar.bar.is_visible(), previous_view)
+            (inner.find_bar.is_open(), previous_view)
         };
         if find_visible {
             if let Some(controller) = previous_view.and_then(|view| view.find_controller()) {
@@ -1597,21 +1619,27 @@ fn apply_page_status(url_entry: &gtk::Entry, reload_btn: &Button, view: Option<&
         let tls_errors = view.tls_info().map(|(_, errors)| !errors.is_empty());
         security_state(&uri, tls_errors)
     });
+    show_security(url_entry, security);
+}
+
+/// Every state has an icon so the address text never shifts sideways when the
+/// state changes.
+fn show_security(url_entry: &gtk::Entry, security: Security) {
     let (icon, tooltip, class) = match security {
         Security::Secure => (
-            Some("channel-secure-symbolic"),
-            Some("Secure connection (HTTPS)"),
+            "channel-secure-symbolic",
+            "Secure connection (HTTPS)",
             Some("secure"),
         ),
         Security::Insecure => (
-            Some("channel-insecure-symbolic"),
-            Some("Not secure: this page does not use a valid HTTPS connection"),
+            "dialog-warning-symbolic",
+            "Not secure: this page does not use a valid HTTPS connection",
             Some("insecure"),
         ),
-        Security::None => (None, None, None),
+        Security::None => ("system-search-symbolic", "Search or type a URL", None),
     };
-    url_entry.set_icon_from_icon_name(gtk::EntryIconPosition::Primary, icon);
-    url_entry.set_icon_tooltip_text(gtk::EntryIconPosition::Primary, tooltip);
+    url_entry.set_icon_from_icon_name(gtk::EntryIconPosition::Primary, Some(icon));
+    url_entry.set_icon_tooltip_text(gtk::EntryIconPosition::Primary, Some(tooltip));
     let style = url_entry.style_context();
     style.remove_class("secure");
     style.remove_class("insecure");
@@ -1626,7 +1654,7 @@ enum Security {
     Secure,
     /// Plain HTTP to a remote host, or HTTPS with certificate errors.
     Insecure,
-    /// Local, file:, about: and other pages: no indicator.
+    /// Local, file:, about: and other pages, and text being typed: neutral.
     None,
 }
 
@@ -1963,7 +1991,7 @@ fn run_shortcut(mgr: &Rc<RefCell<TabManagerInner>>, shortcut: Shortcut) {
             }
         }
         Shortcut::FindNext | Shortcut::FindPrevious => {
-            let visible = { mgr.borrow().find_bar.bar.is_visible() };
+            let visible = { mgr.borrow().find_bar.is_open() };
             if visible {
                 crate::find::find_step(mgr, shortcut == Shortcut::FindPrevious);
             } else {
@@ -2273,6 +2301,7 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     new_tab_btn.style_context().add_class("tab-new-btn");
     new_tab_btn.set_relief(gtk::ReliefStyle::None);
     new_tab_btn.set_focus_on_click(false);
+    new_tab_btn.set_valign(gtk::Align::Center);
     tab_bar.pack_start(&new_tab_btn, false, false, 0);
 
     root.pack_start(&tab_bar, false, false, 0);
@@ -2298,7 +2327,10 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
 
     let url_entry = gtk::Entry::new();
     url_entry.set_hexpand(true);
-    url_entry.set_placeholder_text(Some("Search or type a URL…"));
+    // No placeholder: GTK 3 drops it on focus, so Ctrl+L would make it blink.
+    if let Some(accessible) = url_entry.accessible() {
+        accessible.set_name("Search or type a URL");
+    }
     // Keep the window's minimum width small (X-24).
     url_entry.set_width_chars(8);
     url_entry.style_context().add_class("url-bar");
@@ -2311,7 +2343,7 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     root.pack_start(&sep2, false, false, 0);
 
     let find_bar = build_find_bar();
-    root.pack_start(&find_bar.bar, false, false, 0);
+    root.pack_start(&find_bar.revealer, false, false, 0);
 
     let stack = Stack::new();
     stack.style_context().add_class("void");
@@ -2733,6 +2765,24 @@ mod gtk_tests {
         assert!(!settings.enables_site_specific_quirks());
     }
 
+    /// Every status keeps a primary icon (so the text never shifts) and swaps
+    /// the theme class that colours it.
+    fn verify_address_bar_status() {
+        use super::{show_security, Security};
+        let entry = gtk::Entry::new();
+        let icon = |entry: &gtk::Entry| entry.icon_name(gtk::EntryIconPosition::Primary);
+        show_security(&entry, Security::Secure);
+        assert_eq!(icon(&entry).as_deref(), Some("channel-secure-symbolic"));
+        assert!(entry.style_context().has_class("secure"));
+        show_security(&entry, Security::Insecure);
+        assert_eq!(icon(&entry).as_deref(), Some("dialog-warning-symbolic"));
+        assert!(entry.style_context().has_class("insecure"));
+        assert!(!entry.style_context().has_class("secure"));
+        show_security(&entry, Security::None);
+        assert_eq!(icon(&entry).as_deref(), Some("system-search-symbolic"));
+        assert!(!entry.style_context().has_class("insecure"));
+    }
+
     /// Runs the main loop until `done` holds or `secs` pass.
     fn pump_until(secs: u64, done: impl Fn() -> bool) -> bool {
         let start = Instant::now();
@@ -2918,6 +2968,8 @@ mod gtk_tests {
             return;
         }
         crate::theme::verify_live_theme_switching();
+        crate::theme::verify_chrome_styling();
+        verify_address_bar_status();
         crate::privacy::verify_clear_data_feedback();
         verify_native_tab_selection_and_popup_address();
         let history_entry = crate::history::HistoryEntry {
@@ -3012,10 +3064,10 @@ mod gtk_tests {
 
         // A8: navigating to Home hides the find bar but keeps the query for the
         // next web page; the "No page to search" banner must not sit over Home.
-        assert!(mgr.borrow().find_bar.bar.is_visible());
+        assert!(mgr.borrow().find_bar.is_open());
         TabManager::navigate_home_for_selected(mgr);
         assert!(
-            pump_until(10, || !mgr.borrow().find_bar.bar.is_visible()),
+            pump_until(10, || !mgr.borrow().find_bar.is_open()),
             "find bar hides on the Home surface"
         );
         assert_eq!(find_entry.text().as_str(), "beta");

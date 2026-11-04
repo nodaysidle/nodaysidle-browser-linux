@@ -76,22 +76,20 @@ window.browser-window.tiled .browser-frame {
 }
 
 .tab-strip {
-  padding: 4px 8px;
+  padding: 4px 8px 0;
 }
 
+/* The transparent border keeps selection from shifting the pill. */
 .tab-pill {
   background-color: transparent;
-  border-radius: 8px;
-  padding: 2px 4px;
-  margin: 0 2px;
+  border-radius: 4px 4px 0 0;
+  border-bottom: 2px solid transparent;
+  padding: 2px 4px 0;
 }
 
 .tab-pill.selected {
   background-color: @selected;
-  box-shadow:
-    inset 3px 0 0 @accent,
-    inset 0 -2px 0 @accent,
-    inset 0 0 0 1px @hairline;
+  border-bottom-color: @accent;
 }
 
 .tab-pill-label {
@@ -115,14 +113,23 @@ window.browser-window.tiled .browser-frame {
 .tab-focus-list > .tab-focusable:focus {
   background-color: alpha(@accent, 0.28);
   box-shadow: inset 0 0 0 1px @accent;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
+/* Opacity, not visibility: the slot stays reserved so hovering never resizes
+   the pill or moves its neighbours. */
 .tab-close {
   color: @muted;
   padding: 2px;
   min-width: 20px;
   min-height: 20px;
+  opacity: 0;
+  transition: opacity 120ms ease-out;
+}
+
+.tab-pill.hover .tab-close,
+.tab-pill.selected .tab-close {
+  opacity: 1;
 }
 
 .tab-close:hover {
@@ -178,6 +185,10 @@ window.browser-window.tiled .browser-frame {
   border-radius: 8px;
   padding: 7px 12px;
   font-size: 13px;
+}
+
+.url-bar image.left {
+  color: @muted;
 }
 
 .url-bar.secure image.left {
@@ -261,14 +272,21 @@ window.browser-window.tiled .browser-frame {
 .find-entry {
   background-color: @surface;
   color: @text;
-  border: 1px solid @line;
+  border: 1px solid @border;
   border-radius: 8px;
+  box-shadow: none;
   padding: 4px 10px;
+  font-size: 13px;
   min-width: 0;
 }
 
 .find-entry:focus {
   border-color: @accent;
+  box-shadow: 0 0 0 1px alpha(@accent, 0.55);
+}
+
+.find-entry.find-found {
+  border-color: @secure;
 }
 
 .find-entry.find-none {
@@ -444,6 +462,7 @@ const DARK_PALETTE: &str = "
 @define-color text #e8e8ec;
 @define-color text_hover #d1d1d6;
 @define-color muted #949499;
+@define-color placeholder_text_color #949499;
 @define-color border #6a6a70;
 @define-color accent #75aaff;
 @define-color secure #7fc8a0;
@@ -462,6 +481,7 @@ const PAPER_PALETTE: &str = "
 @define-color text #2b2925;
 @define-color text_hover #3a3731;
 @define-color muted #5e594f;
+@define-color placeholder_text_color #5e594f;
 @define-color border #8a8376;
 @define-color accent #2c5aa0;
 @define-color secure #2d6e47;
@@ -588,6 +608,7 @@ pub fn load_omarchy_palette() -> Option<(String, bool)> {
 @define-color text {text};
 @define-color text_hover {text_strong};
 @define-color muted {muted};
+@define-color placeholder_text_color {muted};
 @define-color border {selected};
 @define-color accent {accent};
 @define-color secure {secure};
@@ -605,6 +626,8 @@ thread_local! {
 #[derive(Default)]
 struct ThemeState {
     palette: Option<CssProvider>,
+    /// CSS source of `palette`, read by `palette_colour`.
+    palette_source: Option<String>,
     choice: Option<ThemeChoice>,
     dark: bool,
     settings_file: Option<std::path::PathBuf>,
@@ -688,6 +711,27 @@ pub fn is_dark() -> bool {
     THEME.with(|theme| theme.borrow().dark)
 }
 
+/// The value of a colour token in `palette`.
+fn palette_token<'a>(palette: &'a str, name: &str) -> Option<&'a str> {
+    palette.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("@define-color ")?
+            .strip_prefix(name)?
+            .strip_prefix(' ')?
+            .strip_suffix(';')
+    })
+}
+
+/// A colour token of the active palette, so built-in pages match the chrome
+/// under any theme, including Omarchy ones. Paper until a theme is applied.
+pub fn palette_colour(name: &str) -> String {
+    THEME.with(|theme| {
+        let theme = theme.borrow();
+        let palette = theme.palette_source.as_deref().unwrap_or(PAPER_PALETTE);
+        palette_token(palette, name).unwrap_or_default().to_string()
+    })
+}
+
 /// Switches theme now and saves the choice for the next launch.
 pub fn choose(choice: ThemeChoice) {
     apply(choice);
@@ -748,6 +792,7 @@ fn apply(choice: ThemeChoice) {
         let mut theme = theme.borrow_mut();
         theme.choice = Some(choice);
         theme.dark = dark;
+        theme.palette_source = Some(source);
         theme.palette.replace(palette)
     });
     if let Some(previous) = previous {
@@ -775,6 +820,84 @@ fn apply(choice: ThemeChoice) {
         }
         settings.set_gtk_application_prefer_dark_theme(dark);
     }
+}
+
+/// Called from the GTK test: the computed styles the chrome relies on (F02).
+#[cfg(test)]
+pub(crate) fn verify_chrome_styling() {
+    use gtk::StateFlags;
+    fn rgb(rgba: gdk::RGBA) -> (u8, u8, u8) {
+        let channel = |value: f64| (value * 255.0).round() as u8;
+        (
+            channel(rgba.red()),
+            channel(rgba.green()),
+            channel(rgba.blue()),
+        )
+    }
+    install();
+    let window = gtk::Window::new(gtk::WindowType::Toplevel);
+    let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let pill = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    pill.style_context().add_class("tab-pill");
+    let close = gtk::Button::new();
+    close.style_context().add_class("tab-close");
+    pill.pack_start(&close, false, false, 0);
+    let url = gtk::Entry::new();
+    url.style_context().add_class("url-bar");
+    root.add(&pill);
+    root.add(&url);
+    window.add(&root);
+    window.show_all();
+
+    choose(ThemeChoice::Dark);
+    let style = pill.style_context();
+    let border = |style: &StyleContext| style.border(StateFlags::NORMAL);
+    let bottom = |style: &StyleContext| {
+        style
+            .style_property_for_state("border-bottom-color", StateFlags::NORMAL)
+            .get::<gdk::RGBA>()
+            .unwrap()
+    };
+    let radius = |style: &StyleContext| {
+        style
+            .style_property_for_state("border-radius", StateFlags::NORMAL)
+            .get::<i32>()
+            .unwrap()
+    };
+    assert_eq!(border(&style).bottom, 2);
+    assert_eq!(radius(&style), 4);
+    assert_eq!(bottom(&style).alpha(), 0.0);
+    // CSS opacity, which `WidgetExt::opacity` does not report.
+    let close_opacity = close
+        .style_context()
+        .style_property_for_state("opacity", StateFlags::NORMAL)
+        .get::<f64>()
+        .unwrap();
+    assert_eq!(close_opacity, 0.0);
+    style.add_class("selected");
+    // Selection adds the accent without changing the border box.
+    assert_eq!(border(&style).bottom, 2);
+    assert_eq!(rgb(bottom(&style)), (0x75, 0xaa, 0xff));
+    assert_eq!(
+        rgb(url
+            .style_context()
+            .lookup_color("placeholder_text_color")
+            .unwrap()),
+        (0x94, 0x94, 0x99)
+    );
+    choose(ThemeChoice::Paper);
+    assert_eq!(rgb(bottom(&style)), (0x2c, 0x5a, 0xa0));
+    assert_eq!(palette_colour("bg"), "#f3efe6");
+    assert_eq!(
+        rgb(url
+            .style_context()
+            .lookup_color("placeholder_text_color")
+            .unwrap()),
+        (0x5e, 0x59, 0x4f)
+    );
+    choose(ThemeChoice::Dark);
+    assert_eq!(palette_colour("bg"), "#151518");
+    window.close();
 }
 
 /// Called from the GTK test: switching theme restyles live widgets, the
@@ -821,7 +944,22 @@ pub(crate) fn verify_live_theme_switching() {
 
 #[cfg(test)]
 mod tests {
-    use super::{effective_frame_inset, light_variant, parse_hyprland_rounding_json};
+    use super::{
+        effective_frame_inset, light_variant, palette_token, parse_hyprland_rounding_json,
+        DARK_PALETTE, PAPER_PALETTE,
+    };
+
+    #[test]
+    fn palette_tokens_are_read_by_their_exact_name() {
+        assert_eq!(palette_token(DARK_PALETTE, "bg"), Some("#151518"));
+        assert_eq!(palette_token(PAPER_PALETTE, "text"), Some("#2b2925"));
+        // "text" must not match "text_strong".
+        assert_eq!(
+            palette_token("@define-color text_strong #000;", "text"),
+            None
+        );
+        assert_eq!(palette_token(PAPER_PALETTE, "missing"), None);
+    }
 
     #[test]
     fn paper_uses_the_light_variant_of_the_gtk_theme() {

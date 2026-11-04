@@ -1,3 +1,4 @@
+use atk::prelude::*;
 use glib::clone;
 use gtk::prelude::*;
 use gtk::{Box as GtkBox, Entry, Label, Orientation};
@@ -28,9 +29,11 @@ pub fn build_home_surface() -> (GtkBox, Entry) {
     search.set_hexpand(true);
     search.set_width_chars(12);
     search.set_max_width_chars(52);
-    // Distinct from the address bar above it, and the pill lights up while it
-    // has focus, so it is clear which of the two fields is active (I-4).
-    search.set_placeholder_text(Some("Search DuckDuckGo or type a URL"));
+    // No placeholder: GTK 3 drops it on focus, so it would blink as focus
+    // moves. The hint below stays put and the pill lights up on focus (I-4).
+    if let Some(accessible) = search.accessible() {
+        accessible.set_name("Search DuckDuckGo or type a URL");
+    }
     search.style_context().add_class("home-search-entry");
     let proceed = glib::Propagation::Proceed;
     search.connect_focus_in_event(clone!(@weak pill => @default-return proceed, move |_, _| {
@@ -44,8 +47,6 @@ pub fn build_home_surface() -> (GtkBox, Entry) {
 
     pill.pack_start(&search, true, true, 0);
 
-    // GTK 3 hides the placeholder while the field has focus, and this field is
-    // focused on every new tab, so the hint also sits under the pill.
     let hint = Label::new(Some("Search DuckDuckGo or type a URL, then press Enter"));
     hint.style_context().add_class("home-hint");
     hint.set_line_wrap(true);

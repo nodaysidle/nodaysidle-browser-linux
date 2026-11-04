@@ -1,5 +1,5 @@
 //! Built-in pages shown in place of a page that failed to load (X-21) or
-//! whose web process went away (X-27). They match the browser's dark chrome.
+//! whose web process went away (X-27). They use the active theme's tokens.
 
 /// Escapes text for use in HTML element content and quoted attributes.
 pub fn html_escape(text: &str) -> String {
@@ -93,16 +93,22 @@ fn page(heading: &str, uri: &str, details: &[&str], button: &str) -> String {
             )
         })
         .unwrap_or_default();
-    // Same colours as the browser chrome's active palette (theme.rs).
-    let (scheme, bg, text, muted, surface, border, accent) = if crate::theme::is_dark() {
-        (
-            "dark", "#151518", "#e8e8ec", "#949499", "#202022", "#6a6a70", "#75aaff",
-        )
+    let scheme = if crate::theme::is_dark() {
+        "dark"
     } else {
-        (
-            "light", "#f3efe6", "#2b2925", "#5e594f", "#f8f5ee", "#8a8376", "#2c5aa0",
-        )
+        "light"
     };
+    use crate::theme::palette_colour;
+    let (bg, text, muted) = (
+        palette_colour("bg"),
+        palette_colour("text"),
+        palette_colour("muted"),
+    );
+    let (surface, border, accent) = (
+        palette_colour("surface"),
+        palette_colour("border"),
+        palette_colour("accent"),
+    );
     format!(
         r#"<!doctype html>
 <html><head><meta charset="utf-8"><title>{heading}</title>

@@ -13,16 +13,23 @@ use std::rc::Rc;
 use webkit2gtk::{FindControllerExt, FindOptions, WebView, WebViewExt};
 
 pub(crate) const FIND_MAX_MATCHES: u32 = 1_000;
+const FIND_REVEAL_MS: u32 = 120;
 const FIND_TYPING_PAUSE: std::time::Duration = std::time::Duration::from_millis(120);
 
 #[derive(Clone)]
 pub struct FindBar {
-    pub(crate) bar: GtkBox,
+    pub(crate) revealer: gtk::Revealer,
     pub(crate) entry: gtk::Entry,
     pub(crate) status: Label,
     pub(crate) previous: Button,
     pub(crate) next: Button,
     pub(crate) close: Button,
+}
+
+impl FindBar {
+    pub(crate) fn is_open(&self) -> bool {
+        self.revealer.reveals_child()
+    }
 }
 
 pub(crate) fn build_find_bar() -> FindBar {
@@ -49,15 +56,15 @@ pub(crate) fn build_find_bar() -> FindBar {
     bar.pack_start(&next, false, false, 0);
     bar.pack_start(&status, false, false, 0);
     bar.pack_end(&close, false, false, 0);
-    for child in bar.children() {
-        child.show_all();
-    }
-    // Hidden until Ctrl+F; `window.show_all()` must not reveal it.
-    bar.set_no_show_all(true);
-    bar.hide();
+    // Closed until Ctrl+F; `window.show_all()` does not open a revealer.
+    let revealer = gtk::Revealer::new();
+    revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
+    revealer.set_transition_duration(FIND_REVEAL_MS);
+    revealer.add(&bar);
+    revealer.show_all();
 
     FindBar {
-        bar,
+        revealer,
         entry,
         status,
         previous,
@@ -136,7 +143,7 @@ fn find_target(mgr: &Rc<RefCell<TabManagerInner>>) -> (FindBar, Option<WebView>)
 
 pub(crate) fn show_find_bar(mgr: &Rc<RefCell<TabManagerInner>>) {
     let find_bar = mgr.borrow().find_bar.clone();
-    find_bar.bar.show();
+    find_bar.revealer.set_reveal_child(true);
     find_bar.entry.grab_focus();
     find_bar.entry.select_region(0, -1);
     run_find(mgr);
@@ -147,7 +154,7 @@ pub(crate) fn hide_find_bar(mgr: &Rc<RefCell<TabManagerInner>>) {
     if let Some(controller) = view.as_ref().and_then(|view| view.find_controller()) {
         controller.search_finish();
     }
-    find_bar.bar.hide();
+    find_bar.revealer.set_reveal_child(false);
     set_find_status(&find_bar, FindStatus::Idle);
     if let Some(view) = view {
         view.grab_focus();
@@ -167,19 +174,19 @@ pub(crate) fn hide_find_bar_for_home(mgr: &Rc<RefCell<TabManagerInner>>, tab_id:
             .and_then(|tab| tab.webview.clone());
         (inner.find_bar.clone(), view)
     };
-    if !find_bar.bar.is_visible() {
+    if !find_bar.is_open() {
         return;
     }
     if let Some(controller) = view.and_then(|view| view.find_controller()) {
         controller.search_finish();
     }
-    find_bar.bar.hide();
+    find_bar.revealer.set_reveal_child(false);
     set_find_status(&find_bar, FindStatus::Idle);
 }
 
 pub(crate) fn run_find(mgr: &Rc<RefCell<TabManagerInner>>) {
     let (find_bar, view) = find_target(mgr);
-    if !find_bar.bar.is_visible() {
+    if !find_bar.is_open() {
         return;
     }
     let text = find_bar.entry.text();
@@ -290,5 +297,10 @@ pub(crate) fn set_find_status(find_bar: &FindBar, status: FindStatus) {
         style.add_class("find-none");
     } else {
         style.remove_class("find-none");
+    }
+    if matches!(status, FindStatus::Found(_)) {
+        style.add_class("find-found");
+    } else {
+        style.remove_class("find-found");
     }
 }
