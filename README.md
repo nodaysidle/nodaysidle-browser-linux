@@ -240,7 +240,8 @@ src/
 ## Privacy model
 
 - No telemetry, analytics, or remote tracking infrastructure. The browser contacts no external servers outside of requested web pages, except for explicit user clicks in the assistant panel (`api.typesafe.ai` and `api.anthropic.com`).
-- Website cookies persist locally in `~/.local/share/nodaysidle-browser/webkit-data/cookies.sqlite` with strict file permissions (`0600`).
+- Website cookies persist locally in `~/.local/share/nodaysidle-browser/webkit-data/cookies.sqlite` with strict file permissions (`0600`). Third-party cookies are accepted so that OAuth sign-in flows keep their session.
+- Every page receives a Chrome on Linux User-Agent, because Google refuses sign-in from the default WebKit identifier.
 - Browsing history is stored in `~/.local/share/nodaysidle-browser/history.json` (`0600`), written in the background and flushed atomically on exit or signals (`SIGTERM`, `SIGINT`, `SIGHUP`).
 - Web rendering executes inside WebKitGTK sandboxed web processes.
 - Device permissions for location, camera, microphone, notifications, and pointer lock require explicit confirmation. Denials persist per-site during the session until cleared or on browser exit.

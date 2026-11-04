@@ -1,8 +1,14 @@
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use webkit2gtk::{
-    CookieManagerExt, CookiePersistentStorage, WebContext, WebContextExt, WebsiteDataManager,
+    CookieAcceptPolicy, CookieManagerExt, CookiePersistentStorage, WebContext, WebContextExt,
+    WebsiteDataManager,
 };
+
+/// Google refuses sign-in from WebKit's default identifier ("This browser or
+/// app may not be secure"), so every view presents as Chrome on Linux.
+pub const CHROME_LINUX_USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 \
+     (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
 #[derive(Debug, Clone)]
 pub struct ProfileSetupError(String);
@@ -48,6 +54,8 @@ pub fn persistent_web_context(data_root: &Path) -> Result<WebContext, ProfileSet
             &cookie_path.to_string_lossy(),
             CookiePersistentStorage::Sqlite,
         );
+        // OAuth redirects set session cookies from third-party origins.
+        cookie_manager.set_accept_policy(CookieAcceptPolicy::Always);
     }
     Ok(web_context)
 }

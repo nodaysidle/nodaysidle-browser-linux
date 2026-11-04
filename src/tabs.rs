@@ -1375,6 +1375,7 @@ fn configure_view(webview: &WebView) {
         settings.set_enable_javascript(true);
         settings.set_enable_html5_database(true);
         settings.set_enable_html5_local_storage(true);
+        settings.set_user_agent(Some(crate::profile::CHROME_LINUX_USER_AGENT));
     }
 }
 
@@ -2716,7 +2717,17 @@ mod gtk_tests {
     use std::cell::{Cell, RefCell};
     use std::rc::Rc;
     use std::time::{Duration, Instant};
-    use webkit2gtk::{SettingsExt, WebContextExt, WebView, WebViewExt};
+    use webkit2gtk::{
+        CookieAcceptPolicy, CookieManagerExt, SettingsExt, WebContextExt, WebView, WebViewExt,
+    };
+
+    fn assert_chrome_user_agent(view: &WebView) {
+        let agent = WebViewExt::settings(view).and_then(|settings| settings.user_agent());
+        assert_eq!(
+            agent.as_deref(),
+            Some(crate::profile::CHROME_LINUX_USER_AGENT)
+        );
+    }
 
     /// Runs the main loop until `done` holds or `secs` pass.
     fn pump_until(secs: u64, done: impl Fn() -> bool) -> bool {
@@ -2925,6 +2936,16 @@ mod gtk_tests {
         ));
         let web_context = crate::profile::persistent_web_context(&dir).expect("profile");
         assert!(web_context.is_sandbox_enabled());
+        let policy = Rc::new(Cell::new(None));
+        let read_policy = policy.clone();
+        web_context
+            .cookie_manager()
+            .expect("cookie manager")
+            .accept_policy(gio::Cancellable::NONE, move |result| {
+                read_policy.set(Some(result.expect("cookie accept policy")));
+            });
+        assert!(pump_until(10, || policy.get().is_some()));
+        assert_eq!(policy.get(), Some(CookieAcceptPolicy::Always));
 
         let window = gtk::ApplicationWindow::builder().default_width(900).build();
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -2951,6 +2972,7 @@ mod gtk_tests {
         assert!(pump_until(20, || views
             .iter()
             .all(|view| !view.is_loading())));
+        assert_chrome_user_agent(&views[0]);
         let finalized: Vec<_> = views.iter().map(finalized_flag).collect();
         drop(views);
         let [first, second, third] = [page_tabs[0], page_tabs[1], page_tabs[2]];
@@ -3008,6 +3030,7 @@ mod gtk_tests {
             "window.open opened a tab"
         );
         let created = *ids(mgr).iter().find(|id| !before.contains(id)).unwrap();
+        assert_chrome_user_agent(&view_of(mgr, created));
         let created_finalized = finalized_flag(&view_of(mgr, created));
         click_close(mgr, created);
         pump();
