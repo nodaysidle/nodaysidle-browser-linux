@@ -1,13 +1,16 @@
+use gio::prelude::*;
 use gtk::prelude::*;
 use gtk::{CssProvider, StyleContext};
 use std::sync::OnceLock;
 
 /// Fallback inset when compositor rounding cannot be detected (pixels).
-pub const WINDOW_CORNER_INSET_PX: i32 = 8;
+/// Edge-flush on Linux (0px) to prevent fake macOS floating-island inner margins.
+pub const WINDOW_CORNER_INSET_PX: i32 = 0;
 
 /// `hyprctl` is spawned at most once per process: the decoration rounding never
 /// changes while the browser runs, and the old code shelled out on startup and
 /// on every `is-maximized` notification, which could block the main loop.
+#[allow(dead_code)]
 static HYPRLAND_ROUNDING: OnceLock<Option<i32>> = OnceLock::new();
 
 const STYLESHEET: &str = r#"
@@ -290,7 +293,7 @@ window.browser-window.tiled .browser-frame {
 
 pub fn window_corner_inset_px() -> i32 {
     // The environment override stays dynamic so tests and runtime tweaks can
-    // change it; only the `hyprctl` probe is cached.
+    // change it.
     if let Ok(raw) = std::env::var("NODAYSIDLE_CORNER_INSET") {
         if let Ok(value) = raw.parse::<i32>() {
             if value >= 0 {
@@ -298,13 +301,11 @@ pub fn window_corner_inset_px() -> i32 {
             }
         }
     }
-    HYPRLAND_ROUNDING
-        .get_or_init(hyprland_rounding_px)
-        .to_owned()
-        .unwrap_or(WINDOW_CORNER_INSET_PX)
+    WINDOW_CORNER_INSET_PX
 }
 
 /// Reads Hyprland `decoration:rounding` when `hyprctl` is available.
+#[allow(dead_code)]
 fn hyprland_rounding_px() -> Option<i32> {
     // Only a Hyprland session sets this; skip the spawn everywhere else.
     std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")?;
@@ -491,6 +492,112 @@ impl ThemeChoice {
     }
 }
 
+/// Reads active Omarchy theme colors from ~/.config/omarchy/current_theme
+/// and loads the corresponding colors.toml.
+pub fn load_omarchy_palette() -> Option<(String, bool)> {
+    let home = dirs::home_dir()?;
+    let current_theme_file = home.join(".config/omarchy/current_theme");
+    let slug = std::fs::read_to_string(&current_theme_file)
+        .ok()?
+        .trim()
+        .to_string();
+    if slug.is_empty() {
+        return None;
+    }
+
+    let user_theme = home.join(format!(".config/omarchy/themes/{slug}/colors.toml"));
+    let sys_theme =
+        std::path::PathBuf::from(format!("/usr/share/omarchy/themes/{slug}/colors.toml"));
+
+    let path = if user_theme.exists() {
+        user_theme
+    } else if sys_theme.exists() {
+        sys_theme
+    } else {
+        return None;
+    };
+
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let mut map = std::collections::HashMap::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || !trimmed.contains('=') {
+            continue;
+        }
+        let mut parts = trimmed.splitn(2, '=');
+        if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+            let key = k.trim().to_string();
+            let val = v
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .trim()
+                .to_string();
+            map.insert(key, val);
+        }
+    }
+
+    let mode = map
+        .get("mode")
+        .cloned()
+        .unwrap_or_else(|| "dark".to_string());
+    let is_dark = mode != "light";
+
+    let bg = map.get("background")?.clone();
+    let chrome = map
+        .get("darker_background")
+        .or_else(|| map.get("dark_background"))
+        .unwrap_or(&bg)
+        .clone();
+    let surface = map.get("lighter_background").unwrap_or(&bg).clone();
+    let selected = map.get("selection").unwrap_or(&surface).clone();
+    let text = map
+        .get("foreground")
+        .unwrap_or(&"#e8e8ec".to_string())
+        .clone();
+    let text_strong = map.get("bright_foreground").unwrap_or(&text).clone();
+    let muted = map
+        .get("muted")
+        .or_else(|| map.get("dark_foreground"))
+        .unwrap_or(&"#949499".to_string())
+        .clone();
+    let accent = map.get("accent").unwrap_or(&"#75aaff".to_string()).clone();
+    let secure = map.get("green").unwrap_or(&"#7fc8a0".to_string()).clone();
+    let insecure = map
+        .get("yellow")
+        .or_else(|| map.get("orange"))
+        .unwrap_or(&"#e5a46a".to_string())
+        .clone();
+    let error = map.get("red").unwrap_or(&"#e06c75".to_string()).clone();
+
+    let (line, hairline) = if is_dark {
+        ("rgba(255, 255, 255, 0.09)", "rgba(255, 255, 255, 0.07)")
+    } else {
+        ("rgba(0, 0, 0, 0.12)", "rgba(0, 0, 0, 0.08)")
+    };
+
+    let css = format!(
+        r#"
+@define-color bg {bg};
+@define-color chrome {chrome};
+@define-color surface {surface};
+@define-color selected {selected};
+@define-color line {line};
+@define-color hairline {hairline};
+@define-color text_strong {text_strong};
+@define-color text {text};
+@define-color text_hover {text_strong};
+@define-color muted {muted};
+@define-color border {selected};
+@define-color accent {accent};
+@define-color secure {secure};
+@define-color insecure {insecure};
+@define-color error {error};
+"#
+    );
+    Some((css, is_dark))
+}
+
 thread_local! {
     static THEME: std::cell::RefCell<ThemeState> = std::cell::RefCell::new(ThemeState::default());
 }
@@ -505,6 +612,8 @@ struct ThemeState {
     interface: Option<gio::Settings>,
     /// The user's GTK theme name at startup, e.g. "Adwaita-dark".
     gtk_theme: Option<String>,
+    /// Active file monitor for Omarchy theme changes
+    omarchy_monitor: Option<gio::FileMonitor>,
 }
 
 pub fn install() {
@@ -530,7 +639,30 @@ pub fn install() {
             }
         });
     }
-    THEME.with(|theme| theme.borrow_mut().interface = interface);
+
+    // Monitor Omarchy active theme file for live theme sync
+    let omarchy_monitor = dirs::home_dir().and_then(|home| {
+        let theme_file = home.join(".config/omarchy/current_theme");
+        let file = gio::File::for_path(&theme_file);
+        file.monitor_file(gio::FileMonitorFlags::NONE, gio::Cancellable::NONE)
+            .ok()
+    });
+
+    if let Some(ref monitor) = omarchy_monitor {
+        monitor.connect_changed(|_, _, _, _| {
+            glib::idle_add_local_once(|| {
+                if current_choice() == ThemeChoice::System {
+                    apply(ThemeChoice::System);
+                }
+            });
+        });
+    }
+
+    THEME.with(|theme| {
+        let mut t = theme.borrow_mut();
+        t.interface = interface;
+        t.omarchy_monitor = omarchy_monitor;
+    });
     apply(ThemeChoice::System);
 }
 
@@ -584,15 +716,21 @@ fn light_variant(theme: &str) -> String {
 }
 
 fn apply(choice: ThemeChoice) {
-    let dark = match choice {
-        ThemeChoice::Dark => true,
-        ThemeChoice::Paper => false,
+    let (source, dark) = match choice {
+        ThemeChoice::Dark => (DARK_PALETTE.to_string(), true),
+        ThemeChoice::Paper => (PAPER_PALETTE.to_string(), false),
         ThemeChoice::System => {
-            THEME.with(|theme| system_prefers_dark(theme.borrow().interface.as_ref()))
+            if let Some((omarchy_css, is_dark)) = load_omarchy_palette() {
+                (omarchy_css, is_dark)
+            } else {
+                let dark =
+                    THEME.with(|theme| system_prefers_dark(theme.borrow().interface.as_ref()));
+                let src = if dark { DARK_PALETTE } else { PAPER_PALETTE };
+                (src.to_string(), dark)
+            }
         }
     };
     let palette = CssProvider::new();
-    let source = if dark { DARK_PALETTE } else { PAPER_PALETTE };
     if palette.load_from_data(source.as_bytes()).is_err() {
         return;
     }
