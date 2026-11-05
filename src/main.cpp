@@ -9,6 +9,7 @@
 #include <QWebEngineSettings>
 #include <QQuickWebEngineProfile>
 
+#include "auth_interceptor.h"
 #include "backend.h"
 #include "theme.h"
 
@@ -47,7 +48,8 @@ int main(int argc, char *argv[]) {
     defaultProfile->setPersistentStoragePath(dataPath);
     defaultProfile->setCachePath(dataPath + "/cache");
     defaultProfile->setPersistentCookiesPolicy(QQuickWebEngineProfile::ForcePersistentCookies);
-    defaultProfile->setHttpUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
+    defaultProfile->setHttpUserAgent("Mozilla/5.0 (X11; Linux x86_64; rv:135.0) Gecko/20100101 Firefox/135.0");
+    defaultProfile->setUrlRequestInterceptor(new GoogleAuthInterceptor(defaultProfile));
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("theme", &theme);
