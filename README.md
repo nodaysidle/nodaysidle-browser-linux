@@ -81,8 +81,8 @@ Reference machine: Intel Core Ultra 7 155H, Intel Arc iGPU, Mesa 26.2.5, 2560x14
 | CPU at idle (10 s, all four processes) | 0.00 % |
 | Memory, one tab (proportional, all processes) | 273 MB |
 | Page animation, 300 moving sprites | steady 60 fps, no dropped frames |
-| Arch package (download) | 151 KiB (154,712 bytes) |
-| Tarball (download) | 154 KiB (157,563 bytes) |
+| Arch package (download) | 151 KiB (154,526 bytes) |
+| Tarball (download) | 154 KiB (157,529 bytes) |
 | Installed size of the package | 294 KiB |
 | Stripped binary | 338 KiB |
 
