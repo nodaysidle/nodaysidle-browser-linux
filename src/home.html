@@ -5,14 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>nodaysidle</title>
   <style>
+    :root {
+      --bg: #090A0C; --surface: #14171A; --line: #1E293B; --text: #94A3B8;
+      --strong: #F8FAFC; --muted: #64748B; --accent: #CBD5E1; --radius: 12px;
+    }
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
     }
     body {
-      background-color: #090A0C;
-      color: #F8FAFC;
+      background-color: var(--bg);
+      color: var(--strong);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       display: flex;
       flex-direction: column;
@@ -40,7 +44,7 @@
       font-size: 32px;
       font-weight: 700;
       letter-spacing: -0.5px;
-      color: #F8FAFC;
+      color: var(--strong);
     }
     .search-box {
       width: 100%;
@@ -50,21 +54,19 @@
       width: 100%;
       padding: 16px 20px;
       font-size: 15px;
-      border-radius: 12px;
-      border: 1px solid #1E293B;
-      background: #14171A;
-      color: #FFFFFF;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--strong);
       outline: none;
       transition: all 0.2s ease;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+      
     }
     .search-input:focus {
-      border-color: #64748B;
-      background: #1A1E24;
-      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+      border-color: var(--accent);
     }
     .search-input::placeholder {
-      color: #64748B;
+      color: var(--muted);
     }
     .tiles {
       display: grid;
@@ -78,10 +80,10 @@
       align-items: center;
       justify-content: center;
       padding: 18px 12px;
-      border-radius: 12px;
-      background: #14171A;
-      border: 1px solid #1E293B;
-      color: #94A3B8;
+      border-radius: var(--radius);
+      background: var(--surface);
+      border: 1px solid var(--line);
+      color: var(--text);
       text-decoration: none;
       font-size: 13px;
       font-weight: 500;
@@ -89,9 +91,8 @@
       gap: 10px;
     }
     .tile:hover {
-      background: #1E293B;
-      border-color: #475569;
-      color: #FFFFFF;
+      border-color: var(--accent);
+      color: var(--strong);
       transform: translateY(-2px);
     }
     .tile-badge {
@@ -104,9 +105,9 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      background: #090A0C;
-      color: #CBD5E1;
-      border: 1px solid #26292E;
+      background: var(--bg);
+      color: var(--accent);
+      border: 1px solid var(--line);
     }
   </style>
 </head>

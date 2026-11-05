@@ -1,26 +1,10 @@
 [package]
 name = "nodaysidle-browser"
-version = "0.2.2"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.88"
-description = "Quiet WebKit browser for Linux (nodaysidle)"
+description = "Quiet Qt 6 WebEngine browser for Omarchy (nodaysidle)"
 license = "MIT"
-
-[dependencies]
-atk = "0.18"
-chrono = { version = "0.4", features = ["serde"] }
-dirs = "6"
-gio = "0.18"
-glib = "0.18"
-gdk = "0.18"
-gtk = "0.18"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-soup3 = "0.5"
-javascriptcore-rs = "1"
-idna = "1"
-url = "2"
-webkit2gtk = { version = "2.0", features = ["v2_40"] }
 
 [profile.release]
 lto = "thin"

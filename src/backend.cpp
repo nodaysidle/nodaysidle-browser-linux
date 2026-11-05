@@ -2,7 +2,9 @@
 
 #include <QDir>
 #include <QFile>
+#include <QClipboard>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -11,6 +13,7 @@
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUrlQuery>
+#include <memory>
 
 Backend::Backend(QObject *parent) : QObject(parent) {
     loadKeys();
@@ -58,8 +61,8 @@ QString Backend::findKeyInFish(const QString &target) {
     if (vars.open(QIODevice::ReadOnly | QIODevice::Text)) {
         while (!vars.atEnd()) {
             QString line = QString::fromUtf8(vars.readLine());
-            if (line.contains(target + ":")) {
-                int idx = line.indexOf(target + ":");
+            if (line.contains(" " + target + ":")) {
+                int idx = line.indexOf(" " + target + ":") + 1;
                 QString val = line.mid(idx + target.length() + 1).trimmed();
                 if (!val.isEmpty())
                     return val;
@@ -72,8 +75,7 @@ QString Backend::findKeyInFish(const QString &target) {
 
 void Backend::loadBookmarks() {
     m_bookmarks.clear();
-    const QString dataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QFile file(dataPath + "/nodaysidle-browser/bookmarks.json");
+    QFile file(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/bookmarks.json");
     if (file.open(QIODevice::ReadOnly)) {
         const auto doc = QJsonDocument::fromJson(file.readAll());
         if (doc.isArray()) {
@@ -103,8 +105,8 @@ void Backend::loadBookmarks() {
 
 void Backend::saveBookmarks() {
     const QString dataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    QDir().mkpath(dataPath + "/nodaysidle-browser");
-    QFile file(dataPath + "/nodaysidle-browser/bookmarks.json");
+    QDir().mkpath(dataPath);
+    QFile file(dataPath + "/bookmarks.json");
     if (file.open(QIODevice::WriteOnly)) {
         QJsonArray arr;
         for (const auto &v : m_bookmarks) {
@@ -157,13 +159,36 @@ void Backend::removeBookmark(const QString &url) {
     }
 }
 
+QString Backend::readResource(const QString &path) const {
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+}
+
+void Backend::copyText(const QString &text) {
+    QGuiApplication::clipboard()->setText(text);
+}
+
 QString Backend::normalizeUrl(const QString &input) {
     const QString trimmed = input.trimmed();
     if (trimmed.isEmpty())
         return "about:blank";
 
-    if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("about:") || trimmed.startsWith("qrc:"))
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("about:") ||
+        trimmed.startsWith("qrc:") || trimmed.startsWith("file:"))
         return trimmed;
+
+    const bool pathLike = trimmed.startsWith('/') || trimmed.startsWith("./") || trimmed.startsWith("../") || trimmed.startsWith("~/");
+    if (pathLike) {
+        const QString path = trimmed.startsWith("~/") ? QDir::homePath() + trimmed.mid(1) : trimmed;
+        if (QFileInfo::exists(path))
+            return QUrl::fromLocalFile(QFileInfo(path).absoluteFilePath()).toString();
+    }
+
+    // Local servers speak plain http: localhost, IP literals and host:port.
+    static const QRegularExpression local(
+        R"(^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]|[^\s/:]+:\d+)(:\d+)?([/?#]\S*)?$)");
+    if (local.match(trimmed).hasMatch())
+        return "http://" + trimmed;
 
     // Check if it looks like a domain (has dot and no whitespace)
     if (!trimmed.contains(' ') && trimmed.contains('.'))
@@ -179,9 +204,9 @@ QString Backend::normalizeUrl(const QString &input) {
 
 void Backend::cancelAssistant() {
     if (m_activeReply) {
-        m_activeReply->abort();
-        m_activeReply->deleteLater();
+        auto *reply = m_activeReply;
         m_activeReply = nullptr;
+        reply->abort();
     }
 }
 
@@ -215,42 +240,39 @@ void Backend::askAssistant(const QString &title, const QString &url, const QStri
     messages.append(msg);
     body["messages"] = messages;
 
-    m_activeReply = m_nam.post(request, QJsonDocument(body).toJson());
+    QNetworkReply *reply = m_nam.post(request, QJsonDocument(body).toJson());
+    m_activeReply = reply;
 
-    connect(m_activeReply, &QNetworkReply::readyRead, this, [this]() {
-        if (!m_activeReply)
-            return;
-        while (m_activeReply->canReadLine()) {
-            QByteArray line = m_activeReply->readLine().trimmed();
-            if (line.startsWith("data: ")) {
-                QByteArray data = line.mid(6);
-                if (data == "[DONE]") {
-                    emit assistantDone();
-                    return;
-                }
-                auto doc = QJsonDocument::fromJson(data);
-                if (doc.isObject()) {
-                    auto obj = doc.object();
-                    if (obj["type"].toString() == "content_block_delta") {
-                        QString chunk = obj["delta"].toObject()["text"].toString();
-                        if (!chunk.isEmpty())
-                            emit assistantChunk(chunk);
-                    }
-                }
+    auto pending = std::make_shared<QByteArray>();
+    connect(reply, &QNetworkReply::readyRead, this, [this, reply, pending]() {
+        pending->append(reply->readAll());
+        qsizetype newline;
+        while ((newline = pending->indexOf('\n')) >= 0) {
+            const QByteArray line = pending->left(newline).trimmed();
+            pending->remove(0, newline + 1);
+            if (!line.startsWith("data: "))
+                continue;
+            const auto obj = QJsonDocument::fromJson(line.mid(6)).object();
+            if (obj["type"].toString() == "content_block_delta") {
+                const QString chunk = obj["delta"].toObject()["text"].toString();
+                if (!chunk.isEmpty())
+                    emit assistantChunk(chunk);
             }
         }
     });
 
-    connect(m_activeReply, &QNetworkReply::finished, this, [this]() {
-        if (!m_activeReply)
-            return;
-        if (m_activeReply->error() != QNetworkReply::NoError && m_activeReply->error() != QNetworkReply::OperationCanceledError) {
-            emit assistantError(m_activeReply->errorString());
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        if (reply == m_activeReply)
+            m_activeReply = nullptr;
+        if (reply->error() == QNetworkReply::OperationCanceledError) {
+            emit assistantDone();
+        } else if (reply->error() != QNetworkReply::NoError) {
+            const QString detail = QJsonDocument::fromJson(reply->readAll()).object()["error"].toObject()["message"].toString();
+            emit assistantError(detail.isEmpty() ? reply->errorString() : detail);
         } else {
             emit assistantDone();
         }
-        m_activeReply->deleteLater();
-        m_activeReply = nullptr;
+        reply->deleteLater();
     });
 }
 

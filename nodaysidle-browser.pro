@@ -6,8 +6,7 @@ TEMPLATE = app
 
 HEADERS += \
     src/backend.h \
-    src/theme.h \
-    src/auth_interceptor.h
+    src/theme.h
 
 SOURCES += \
     src/main.cpp \

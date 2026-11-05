@@ -2,5 +2,8 @@
     <qresource prefix="/">
         <file>Main.qml</file>
         <file>home.html</file>
+        <file>chrome_app.js</file>
+        <file>ThemedMenu.qml</file>
+        <file>ThemedMenuItem.qml</file>
     </qresource>
 </RCC>

@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariantList>
 #include <QVariantMap>
 #include <QNetworkAccessManager>
@@ -13,7 +14,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool hasAnthropicKey READ hasAnthropicKey CONSTANT)
     Q_PROPERTY(bool hasJevKey READ hasJevKey CONSTANT)
     Q_PROPERTY(QString homeUrl READ homeUrl CONSTANT)
-    Q_PROPERTY(QString initialUrl READ initialUrl CONSTANT)
+    Q_PROPERTY(QStringList initialUrls READ initialUrls CONSTANT)
 
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -23,13 +24,15 @@ public:
     bool hasAnthropicKey() const { return !m_anthropicKey.isEmpty(); }
     bool hasJevKey() const { return !m_jevKey.isEmpty(); }
     QString homeUrl() const;
-    QString initialUrl() const { return m_initialUrl.isEmpty() ? homeUrl() : m_initialUrl; }
-    void setInitialUrl(const QString &url) { m_initialUrl = url; }
+    QStringList initialUrls() const { return m_initialUrls; }
+    void setInitialUrls(const QStringList &urls) { m_initialUrls = urls; }
 
     Q_INVOKABLE QString normalizeUrl(const QString &input);
     Q_INVOKABLE bool isBookmarked(const QString &url);
     Q_INVOKABLE void toggleBookmark(const QString &title, const QString &url);
     Q_INVOKABLE void removeBookmark(const QString &url);
+    Q_INVOKABLE void copyText(const QString &text);
+    Q_INVOKABLE QString readResource(const QString &path) const;
 
     // AI Assistant
     Q_INVOKABLE void askAssistant(const QString &title, const QString &url, const QString &text, const QString &prompt);
@@ -37,6 +40,8 @@ public:
     Q_INVOKABLE void cancelAssistant();
 
 signals:
+    void openRequested(const QString &url);
+    void notice(const QString &text);
     void bookmarksChanged();
     void assistantChunk(const QString &text);
     void assistantDone();
@@ -50,7 +55,7 @@ private:
     QString findKeyInFish(const QString &target);
 
     QVariantList m_bookmarks;
-    QString m_initialUrl;
+    QStringList m_initialUrls;
     QString m_anthropicKey;
     QString m_jevKey;
     QNetworkAccessManager m_nam;

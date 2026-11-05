@@ -1,4 +1,7 @@
 #include <QGuiApplication>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <unistd.h>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -7,9 +10,10 @@
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
+#include <QtWebEngineCore/qtwebenginecoreglobal.h>
 #include <QQuickWebEngineProfile>
+#include <QtWebEngineQuick/qquickwebenginedownloadrequest.h>
 
-#include "auth_interceptor.h"
 #include "backend.h"
 #include "theme.h"
 
@@ -36,24 +40,76 @@ int main(int argc, char *argv[]) {
 
     QQuickStyle::setStyle("Basic");
 
+    QStringList args;
+    for (int i = 1; i < argc; ++i)
+        if (argv[i][0] != '-')
+            args << QString::fromUtf8(argv[i]);
+
     Theme theme;
     Backend backend;
-    if (argc > 1 && argv[1][0] != '-') {
-        backend.setInitialUrl(backend.normalizeUrl(QString::fromUtf8(argv[1])));
-    }
+    QStringList urls;
+    for (const auto &arg : args)
+        urls << backend.normalizeUrl(arg);
 
-    // Configure default persistent web profile for smooth auth, cookies and cache
-    auto *defaultProfile = QQuickWebEngineProfile::defaultProfile();
+    // One instance owns the profile; later launches hand their URLs to it and exit.
+    const QString serverName = QString("nodaysidle-browser-%1").arg(getuid());
+    QLocalSocket client;
+    client.connectToServer(serverName);
+    if (client.waitForConnected(300)) {
+        client.write(urls.join('\n').toUtf8() + "\n");
+        client.waitForBytesWritten(1000);
+        return 0;
+    }
+    QLocalServer::removeServer(serverName);
+    QLocalServer server;
+    server.setSocketOptions(QLocalServer::UserAccessOption);
+    server.listen(serverName);
+    QObject::connect(&server, &QLocalServer::newConnection, &backend, [&server, &backend] {
+        auto *socket = server.nextPendingConnection();
+        QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+        QObject::connect(socket, &QLocalSocket::readyRead, &backend, [socket, &backend] {
+            const auto lines = QString::fromUtf8(socket->readAll()).split('\n', Qt::SkipEmptyParts);
+            if (lines.isEmpty())
+                emit backend.openRequested(backend.homeUrl());
+            for (const auto &line : lines)
+                emit backend.openRequested(line);
+        });
+    });
+    backend.setInitialUrls(urls);
+
+    // The default QtWebEngine profile is off-the-record, so logins would vanish on exit.
+    // A named profile with an explicit storage path keeps cookies, cache and site data on disk.
     const QString dataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    defaultProfile->setPersistentStoragePath(dataPath);
-    defaultProfile->setCachePath(dataPath + "/cache");
-    defaultProfile->setPersistentCookiesPolicy(QQuickWebEngineProfile::ForcePersistentCookies);
-    defaultProfile->setHttpUserAgent("Mozilla/5.0 (X11; Linux x86_64; rv:135.0) Gecko/20100101 Firefox/135.0");
-    defaultProfile->setUrlRequestInterceptor(new GoogleAuthInterceptor(defaultProfile));
+    auto *profile = new QQuickWebEngineProfile(&app);
+    profile->setStorageName("nodaysidle-browser");
+    profile->setOffTheRecord(false);
+    profile->setPersistentStoragePath(dataPath + "/webengine");
+    profile->setCachePath(dataPath + "/cache");
+    profile->setPersistentCookiesPolicy(QQuickWebEngineProfile::ForcePersistentCookies);
+    // Plain Chrome UA without the "QtWebEngine" token, which Google's sign-in rejects.
+    // Chromium reduces the UA to major.0.0.0, so the version must match the engine.
+    const QString chromeMajor = QString::fromLatin1(qWebEngineChromiumVersion()).section('.', 0, 0);
+    profile->setHttpUserAgent(QString("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+                                      "Chrome/%1.0.0.0 Safari/537.36").arg(chromeMajor));
+    profile->setHttpAcceptLanguage("en-US,en;q=0.9");
+
+    QObject::connect(profile, &QQuickWebEngineProfile::downloadRequested, &backend,
+                     [&backend](QQuickWebEngineDownloadRequest *download) {
+        download->setDownloadDirectory(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+        download->accept();
+        QObject::connect(download, &QQuickWebEngineDownloadRequest::stateChanged, &backend,
+                         [&backend, download](QQuickWebEngineDownloadRequest::DownloadState state) {
+            if (state == QQuickWebEngineDownloadRequest::DownloadCompleted)
+                emit backend.notice("Saved " + download->downloadFileName() + " to Downloads");
+            else if (state == QQuickWebEngineDownloadRequest::DownloadInterrupted)
+                emit backend.notice("Download failed: " + download->downloadFileName());
+        });
+    });
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("theme", &theme);
     engine.rootContext()->setContextProperty("backend", &backend);
+    engine.rootContext()->setContextProperty("appProfile", profile);
 
     const QUrl url(QStringLiteral("qrc:/Main.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,

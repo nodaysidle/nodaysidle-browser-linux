@@ -11,25 +11,22 @@
 
 | Command | Purpose |
 |---------|---------|
-| `cargo check` | Fast syntax and type verification |
-| `cargo build` | Debug build |
-| `cargo build --release` | Optimized release binary |
-| `cargo test` | Run test suite |
-| `cargo clippy -- -D warnings` | Clippy linter with warnings treated as errors |
-| `cargo fmt --check` | Verify standard Rust formatting |
-| `bash scripts/validate.sh` | Project release validation script |
+| `./bin/build` | qmake6 + make into `build/nodaysidle-browser` |
+| `./bin/run [URL]` | Launch the built binary |
+| `cargo build --release` | Build the Rust launcher wrapper |
+| `bash scripts/validate.sh` | Build, qmllint, cargo build, fmt, clippy |
+| `bash scripts/install-desktop.sh` | Install binary, launcher entry and icon for the current user |
 
 ## 3. Architecture & Threading Rules
-- **Product**: Quiet, native Linux WebKit browser with minimal chrome and local-first privacy.
-- **Stack**: Rust 2021 (rust-version 1.88), GTK 3 (`gtk = "0.18"`), WebKitGTK 4.1 (`webkit2gtk = "2.0"`), Soup3, JavaScriptCore.
-- **Key Modules (`src/`)**:
-  - `main.rs` — Application initialization, GtkApplication setup, CLI flags.
-  - `tabs.rs` — Tab management, WebKitWebView creation, lifecycle events.
-  - `navigation.rs` — URL bar, back/forward, reload, navigation state.
-  - `privacy.rs` & `profile.rs` — Ephemeral profiles, cookie isolation, tracking prevention.
-  - `shortcuts.rs` — Keybindings and keyboard navigation.
-  - `assistant.rs` — Integrated AI / search assistant integration.
-- **GTK Thread Affinity**: All UI mutations and WebKit interactions **must** occur on the main GLib thread. Use `glib::MainContext::default().spawn_local(...)` or `glib::idle_add_local(...)` when bridging async/background operations.
+- **Product**: Quiet, native Linux browser: Qt 6 Quick on QtWebEngine, pure Wayland, minimal chrome, local-first privacy.
+- **Stack**: C++17, Qt 6.12 (Quick, QuickControls2, WebEngineQuick), qmake6. `src/main.rs` is only a cargo wrapper that execs the Qt binary.
+- **Key files (`src/`)**:
+  - `main.cpp` - Wayland env, persistent profile, Chrome UA, downloads, single instance
+  - `backend.{h,cpp}` - bookmarks, URL resolution, clipboard, Anthropic and Jev calls
+  - `theme.{h,cpp}` - Omarchy `colors.toml` watcher and Hyprland rounding
+  - `Main.qml` - window, tabs, toolbar, find bar, permission bar, assistant panel
+  - `chrome_app.js` - `window.chrome.app` shim, required for Google sign-in
+- **Profile**: always the named persistent profile; the default QtWebEngine profile is off-the-record.
 - **Zero Telemetry**: Never add tracking, analytics beacons, or remote logging.
 
 ## 4. Negative Constraints (Anti-Defaults)

@@ -4,7 +4,7 @@ Status: Active Development Brief
 
 ## Outcome
 
-A quiet, native Linux WebKit browser built with Rust, GTK 3, and WebKitGTK 4.1.
+A quiet, native Linux browser built with Qt 6 Quick and QtWebEngine (Chromium), pure Wayland, following the Omarchy theme.
 It focuses on:
 1. **Persistent Authentication & Google Login**: Reliable cookie and session persistence across browser restarts, with standard modern User-Agent handling to prevent Google OAuth security blocks ("This browser or app may not be secure").
 2. **Deterministic UI Design**: Clean, tactile interface with zero placeholder or layout shift glitches. High-contrast, polished tab strip and URL navigation.

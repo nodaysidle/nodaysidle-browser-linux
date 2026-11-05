@@ -1,35 +1,19 @@
 # Handoff
 
-Current feature: none active. F02 — Deterministic UI Design and Navigation Polish is done.
-Workspace / branch: f01-google-login
-Current code revision: 8514c0f (CONTRACT.md, FEATURES.json and HANDOFF.md are uncommitted; artifacts/ is git-ignored, so the evidence stays local)
-Evaluation: PASS at 8514c0f. C01–C05 all pass, recorded by the independent Evaluator.
-Evidence directory: artifacts/20261105_012650_8514c0f/ (`eval_evidence.txt`, `*.log`, `screens/`, `helpers/`)
-Attempts used / cap: 1 / 2 repair rounds
-FEATURES.json: F02 `done`, code_revision 8514c0f0d7e3a973844a3541aadce3186d172912.
+Branch native-qt6-wayland. The app is the Qt 6 / QtWebEngine browser described in README.md (the older GTK/WebKit Rust sources in src/*.rs are unused leftovers; only src/main.rs is built by cargo).
 
-## Open items for the owner
+## Verified this session (nested Hyprland on a headless output, scratch HOME and XDG_DATA_HOME)
 
-Observations O1–O9 in `eval_evidence.txt` are not contract failures. Worth deciding:
+Tabs (+, middle click, hover close, Ctrl+T/W/Tab), omnibox (URL, search, local http), back/forward, bookmarks (star, bar, menu, file path), page context menu (copy link, open in tab), popups (open and window.close), target=_blank, cookies persisting across restart, live Omarchy theme and Hyprland rounding, assistant (Summarize stream, Scam check, Q&A, Stop), fullscreen, downloads.
 
-- O3: the selected tab always shows its close button, while the contract says it appears on hover.
-- O7: a page titled exactly like an error page with a style element using `nodaysidle-error-style` has it replaced on a theme change and can read the palette.
-- O8: a virtual-pointer click on a Theme submenu item did not activate it; Return did. Harness or product is undetermined, so test a real mouse click.
-- O9: with two windows, Ctrl+Q closed only the focused window. Not checked against intended behaviour.
+## Fixed
 
-Final release judgment stays with the human.
+Profile was off-the-record (now a named persistent profile). Bookmarks wrote to a doubled directory. Toolbar bindings were not reactive. Copy Link was a stub. normalizeUrl forced https on 127.0.0.1:port. SSE stream was never read. `.hovered` on MouseAreas. Esc did not leave fullscreen.
 
-## How to drive the app without touching the desktop
+## Google sign-in
 
-Nested Hyprland hosted on a temporary headless output, because a nested window on a hidden workspace gets no frames:
+Firefox UA interceptor from the old spec was removed: it did not work. Cause was missing window.chrome.app; fixed with a Chrome UA plus src/chrome_app.js. Verified only up to Google's reCAPTCHA step; a real account sign-in has not been done.
 
-- `hyprctl -i 0 output create headless EVALOUT`, start `Hyprland -c <config>` with `WAYLAND_DISPLAY=wayland-1`, then `hyprctl -i 0 dispatch "hl.dsp.window.move({workspace='<id>', follow=false, window='class:aquamarine'})"`.
-- `wtype` cannot send Return or End, or arrows into GTK menus; `hl.dsp.send_shortcut({mods='', key='Return', window='class:com.nodaysidle.Browser'})` can.
-- Real pointer: `helpers/vptr.c` in the evidence directory. Hyprland `mouse:272` injection does not click.
-- A launched `setsid nohup` job's `$!` is not the Hyprland pid. Take the pid from `hyprctl instances`.
-- Stop the app with Ctrl+Q inside the nested session, not by process name, which could hit the owner's own browser.
-- Remove the output afterwards.
+## Not done
 
-## Next action
-
-Owner review of F02, then commit the harness files. F03 (Tab Session State Restore on Restart) is next and has no contract yet.
+Permission prompts (camera, mic, location), find in page, history UI, print. QtWebEngine prints a deprecation warning for QQuickWebEngineProfile (use WebEngineProfilePrototype later).
