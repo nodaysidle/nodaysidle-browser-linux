@@ -174,7 +174,7 @@ impl TabManager {
         let mgr = Self {
             inner: Rc::new(RefCell::new(inner)),
         };
-        let bar = mgr.inner.borrow().bookmarks_bar.clone();
+        let bar = { mgr.inner.borrow().bookmarks_bar.clone() };
         refresh_bookmarks_bar(&bar, &mgr.inner);
         mgr
     }
@@ -334,7 +334,7 @@ impl TabManager {
             if !uri.is_empty() && !is_home_marker(&uri) {
                 crate::bookmarks::toggle_bookmark(&title, &uri);
                 sync_bookmark_star(&mgr_star);
-                let bar = mgr_star.borrow().bookmarks_bar.clone();
+                let bar = { mgr_star.borrow().bookmarks_bar.clone() };
                 refresh_bookmarks_bar(&bar, &mgr_star);
             }
         });
@@ -1691,7 +1691,8 @@ pub(crate) fn refresh_bookmarks_bar(bar: &GtkBox, mgr: &Rc<RefCell<TabManagerInn
         let mgr_click = mgr.clone();
         let url = bm.url.clone();
         btn.connect_clicked(move |_| {
-            if let Some(tab_id) = mgr_click.borrow().selected {
+            let tab_id = { mgr_click.borrow().selected };
+            if let Some(tab_id) = tab_id {
                 TabManager::load_uri_tab(&mgr_click, tab_id, &url);
             }
         });
@@ -2234,14 +2235,18 @@ fn run_shortcut(mgr: &Rc<RefCell<TabManagerInner>>, shortcut: Shortcut) {
             if !uri.is_empty() && !is_home_marker(&uri) {
                 crate::bookmarks::toggle_bookmark(&title, &uri);
                 sync_bookmark_star(mgr);
-                let bar = mgr.borrow().bookmarks_bar.clone();
+                let bar = { mgr.borrow().bookmarks_bar.clone() };
                 refresh_bookmarks_bar(&bar, mgr);
             }
         }
         Shortcut::ToggleBookmarksBar => {
-            let inner = mgr.borrow();
-            let bar = inner.bookmarks_bar.clone();
-            let sep = inner.bookmarks_separator.clone();
+            let (bar, sep) = {
+                let inner = mgr.borrow();
+                (
+                    inner.bookmarks_bar.clone(),
+                    inner.bookmarks_separator.clone(),
+                )
+            };
             let is_visible = bar.is_visible();
             bar.set_visible(!is_visible);
             sep.set_visible(!is_visible);
