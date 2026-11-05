@@ -172,8 +172,8 @@ pub(crate) fn build_panel() -> AssistantPanel {
     let jev = env_key("TYPESAFE_API_KEY").is_some();
     // Always visible, so it is clear what leaves the machine and where to.
     let notice = gtk::Label::new(Some(&match (claude, jev) {
-        (true, true) => "⚡ Claude Haiku 5.5 + TypeSafe Jev • Private".to_string(),
-        (true, false) => "⚡ Claude Haiku 5.5 (no Jev key) • Private".to_string(),
+        (true, true) => "Claude Haiku 5.5 + TypeSafe Jev • Private".to_string(),
+        (true, false) => "Claude Haiku 5.5 (no Jev key) • Private".to_string(),
         (false, true) => "TypeSafe Jev (set ANTHROPIC_API_KEY for Claude)".to_string(),
         (false, false) => "Set TYPESAFE_API_KEY or ANTHROPIC_API_KEY".to_string(),
     }));
@@ -184,10 +184,10 @@ pub(crate) fn build_panel() -> AssistantPanel {
     notice.set_xalign(0.0);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let summarize = gtk::Button::with_label("✨ Summarize");
+    let summarize = gtk::Button::with_label("Summarize");
     summarize.set_sensitive(claude);
     summarize.style_context().add_class("assistant-btn");
-    let scam_check = gtk::Button::with_label("🛡️ Scam check");
+    let scam_check = gtk::Button::with_label("Scam check");
     scam_check.set_sensitive(jev);
     scam_check.style_context().add_class("assistant-btn");
     scam_check.set_tooltip_text(Some(
@@ -548,7 +548,7 @@ fn ask(mgr: &Rc<RefCell<TabManagerInner>>, question: &str) {
         return;
     };
     let generation = start(&panel, "Reading the page…");
-    append(&panel, &format!("\n💬 {}\n\n", question), Some("header"));
+    append(&panel, &format!("\nUser: {}\n\n", question), Some("header"));
     let mgr = mgr.clone();
     let question = question.to_string();
     glib::MainContext::default().spawn_local(async move {
@@ -694,7 +694,7 @@ fn scam_check(mgr: &Rc<RefCell<TabManagerInner>>) {
         return;
     };
     let generation = start(&panel, "Reading the page…");
-    append(&panel, "\n🛡️ Scam Check\n", Some("header"));
+    append(&panel, "\nScam Check\n", Some("header"));
     let mgr = mgr.clone();
     glib::MainContext::default().spawn_local(async move {
         let page = match page_text(&mgr).await {

@@ -30,10 +30,10 @@
       flex-direction: column;
       align-items: center;
       gap: 32px;
-      animation: fadeIn 0.4s ease-out;
+      animation: fadeIn 0.3s ease-out;
     }
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
+      from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: translateY(0); }
     }
     .logo {
@@ -41,12 +41,6 @@
       font-weight: 700;
       letter-spacing: -0.5px;
       color: #F8FAFC;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .logo span {
-      color: #CBD5E1;
     }
     .search-box {
       width: 100%;
@@ -55,7 +49,7 @@
     .search-input {
       width: 100%;
       padding: 16px 20px;
-      font-size: 16px;
+      font-size: 15px;
       border-radius: 12px;
       border: 1px solid #1E293B;
       background: #14171A;
@@ -100,16 +94,25 @@
       color: #FFFFFF;
       transform: translateY(-2px);
     }
-    .tile-icon {
-      font-size: 20px;
+    .tile-badge {
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #090A0C;
+      color: #CBD5E1;
+      border: 1px solid #26292E;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="logo">
-      nodays<span>idle</span>
-    </div>
+    <div class="logo">nodaysidle</div>
 
     <form class="search-box" action="https://duckduckgo.com/" method="get">
       <input type="text" name="q" class="search-input" placeholder="Search the web or type a URL..." autofocus autocomplete="off">
@@ -117,19 +120,19 @@
 
     <div class="tiles">
       <a href="https://gemini.google.com" class="tile">
-        <div class="tile-icon">✨</div>
+        <div class="tile-badge">GM</div>
         <div>Gemini</div>
       </a>
       <a href="https://google.com" class="tile">
-        <div class="tile-icon">🔍</div>
+        <div class="tile-badge">G</div>
         <div>Google</div>
       </a>
       <a href="https://github.com" class="tile">
-        <div class="tile-icon">🐙</div>
+        <div class="tile-badge">GH</div>
         <div>GitHub</div>
       </a>
       <a href="https://youtube.com" class="tile">
-        <div class="tile-icon">▶️</div>
+        <div class="tile-badge">YT</div>
         <div>YouTube</div>
       </a>
     </div>

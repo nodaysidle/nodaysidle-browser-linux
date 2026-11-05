@@ -135,11 +135,13 @@ ApplicationWindow {
                             anchors.rightMargin: 8
                             spacing: 6
 
-                            // Loading dot or Globe
-                            Text {
-                                text: model.loading ? "●" : "🌐"
-                                font.pixelSize: 11
+                            // Status indicator dot
+                            Rectangle {
+                                width: 6
+                                height: 6
+                                radius: 3
                                 color: model.loading ? theme.accent : theme.muted
+                                visible: model.loading || index === currentTabIndex
                             }
 
                             Text {
@@ -269,8 +271,9 @@ ApplicationWindow {
 
                     Text {
                         anchors.centerIn: parent
-                        text: (currentView() && currentView().loading) ? "✕" : "⟳"
-                        font.pixelSize: 14
+                        text: (currentView() && currentView().loading) ? "x" : "R"
+                        font.pixelSize: 12
+                        font.bold: true
                         color: theme.textStrong
                     }
 
@@ -328,11 +331,22 @@ ApplicationWindow {
                         anchors.rightMargin: 8
                         spacing: 8
 
-                        // Secure icon
-                        Text {
-                            text: (currentView() && currentView().url.toString().startsWith("https://")) ? "🔒" : "🌐"
-                            font.pixelSize: 12
-                            color: (currentView() && currentView().url.toString().startsWith("https://")) ? theme.green : theme.muted
+                        // Secure badge indicator
+                        Rectangle {
+                            width: 14
+                            height: 14
+                            radius: 3
+                            color: "transparent"
+                            border.color: (currentView() && currentView().url.toString().startsWith("https://")) ? theme.green : theme.muted
+                            border.width: 1
+
+                            Rectangle {
+                                anchors.centerIn: parent
+                                width: 6
+                                height: 6
+                                radius: 1
+                                color: (currentView() && currentView().url.toString().startsWith("https://")) ? theme.green : theme.muted
+                            }
                         }
 
                         TextField {
@@ -357,18 +371,42 @@ ApplicationWindow {
                             }
                         }
 
-                        // Star Bookmark Button
+                        // Star Bookmark Button (vector canvas)
                         Rectangle {
                             width: 24
                             height: 24
                             radius: 4
                             color: starHover.hovered ? Qt.alpha(theme.text, 0.1) : "transparent"
 
-                            Text {
+                            Canvas {
+                                id: starCanvas
                                 anchors.centerIn: parent
-                                text: "★"
-                                font.pixelSize: 15
-                                color: (currentView() && backend.isBookmarked(currentView().url.toString())) ? theme.accent : theme.muted
+                                width: 14
+                                height: 14
+                                property color starColor: (currentView() && backend.isBookmarked(currentView().url.toString())) ? theme.accent : theme.muted
+                                onStarColorChanged: requestPaint()
+                                onPaint: {
+                                    var ctx = getContext("2d");
+                                    ctx.reset();
+                                    ctx.fillStyle = starColor;
+                                    var rot = Math.PI / 2 * 3;
+                                    var cx = 7;
+                                    var cy = 7;
+                                    var step = Math.PI / 5;
+                                    var outer = 6.5;
+                                    var inner = 2.8;
+                                    ctx.beginPath();
+                                    ctx.moveTo(cx, cy - outer);
+                                    for (var i = 0; i < 5; i++) {
+                                        ctx.lineTo(cx + Math.cos(rot) * outer, cy + Math.sin(rot) * outer);
+                                        rot += step;
+                                        ctx.lineTo(cx + Math.cos(rot) * inner, cy + Math.sin(rot) * inner);
+                                        rot += step;
+                                    }
+                                    ctx.lineTo(cx, cy - outer);
+                                    ctx.closePath();
+                                    ctx.fill();
+                                }
                             }
 
                             MouseArea {
@@ -384,7 +422,7 @@ ApplicationWindow {
                     }
                 }
 
-                // AI Assistant Toggle Button (💬)
+                // AI Assistant Toggle Button
                 Rectangle {
                     width: 32
                     height: 28
@@ -394,8 +432,10 @@ ApplicationWindow {
 
                     Text {
                         anchors.centerIn: parent
-                        text: "💬"
-                        font.pixelSize: 14
+                        text: "AI"
+                        font.pixelSize: 11
+                        font.bold: true
+                        color: assistantVisible ? theme.accent : theme.textStrong
                     }
 
                     MouseArea {
@@ -610,7 +650,7 @@ ApplicationWindow {
 
                             Text {
                                 anchors.centerIn: parent
-                                text: "⚡ Claude Haiku 5.5 + TypeSafe Jev • Private"
+                                text: "Claude Haiku 5.5 + TypeSafe Jev [Private]"
                                 font.pixelSize: 11
                                 color: theme.text
                             }
@@ -631,7 +671,7 @@ ApplicationWindow {
 
                                 Text {
                                     anchors.centerIn: parent
-                                    text: "✨ Summarize"
+                                    text: "Summarize"
                                     font.pixelSize: 12
                                     font.bold: true
                                     color: theme.textStrong
@@ -644,7 +684,7 @@ ApplicationWindow {
                                     onClicked: {
                                         var v = currentView();
                                         if (v) {
-                                            aiOutput.text += "\n✨ Summarizing page...\n\n";
+                                            aiOutput.text += "\nSummarizing page...\n\n";
                                             v.runJavaScript("document.body.innerText", function(res) {
                                                 backend.askAssistant(v.title, v.url.toString(), res, "Summarize this page in a few short paragraphs and key points.");
                                             });
@@ -663,7 +703,7 @@ ApplicationWindow {
 
                                 Text {
                                     anchors.centerIn: parent
-                                    text: "🛡️ Scam check"
+                                    text: "Scam check"
                                     font.pixelSize: 12
                                     font.bold: true
                                     color: theme.textStrong
@@ -676,7 +716,7 @@ ApplicationWindow {
                                     onClicked: {
                                         var v = currentView();
                                         if (v) {
-                                            aiOutput.text += "\n🛡️ Checking security with TypeSafe Jev...\n";
+                                            aiOutput.text += "\nChecking security with TypeSafe Jev...\n";
                                             v.runJavaScript("document.body.innerText", function(res) {
                                                 backend.checkScam(v.title, v.url.toString(), res);
                                             });
@@ -731,7 +771,7 @@ ApplicationWindow {
                                 onAccepted: {
                                     var q = text.trim();
                                     if (q.length > 0) {
-                                        aiOutput.text += "\n💬 " + q + "\n\n";
+                                        aiOutput.text += "\nUser: " + q + "\n\n";
                                         text = "";
                                         var v = currentView();
                                         if (v) {
@@ -762,11 +802,11 @@ ApplicationWindow {
         }
 
         function onAssistantError(err) {
-            aiOutput.text += "\n❌ " + err + "\n";
+            aiOutput.text += "\nError: " + err + "\n";
         }
 
         function onScamResult(verdict, imp, cred, press, host) {
-            aiOutput.text += "\n🛡️ Scam Verdict: " + verdict + "\n";
+            aiOutput.text += "\nScam Verdict: " + verdict + "\n";
             aiOutput.text += "  • Impersonation risk: " + imp + "%\n";
             aiOutput.text += "  • Credential harvest: " + cred + "%\n";
             aiOutput.text += "  • Pressure / urgency: " + press + "%\n";
