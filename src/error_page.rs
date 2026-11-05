@@ -1,6 +1,9 @@
 //! Built-in pages shown in place of a page that failed to load (X-21) or
 //! whose web process went away (X-27). They use the active theme's tokens.
 
+use gtk::prelude::*;
+use webkit2gtk::{WebView, WebViewExt};
+
 /// Escapes text for use in HTML element content and quoted attributes.
 pub fn html_escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -21,6 +24,7 @@ pub fn html_escape(text: &str) -> String {
 const LOAD_FAILED_TITLE: &str = "Could not load page";
 const PROCESS_ENDED_TITLE: &str = "Page stopped working";
 const TLS_FAILED_TITLE: &str = "Connection not secure";
+const STYLE_ID: &str = "nodaysidle-error-style";
 
 /// True for the title of one of these pages, so they stay out of history.
 pub fn is_error_page_title(title: Option<&str>) -> bool {
@@ -93,6 +97,18 @@ fn page(heading: &str, uri: &str, details: &[&str], button: &str) -> String {
             )
         })
         .unwrap_or_default();
+    format!(
+        r#"<!doctype html>
+<html><head><meta charset="utf-8"><title>{heading}</title>
+<style id="{STYLE_ID}">{style}</style></head>
+<body><main><h1>{heading}</h1>{details}
+{button}</main></body></html>"#,
+        heading = html_escape(heading),
+        style = stylesheet(),
+    )
+}
+
+fn stylesheet() -> String {
     let scheme = if crate::theme::is_dark() {
         "dark"
     } else {
@@ -110,9 +126,7 @@ fn page(heading: &str, uri: &str, details: &[&str], button: &str) -> String {
         palette_colour("accent"),
     );
     format!(
-        r#"<!doctype html>
-<html><head><meta charset="utf-8"><title>{heading}</title>
-<style>
+        r#"
 :root {{ color-scheme: {scheme}; }}
 body {{ margin: 0; min-height: 100vh; display: flex; align-items: center;
   justify-content: center; background: {bg}; color: {text};
@@ -124,11 +138,31 @@ button {{ margin-top: 20px; background: {surface}; color: {text};
   border: 1px solid {border}; border-radius: 999px;
   padding: 8px 20px; font: inherit; cursor: pointer; }}
 button:hover, button:focus {{ border-color: {accent}; outline: none; }}
-</style></head>
-<body><main><h1>{heading}</h1>{details}
-{button}</main></body></html>"#,
-        heading = html_escape(heading),
+"#
     )
+}
+
+/// Restyles every open error page in every window, including background tabs
+/// and pop-ups, in place: a reload would retry the failed address.
+pub fn follow_theme() {
+    let script = format!(
+        "{{ const style = document.getElementById({}); if (style) style.textContent = {}; }}",
+        serde_json::json!(STYLE_ID),
+        serde_json::json!(stylesheet()),
+    );
+    for window in gtk::Window::list_toplevels() {
+        restyle_error_pages(&window, &script);
+    }
+}
+
+fn restyle_error_pages(widget: &gtk::Widget, script: &str) {
+    if let Some(view) = widget.downcast_ref::<WebView>() {
+        if is_error_page_title(view.title().as_deref()) {
+            view.evaluate_javascript(script, None, None, None::<&gio::Cancellable>, |_| {});
+        }
+    } else if let Some(container) = widget.downcast_ref::<gtk::Container>() {
+        container.foreach(|child| restyle_error_pages(child, script));
+    }
 }
 
 #[cfg(test)]

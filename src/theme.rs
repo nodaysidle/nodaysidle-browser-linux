@@ -820,6 +820,7 @@ fn apply(choice: ThemeChoice) {
         }
         settings.set_gtk_application_prefer_dark_theme(dark);
     }
+    crate::error_page::follow_theme();
 }
 
 /// Called from the GTK test: the computed styles the chrome relies on (F02).

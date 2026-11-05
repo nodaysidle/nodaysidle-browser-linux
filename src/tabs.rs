@@ -2846,6 +2846,65 @@ mod gtk_tests {
         button.clicked();
     }
 
+    /// An error page in a hidden tab repaints twice in a row and a normal page
+    /// that happens to use the same style id is left alone.
+    fn verify_open_error_page_follows_theme() {
+        use crate::theme::{choose, palette_colour, ThemeChoice};
+        fn background(view: &WebView) -> String {
+            let result = Rc::new(RefCell::new(None));
+            let slot = result.clone();
+            view.evaluate_javascript(
+                "getComputedStyle(document.body).backgroundColor",
+                None,
+                None,
+                None::<&gio::Cancellable>,
+                move |value| {
+                    *slot.borrow_mut() = value
+                        .ok()
+                        .map(|value| javascriptcore::ValueExt::to_str(&value).to_string());
+                },
+            );
+            assert!(pump_until(10, || result.borrow().is_some()));
+            result.take().unwrap()
+        }
+        fn expected(token: &str) -> String {
+            let hex = palette_colour(token);
+            let channel = |at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap();
+            format!("rgb({}, {}, {})", channel(1), channel(3), channel(5))
+        }
+        fn loaded(html: &str, title: &str) -> WebView {
+            let view = WebView::new();
+            view.load_alternate_html(html, "http://127.0.0.1:1/", None);
+            assert!(pump_until(10, || view.title().as_deref() == Some(title)));
+            view
+        }
+
+        let window = gtk::Window::new(gtk::WindowType::Toplevel);
+        let stack = gtk::Stack::new();
+        window.add(&stack);
+        choose(ThemeChoice::Dark);
+        let html = crate::error_page::load_failed_html("http://127.0.0.1:1/", "refused");
+        let error = loaded(&html, "Could not load page");
+        let normal = loaded(
+            "<title>Normal</title><style id=nodaysidle-error-style>\
+             body { background: rgb(1, 2, 3); }</style><body>",
+            "Normal",
+        );
+        stack.add_named(&gtk::Label::new(Some("shown tab")), "shown");
+        stack.add_named(&error, "hidden");
+        stack.add_named(&normal, "other");
+        window.show_all();
+        stack.set_visible_child_name("shown");
+
+        assert_eq!(background(&error), expected("bg"));
+        for choice in [ThemeChoice::Paper, ThemeChoice::Dark] {
+            choose(choice);
+            assert!(pump_until(10, || background(&error) == expected("bg")));
+            assert_eq!(background(&normal), "rgb(1, 2, 3)");
+        }
+        window.close();
+    }
+
     fn ids(mgr: &Rc<RefCell<TabManagerInner>>) -> Vec<u32> {
         mgr.borrow().tabs.iter().map(|tab| tab.id).collect()
     }
@@ -2969,6 +3028,7 @@ mod gtk_tests {
         }
         crate::theme::verify_live_theme_switching();
         crate::theme::verify_chrome_styling();
+        verify_open_error_page_follows_theme();
         verify_address_bar_status();
         crate::privacy::verify_clear_data_feedback();
         verify_native_tab_selection_and_popup_address();
