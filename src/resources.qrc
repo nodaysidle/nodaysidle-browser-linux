@@ -3,6 +3,9 @@
         <file>Main.qml</file>
         <file>home.html</file>
         <file>chrome_app.js</file>
+        <file>login.js</file>
+        <file>PasswordsPanel.qml</file>
+        <file>IconButton.qml</file>
         <file>ThemedMenu.qml</file>
         <file>ThemedMenuItem.qml</file>
     </qresource>

@@ -29,6 +29,15 @@ ApplicationWindow {
         runsOnSubFrames: true,
         sourceCode: backend.readResource(":/chrome_app.js")
     }]
+    // The login agent runs in its own world; the nonce proves its console lines came from it.
+    readonly property var loginScripts: [{
+        name: "login",
+        injectionPoint: WebEngineScript.DocumentReady,
+        worldId: WebEngineScript.ApplicationWorld,
+        runsOnSubFrames: false,
+        sourceCode: "var __ndNonce = '" + vault.nonce + "';\n" + backend.readResource(":/login.js")
+    }]
+    readonly property var pageScripts: chromeAppScripts.concat(loginScripts)
     // Reactive handle on the visible tab's view; toolbar bindings depend on it.
     property var activeView: null
     onCurrentTabIndexChanged: refreshActiveView()
@@ -38,6 +47,26 @@ ApplicationWindow {
     property bool pageFullScreen: false
     property bool findVisible: false
     property bool historyVisible: false
+    property bool passwordsVisible: false
+    property var pendingLogin: null
+    readonly property var bookmarkBarItems: {
+        var items = [];
+        var folders = {};
+        var order = [];
+        var all = backend.bookmarks;
+        for (var i = 0; i < all.length; ++i) {
+            var folder = all[i].folder;
+            if (!folder) {
+                items.push(all[i]);
+            } else {
+                if (!folders[folder]) { folders[folder] = []; order.push(folder); }
+                folders[folder].push(all[i]);
+            }
+        }
+        for (var j = 0; j < order.length; ++j)
+            items.push({ title: order[j], url: "", children: folders[order[j]] });
+        return items;
+    }
     property var historyItems: []
     property var suggestions: []
     property int suggestIndex: -1
@@ -135,10 +164,59 @@ ApplicationWindow {
         historyItems = backend.searchHistory(historySearch.text, 200);
     }
 
+    function togglePasswords() {
+        passwordsVisible = !passwordsVisible;
+        if (passwordsVisible) {
+            assistantVisible = false;
+            historyVisible = false;
+            passwordsPanel.open();
+        }
+    }
+
+    function loginMessage(view, message) {
+        if (!message.startsWith(vault.nonce))
+            return;
+        var m;
+        try { m = JSON.parse(message.slice(vault.nonce.length)); } catch (e) { return; }
+        var pageUrl = view.url.toString();
+        var mine = pendingLogin !== null && pendingLogin.view === view;
+        if (m.t === "need") {
+            var js = vault.fillScript(pageUrl, m.user, !m.pw);
+            if (js)
+                view.runJavaScript(js, WebEngineScript.ApplicationWorld);
+        } else if (m.t === "save") {
+            var state = vault.offerState(pageUrl, m.user, m.pass);
+            if (state === "new" || state === "update")
+                pendingLogin = { view: view, url: pageUrl, user: m.user, pass: m.pass, state: state, ready: false, navigated: false };
+            else if (mine)
+                pendingLogin = null;
+        } else if (mine && m.t === "gone") {
+            pendingLogin = Object.assign({}, pendingLogin, { ready: true });
+        } else if (mine && m.t === "stuck") {
+            pendingLogin = null;
+        } else if (mine && m.t === "forms" && (pendingLogin.navigated || pageUrl !== pendingLogin.url)) {
+            // A page that still asks for a password after the submit means the sign-in failed.
+            pendingLogin = m.pw ? null : Object.assign({}, pendingLogin, { ready: true });
+        }
+    }
+
+    function answerLogin(action) {
+        if (!pendingLogin)
+            return;
+        if (action === "save") {
+            vault.save(pendingLogin.url, pendingLogin.user, pendingLogin.pass);
+            backend.notice("Password saved");
+        } else if (action === "never") {
+            vault.never(pendingLogin.url);
+        }
+        pendingLogin = null;
+    }
+
     function toggleHistory() {
         historyVisible = !historyVisible;
         if (historyVisible) {
             assistantVisible = false;
+            passwordsVisible = false;
             historySearch.text = "";
             refreshHistory();
             historySearch.forceActiveFocus();
@@ -236,11 +314,12 @@ ApplicationWindow {
                 id: popupView
                 anchors.fill: parent
                 profile: appProfile
-                userScripts.collection: chromeAppScripts
+                userScripts.collection: pageScripts
                 settings.javascriptCanOpenWindows: true
                 settings.webGLEnabled: true
                 settings.accelerated2dCanvasEnabled: true
 
+                onJavaScriptConsoleMessage: function(level, message, line, source) { loginMessage(popupView, message); }
                 onNewWindowRequested: function(req) {
                     req.openIn(popupView);
                 }
@@ -260,6 +339,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Shift+T"; onActivated: reopenTab() }
     Shortcut { sequence: "Ctrl+F"; onActivated: openFind() }
     Shortcut { sequence: "Ctrl+H"; onActivated: toggleHistory() }
+    Shortcut { sequence: "Ctrl+Shift+K"; onActivated: togglePasswords() }
     Shortcut { sequence: "Ctrl+P"; onActivated: printPage() }
     Shortcut { sequences: ["Ctrl+G", "F3"]; enabled: findVisible; onActivated: runFind(false) }
     Shortcut { sequences: ["Ctrl+Shift+G", "Shift+F3"]; enabled: findVisible; onActivated: runFind(true) }
@@ -275,7 +355,7 @@ ApplicationWindow {
         if (v) backend.toggleBookmark(v.title, v.url.toString());
     }}
     Shortcut { sequence: "Ctrl+B"; onActivated: bookmarksBarVisible = !bookmarksBarVisible }
-    Shortcut { sequence: "Ctrl+Shift+A"; onActivated: { assistantVisible = !assistantVisible; if (assistantVisible) historyVisible = false; } }
+    Shortcut { sequence: "Ctrl+Shift+A"; onActivated: { assistantVisible = !assistantVisible; if (assistantVisible) { historyVisible = false; passwordsVisible = false; } } }
     Shortcut { sequence: "Alt+Left"; onActivated: { var v = currentView(); if (v && v.canGoBack) v.goBack(); } }
     Shortcut { sequence: "Alt+Right"; onActivated: { var v = currentView(); if (v && v.canGoForward) v.goForward(); } }
     Shortcut { sequence: "Ctrl+Tab"; onActivated: cycleTab(1) }
@@ -283,6 +363,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Q"; onActivated: Qt.quit() }
     Shortcut { sequence: "Escape"; enabled: pageFullScreen; onActivated: { var v = currentView(); if (v) v.fullScreenCancelled(); } }
     Shortcut { sequence: "Escape"; enabled: findVisible && !pageFullScreen; onActivated: closeFind() }
+    Shortcut { sequence: "Escape"; enabled: passwordsVisible && !pageFullScreen && !findVisible; onActivated: passwordsVisible = false }
     Shortcut { sequence: "Escape"; enabled: historyVisible && !pageFullScreen && !findVisible; onActivated: historyVisible = false }
     Shortcut { sequence: "Escape"; enabled: assistantVisible && !pageFullScreen && !findVisible; onActivated: assistantVisible = false }
 
@@ -442,106 +523,36 @@ ApplicationWindow {
                 anchors.rightMargin: 10
                 spacing: 8
 
-                // Back
-                Rectangle {
-                    width: 28
-                    height: 28
-                    radius: appWindow.cornerRadius
-                    color: backHover.containsMouse ? theme.surface : "transparent"
+                IconButton {
+                    icon: "back"
+                    cornerRadius: appWindow.cornerRadius
                     opacity: (activeView && activeView.canGoBack) ? 1.0 : 0.4
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "‹"
-                        font.pixelSize: 18
-                        font.bold: true
-                        color: theme.textStrong
-                    }
-
-                    MouseArea {
-                        id: backHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: { var v = currentView(); if (v && v.canGoBack) v.goBack(); }
-                    }
+                    onClicked: { var v = currentView(); if (v && v.canGoBack) v.goBack(); }
                 }
 
-                // Forward
-                Rectangle {
-                    width: 28
-                    height: 28
-                    radius: appWindow.cornerRadius
-                    color: fwdHover.containsMouse ? theme.surface : "transparent"
+                IconButton {
+                    icon: "forward"
+                    cornerRadius: appWindow.cornerRadius
                     opacity: (activeView && activeView.canGoForward) ? 1.0 : 0.4
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "›"
-                        font.pixelSize: 18
-                        font.bold: true
-                        color: theme.textStrong
-                    }
-
-                    MouseArea {
-                        id: fwdHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: { var v = currentView(); if (v && v.canGoForward) v.goForward(); }
-                    }
+                    onClicked: { var v = currentView(); if (v && v.canGoForward) v.goForward(); }
                 }
 
-                // Reload
-                Rectangle {
-                    width: 28
-                    height: 28
-                    radius: appWindow.cornerRadius
-                    color: reloadHover.containsMouse ? theme.surface : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: (activeView && activeView.loading) ? "x" : "R"
-                        font.pixelSize: 12
-                        font.bold: true
-                        color: theme.textStrong
-                    }
-
-                    MouseArea {
-                        id: reloadHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: {
-                            var v = currentView();
-                            if (v) {
-                                if (v.loading) v.stop();
-                                else v.reload();
-                            }
+                IconButton {
+                    icon: (activeView && activeView.loading) ? "stop" : "reload"
+                    cornerRadius: appWindow.cornerRadius
+                    onClicked: {
+                        var v = currentView();
+                        if (v) {
+                            if (v.loading) v.stop();
+                            else v.reload();
                         }
                     }
                 }
 
-                // Home
-                Rectangle {
-                    width: 28
-                    height: 28
-                    radius: appWindow.cornerRadius
-                    color: homeHover.containsMouse ? theme.surface : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "⌂"
-                        font.pixelSize: 16
-                        color: theme.textStrong
-                    }
-
-                    MouseArea {
-                        id: homeHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: {
-                            var v = currentView();
-                            if (v) v.url = backend.homeUrl;
-                        }
-                    }
+                IconButton {
+                    icon: "home"
+                    cornerRadius: appWindow.cornerRadius
+                    onClicked: { var v = currentView(); if (v) v.url = backend.homeUrl; }
                 }
 
                 // URL Address Bar
@@ -719,6 +730,13 @@ ApplicationWindow {
                     }
                 }
 
+                IconButton {
+                    icon: "key"
+                    active: passwordsVisible
+                    cornerRadius: appWindow.cornerRadius
+                    onClicked: togglePasswords()
+                }
+
                 // AI Assistant Toggle Button
                 Rectangle {
                     width: 32
@@ -739,7 +757,7 @@ ApplicationWindow {
                         id: aiHover
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: { assistantVisible = !assistantVisible; if (assistantVisible) historyVisible = false; }
+                        onClicked: { assistantVisible = !assistantVisible; if (assistantVisible) { historyVisible = false; passwordsVisible = false; } }
                     }
                 }
             }
@@ -748,8 +766,8 @@ ApplicationWindow {
         // Bookmarks Bar (Toggleable with Ctrl+B)
         Rectangle {
             Layout.fillWidth: true
-            height: bookmarksBarVisible ? 28 : 0
-            visible: bookmarksBarVisible && !pageFullScreen
+            height: visible ? 28 : 0
+            visible: bookmarksBarVisible && bookmarkBarItems.length > 0 && !pageFullScreen
             color: theme.chrome
 
             ListView {
@@ -758,10 +776,11 @@ ApplicationWindow {
                 anchors.rightMargin: 12
                 orientation: ListView.Horizontal
                 spacing: 8
-                model: backend.bookmarks
+                model: bookmarkBarItems
                 clip: true
 
                 delegate: Rectangle {
+                    readonly property bool isFolder: modelData.children !== undefined
                     height: 22
                     width: bmText.implicitWidth + 16
                     anchors.verticalCenter: parent.verticalCenter
@@ -772,7 +791,7 @@ ApplicationWindow {
                     Text {
                         id: bmText
                         anchors.centerIn: parent
-                        text: modelData.title
+                        text: isFolder ? modelData.title + " ▾" : modelData.title
                         color: bmHover.containsMouse ? theme.textStrong : theme.text
                         font.pixelSize: 12
                     }
@@ -783,11 +802,25 @@ ApplicationWindow {
                         hoverEnabled: true
                         acceptedButtons: Qt.LeftButton | Qt.RightButton
                         onClicked: function(mouse) {
-                            if (mouse.button === Qt.LeftButton) {
+                            if (isFolder) {
+                                if (mouse.button === Qt.LeftButton) folderMenu.popup();
+                            } else if (mouse.button === Qt.LeftButton) {
                                 var v = currentView();
                                 if (v) v.url = modelData.url;
                             } else if (mouse.button === Qt.RightButton) {
                                 bmMenu.popup();
+                            }
+                        }
+
+                        ThemedMenu {
+                            id: folderMenu
+                            Repeater {
+                                model: isFolder ? modelData.children : []
+                                ThemedMenuItem {
+                                    required property var modelData
+                                    text: modelData.title
+                                    onTriggered: { var v = currentView(); if (v) v.url = modelData.url; }
+                                }
                             }
                         }
 
@@ -851,6 +884,63 @@ ApplicationWindow {
                             anchors.fill: parent
                             hoverEnabled: true
                             onClicked: answerPermission(modelData.allow)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Offer to save the login that was just used
+        Rectangle {
+            Layout.fillWidth: true
+            height: 36
+            visible: pendingLogin !== null && pendingLogin.ready && pendingLogin.view === activeView && !pageFullScreen
+            color: theme.surface
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 10
+
+                Text {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    color: theme.textStrong
+                    font.pixelSize: 12
+                    text: pendingLogin
+                        ? (pendingLogin.state === "update" ? "Update the saved password for " : "Save the password for ")
+                          + (pendingLogin.user.length > 0 ? pendingLogin.user + " on " : "") + pendingLogin.url.replace(/^https?:\/\//, "").split("/")[0] + "?"
+                        : ""
+                }
+
+                Repeater {
+                    model: [
+                        { label: pendingLogin && pendingLogin.state === "update" ? "Update" : "Save", action: "save", primary: true },
+                        { label: "Never", action: "never", primary: false },
+                        { label: "Not now", action: "dismiss", primary: false }
+                    ]
+
+                    Rectangle {
+                        width: modelData.action === "dismiss" ? 66 : 56
+                        height: 24
+                        radius: appWindow.cornerRadius
+                        color: loginHover.containsMouse ? Qt.alpha(theme.accent, 0.25) : "transparent"
+                        border.color: modelData.primary ? theme.accent : theme.line
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            font.pixelSize: 12
+                            font.bold: true
+                            color: theme.textStrong
+                        }
+
+                        MouseArea {
+                            id: loginHover
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            onClicked: answerLogin(modelData.action)
                         }
                     }
                 }
@@ -936,9 +1026,10 @@ ApplicationWindow {
                             id: webView
                             anchors.fill: parent
                             visible: index === currentTabIndex
-                            url: model.url
+                            // Load the first address once; a binding would re-fetch (as GET) every page the tab reaches.
+                            Component.onCompleted: url = model.url
                             profile: appProfile
-                            userScripts.collection: chromeAppScripts
+                            userScripts.collection: pageScripts
 
                             settings.javascriptCanOpenWindows: true
                             settings.webGLEnabled: true
@@ -951,6 +1042,8 @@ ApplicationWindow {
                                 if (index === currentTabIndex)
                                     syncUrlField();
                             }
+
+                            onJavaScriptConsoleMessage: function(level, message, line, source) { loginMessage(webView, message); }
 
                             onIconChanged: {
                                 if (index < tabsModel.count)
@@ -965,6 +1058,8 @@ ApplicationWindow {
                             }
 
                             onLoadingChanged: function(loadRequest) {
+                                if (loadRequest.status === WebEngineView.LoadStartedStatus && pendingLogin && pendingLogin.view === webView)
+                                    pendingLogin = Object.assign({}, pendingLogin, { navigated: true });
                                 if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
                                     applyHomeTheme(webView);
                                     backend.recordVisit(url.toString(), title);
@@ -1210,6 +1305,15 @@ ApplicationWindow {
                             }
                         }
                     }
+                }
+
+                PasswordsPanel {
+                    id: passwordsPanel
+                    Layout.preferredWidth: 360
+                    Layout.fillHeight: true
+                    visible: passwordsVisible && !pageFullScreen
+                    cornerRadius: appWindow.cornerRadius
+                    onCloseRequested: passwordsVisible = false
                 }
 
                 // AI Assistant Side Panel (Claude Haiku 5.5 + TypeSafe Jev)

@@ -16,7 +16,9 @@
 
 #include "adblock.h"
 #include "backend.h"
+#include "importer.h"
 #include "theme.h"
+#include "vault.h"
 
 int main(int argc, char *argv[]) {
     // 1. Force native Wayland platform (Zero XWayland / X11 overhead)
@@ -112,10 +114,15 @@ int main(int argc, char *argv[]) {
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &Backend::flushHistory);
 
+    Vault vault(dataPath + "/passwords.vault");
+    Importer importer(&backend, &vault);
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("theme", &theme);
     engine.rootContext()->setContextProperty("backend", &backend);
     engine.rootContext()->setContextProperty("appProfile", profile);
+    engine.rootContext()->setContextProperty("vault", &vault);
+    engine.rootContext()->setContextProperty("importer", &importer);
 
     const QUrl url(QStringLiteral("qrc:/Main.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,

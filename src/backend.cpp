@@ -15,6 +15,7 @@
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUrlQuery>
+#include <algorithm>
 #include <memory>
 
 Backend::Backend(QObject *parent) : QObject(parent) {
@@ -77,6 +78,59 @@ void Backend::recordVisit(const QString &url, const QString &title) {
         m_history = m_history.mid(m_history.size() - maxEntries);
     m_historySave.start();
     emit historyChanged();
+}
+
+int Backend::addImportedHistory(const QVariantList &items) {
+    QSet<QString> known;
+    for (const auto &entry : m_history) {
+        const QVariantMap e = entry.toMap();
+        known.insert(e["url"].toString() + '\n' + e["time"].toString());
+    }
+    int added = 0;
+    for (const auto &item : items) {
+        QVariantMap entry = item.toMap();
+        const QString key = entry["url"].toString() + '\n' + entry["time"].toString();
+        if (entry["url"].toString().isEmpty() || entry["time"].toLongLong() <= 0 || known.contains(key))
+            continue;
+        if (entry["title"].toString().isEmpty())
+            entry["title"] = entry["url"];
+        known.insert(key);
+        m_history.append(entry);
+        ++added;
+    }
+    if (added == 0)
+        return 0;
+    std::stable_sort(m_history.begin(), m_history.end(), [](const QVariant &a, const QVariant &b) {
+        return a.toMap()["time"].toLongLong() < b.toMap()["time"].toLongLong();
+    });
+    constexpr int maxEntries = 5000;
+    if (m_history.size() > maxEntries)
+        m_history = m_history.mid(m_history.size() - maxEntries);
+    flushHistory();
+    emit historyChanged();
+    return added;
+}
+
+int Backend::addImportedBookmarks(const QString &folder, const QVariantList &items) {
+    QSet<QString> known;
+    for (const auto &b : m_bookmarks)
+        known.insert(b.toMap()["url"].toString().trimmed().toLower());
+    int added = 0;
+    for (const auto &item : items) {
+        const QVariantMap source = item.toMap();
+        const QString url = source["url"].toString().trimmed();
+        if ((!url.startsWith("http://") && !url.startsWith("https://")) || known.contains(url.toLower()))
+            continue;
+        known.insert(url.toLower());
+        const QString title = source["title"].toString().trimmed();
+        m_bookmarks.append(QVariantMap{{"title", title.isEmpty() ? url : title}, {"url", url}, {"folder", folder}});
+        ++added;
+    }
+    if (added > 0) {
+        saveBookmarks();
+        emit bookmarksChanged();
+    }
+    return added;
 }
 
 QVariantList Backend::searchHistory(const QString &query, int limit) {
@@ -180,31 +234,21 @@ QString Backend::findKeyInFish(const QString &target) {
 void Backend::loadBookmarks() {
     m_bookmarks.clear();
     QFile file(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/bookmarks.json");
-    if (file.open(QIODevice::ReadOnly)) {
-        const auto doc = QJsonDocument::fromJson(file.readAll());
-        if (doc.isArray()) {
-            for (const auto &val : doc.array()) {
-                m_bookmarks.append(val.toObject().toVariantMap());
-            }
-            emit bookmarksChanged();
-            return;
-        }
-    }
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+    for (const auto &val : QJsonDocument::fromJson(file.readAll()).array())
+        m_bookmarks.append(val.toObject().toVariantMap());
 
-    // Default bookmarks
-    QVariantMap gemini, google, github, youtube;
-    gemini["title"] = "Gemini";
-    gemini["url"] = "https://gemini.google.com";
-    google["title"] = "Google";
-    google["url"] = "https://google.com";
-    github["title"] = "GitHub";
-    github["url"] = "https://github.com";
-    youtube["title"] = "YouTube";
-    youtube["url"] = "https://youtube.com";
-
-    m_bookmarks = {gemini, google, github, youtube};
-    saveBookmarks();
-    emit bookmarksChanged();
+    // Earlier versions seeded these four; the bar now holds only what the user adds or imports.
+    static const QSet<QString> seeded{"Gemini|https://gemini.google.com", "Google|https://google.com",
+                                      "GitHub|https://github.com", "YouTube|https://youtube.com"};
+    const int before = m_bookmarks.size();
+    m_bookmarks.erase(std::remove_if(m_bookmarks.begin(), m_bookmarks.end(), [](const QVariant &b) {
+        const QVariantMap m = b.toMap();
+        return !m.contains("folder") && seeded.contains(m["title"].toString() + "|" + m["url"].toString());
+    }), m_bookmarks.end());
+    if (m_bookmarks.size() != before)
+        saveBookmarks();
 }
 
 void Backend::saveBookmarks() {

@@ -39,6 +39,9 @@ public:
     Q_INVOKABLE QVariantList suggest(const QString &query, int limit);
     Q_INVOKABLE void clearHistory();
     void flushHistory();
+    // Used by the importer; both skip what is already stored and return how many were added.
+    int addImportedBookmarks(const QString &folder, const QVariantList &items);
+    int addImportedHistory(const QVariantList &items);
 
     Q_INVOKABLE QString pdfPath(const QString &title) const;
     Q_INVOKABLE QString readResource(const QString &path) const;

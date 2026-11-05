@@ -25,6 +25,9 @@
   - `backend.{h,cpp}` - bookmarks, history, URL resolution, clipboard, Anthropic and Jev calls
   - `theme.{h,cpp}` - Omarchy `colors.toml` watcher and Hyprland rounding
   - `Main.qml` - window, tabs, toolbar, find bar, permission bar, assistant panel
+  - `vault.{h,cpp}` - encrypted saved logins, AES-256-GCM, key in the Secret Service keyring
+  - `importer.{h,cpp}` - imports from Chromium and Firefox family profiles and passwords CSV
+  - `login.js` - login capture and fill, isolated world, console lines carry a per-run nonce
   - `adblock.h` - hardcoded ad/tracker request blocker
   - `chrome_app.js` - `window.chrome.app` shim, required for Google sign-in
 - **Profile**: always the named persistent profile; the default QtWebEngine profile is off-the-record.

@@ -4,7 +4,7 @@ A quiet, native Linux browser for Omarchy: Qt 6 Quick on QtWebEngine (Chromium),
 
 ## Build and run
 
-Requires Qt 6.12 (`qt6-base`, `qt6-declarative`, `qt6-webengine`) and Rust for the optional cargo launcher.
+Requires Qt 6.12 (`qt6-base`, `qt6-declarative`, `qt6-webengine`), OpenSSL, and `libsecret` with a keyring such as `gnome-keyring` for saved passwords and Rust for the optional cargo launcher.
 
 ```bash
 ./bin/build           # qmake6 + make -> build/nodaysidle-browser
@@ -22,13 +22,15 @@ The app forces `QT_QPA_PLATFORM=wayland` and `QT_WAYLAND_DISABLE_WINDOWDECORATIO
 
 - Tabs: site icons, pills with an accent line under the active one, close button, middle-click close, `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`
 - Omnibox: URL or DuckDuckGo search, local hosts over http, `Ctrl+L` / `Alt+D`, https indicator, star bookmark (`Ctrl+D`)
-- Bookmarks bar (`Ctrl+B`) stored in `~/.local/share/nodaysidle-browser/bookmarks.json`; right-click for Open in New Tab / Delete
+- Bookmarks bar (`Ctrl+B`) stored in `~/.local/share/nodaysidle-browser/bookmarks.json`; it starts empty and shows only what you add or import, with each import as its own folder; right-click for Open in New Tab / Delete
 - Page context menu: open link in new tab, copy link address, back, forward, reload
 - Back / forward (`Alt+Left`, `Alt+Right`), reload / stop (`Ctrl+R`, `F5`), reload ignoring cache (`Ctrl+Shift+R`), Home
 - Find in page (`Ctrl+F`, `Enter` / `Shift+Enter` or `Ctrl+G` to step, match count), zoom (`Ctrl++`, `Ctrl+-`, `Ctrl+0`), reopen closed tab (`Ctrl+Shift+T`), full screen (`F11`)
 - Camera, microphone, notifications, clipboard and screen requests ask first, through a bar under the toolbar. Allow lasts for the session; Deny is never stored, so the site can ask again. Location requests are refused outright because QtWebEngine has no location service
 - Right-click menu also offers Cut, Copy and Paste
 - History: every visited page is stored locally in `history.json` (mode 0600, last 5,000 visits); `Ctrl+H` opens a searchable panel with Clear all; the address bar suggests matches from bookmarks and history as you type (`Down` / `Enter`)
+- Passwords (`Ctrl+Shift+K`, or the key button): after a sign-in the bar offers to save, update or never save the login; returning to the site fills it in, including two-step sign-ins that ask for the account first. Logins are stored in `passwords.vault`, AES-256-GCM encrypted with a key held in the desktop keyring (gnome-keyring through `secret-tool`), never on disk. Without a keyring the panel says so and nothing is saved
+- Import from other browsers (in the Passwords panel): bookmarks and history from Chrome, Chromium, Brave, Edge, Vivaldi, Opera, Firefox, Zen, LibreWolf, Floorp and Waterfox profiles, passwords from the Chromium family, and any browser's passwords CSV export. A CSV holds passwords in plain text, so delete it after importing
 - Ad and tracker blocker: sub-resource requests to a built-in list of ad, analytics and tracking hosts are dropped before they leave the machine; page navigations and a site's own requests are never blocked (`src/adblock.h`)
 - Print (`Ctrl+P`) saves the page as a PDF in Downloads
 - Popups from `window.open` (OAuth) open in their own window and close themselves; `target=_blank` opens a tab
@@ -59,9 +61,14 @@ bin/build, bin/run       build and launch scripts
 bin/install, pkgbuild/   Arch package for the Omarchy launcher
 src/main.cpp             Wayland setup, persistent profile, downloads, single instance, QML engine
 src/backend.{h,cpp}      bookmarks, history, URL resolution, clipboard, Anthropic and Jev calls
+src/vault.{h,cpp}        encrypted saved logins, keyring-held key
+src/importer.{h,cpp}     bookmarks, history and passwords from other browsers
+src/login.js            login form capture and fill, runs in an isolated page world
 src/theme.{h,cpp}        Omarchy colors.toml watcher and Hyprland rounding
 src/Main.qml             window, tabs, toolbar, find and permission bars, assistant panel
 src/ThemedMenu*.qml      themed context menus
+src/PasswordsPanel.qml   saved logins and import panel
+src/IconButton.qml       toolbar icons drawn on one grid
 src/adblock.h            hardcoded ad and tracker host blocker
 src/chrome_app.js        window.chrome.app shim
 src/home.html            start page

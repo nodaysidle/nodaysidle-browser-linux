@@ -7,7 +7,7 @@ arch=('x86_64')
 url='https://github.com/nodaysidle/nodaysidle-browser-linux'
 license=('MIT')
 options=('!debug')
-depends=('qt6-base' 'qt6-declarative' 'qt6-webengine' 'qt6-wayland')
+depends=('qt6-base' 'qt6-declarative' 'qt6-webengine' 'qt6-wayland' 'openssl' 'libsecret')
 
 # Builds from the working tree this file sits in, so bin/install packages what you see.
 build() {
