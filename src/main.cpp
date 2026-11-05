@@ -18,14 +18,12 @@ int main(int argc, char *argv[]) {
     qputenv("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1");
     qputenv("NO_AT_BRIDGE", "1");
 
-    // 2. Hardware acceleration flags for Intel Arc (Mesa iris driver + VA-API)
+    // Disable in-process GPU sandbox trap and let QtWebEngine use native Wayland hardware acceleration
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
-            "--enable-features=VaapiVideoDecoder,VaapiVideoEncoder,CanvasOopRasterization "
+            "--ignore-gpu-blocklist "
             "--enable-gpu-rasterization "
             "--enable-zero-copy "
-            "--use-gl=egl "
-            "--ignore-gpu-blocklist "
-            "--disable-smooth-scrolling");
+            "--no-sandbox");
 
     QtWebEngineQuick::initialize();
 
@@ -39,11 +37,15 @@ int main(int argc, char *argv[]) {
 
     Theme theme;
     Backend backend;
+    if (argc > 1 && argv[1][0] != '-') {
+        backend.setInitialUrl(backend.normalizeUrl(QString::fromUtf8(argv[1])));
+    }
 
     // Configure default persistent web profile for smooth auth, cookies and cache
     auto *defaultProfile = QQuickWebEngineProfile::defaultProfile();
-    const QString dataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/nodaysidle-browser";
+    const QString dataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     defaultProfile->setPersistentStoragePath(dataPath);
+    defaultProfile->setCachePath(dataPath + "/cache");
     defaultProfile->setPersistentCookiesPolicy(QQuickWebEngineProfile::ForcePersistentCookies);
     defaultProfile->setHttpUserAgent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
 

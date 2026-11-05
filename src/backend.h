@@ -13,6 +13,7 @@ class Backend : public QObject {
     Q_PROPERTY(bool hasAnthropicKey READ hasAnthropicKey CONSTANT)
     Q_PROPERTY(bool hasJevKey READ hasJevKey CONSTANT)
     Q_PROPERTY(QString homeUrl READ homeUrl CONSTANT)
+    Q_PROPERTY(QString initialUrl READ initialUrl CONSTANT)
 
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -22,6 +23,8 @@ public:
     bool hasAnthropicKey() const { return !m_anthropicKey.isEmpty(); }
     bool hasJevKey() const { return !m_jevKey.isEmpty(); }
     QString homeUrl() const;
+    QString initialUrl() const { return m_initialUrl.isEmpty() ? homeUrl() : m_initialUrl; }
+    void setInitialUrl(const QString &url) { m_initialUrl = url; }
 
     Q_INVOKABLE QString normalizeUrl(const QString &input);
     Q_INVOKABLE bool isBookmarked(const QString &url);
@@ -47,6 +50,7 @@ private:
     QString findKeyInFish(const QString &target);
 
     QVariantList m_bookmarks;
+    QString m_initialUrl;
     QString m_anthropicKey;
     QString m_jevKey;
     QNetworkAccessManager m_nam;

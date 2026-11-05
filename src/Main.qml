@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
 import QtWebEngine
 
 ApplicationWindow {
@@ -21,7 +22,7 @@ ApplicationWindow {
     property bool assistantVisible: false
 
     Component.onCompleted: {
-        newTab(backend.homeUrl);
+        newTab(backend.initialUrl);
     }
 
     function newTab(url) {
@@ -51,6 +52,36 @@ ApplicationWindow {
 
     function currentView() {
         return webViewRepeater.itemAt(currentTabIndex);
+    }
+
+    Component {
+        id: popupComponent
+        Window {
+            id: popupWin
+            width: 580
+            height: 680
+            visible: true
+            color: theme.background
+            title: popupView.title && popupView.title.length > 0 ? popupView.title + " — nodaysidle" : "nodaysidle"
+
+            property alias webView: popupView
+
+            WebEngineView {
+                id: popupView
+                anchors.fill: parent
+                settings.javascriptCanOpenWindows: true
+                settings.webGLEnabled: true
+                settings.accelerated2dCanvasEnabled: true
+
+                onNewWindowRequested: function(req) {
+                    req.openIn(popupView);
+                }
+                onWindowCloseRequested: {
+                    popupWin.close();
+                    popupWin.destroy();
+                }
+            }
+        }
     }
 
     // Keyboard Shortcuts
@@ -534,6 +565,11 @@ ApplicationWindow {
                             visible: index === currentTabIndex
                             url: model.url
 
+                            settings.javascriptCanOpenWindows: true
+                            settings.webGLEnabled: true
+                            settings.accelerated2dCanvasEnabled: true
+                            settings.dnsPrefetchEnabled: true
+
                             onUrlChanged: {
                                 if (index < tabsModel.count)
                                     tabsModel.setProperty(index, "url", url.toString());
@@ -553,6 +589,18 @@ ApplicationWindow {
                             }
 
                             onNewWindowRequested: function(request) {
+                                if (request.destination === WebEngineNewWindowRequest.InNewDialog ||
+                                    request.destination === WebEngineNewWindowRequest.InNewWindow) {
+                                    var w = popupComponent.createObject(appWindow, {
+                                        width: request.requestedGeometry.width > 200 ? request.requestedGeometry.width : 580,
+                                        height: request.requestedGeometry.height > 200 ? request.requestedGeometry.height : 680
+                                    });
+                                    if (w) {
+                                        request.openIn(w.webView);
+                                        w.show();
+                                        return;
+                                    }
+                                }
                                 newTab(request.requestedUrl.toString());
                             }
 
