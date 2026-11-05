@@ -25,8 +25,11 @@ The app forces `QT_QPA_PLATFORM=wayland` and `QT_WAYLAND_DISABLE_WINDOWDECORATIO
 - Page context menu: open link in new tab, copy link address, back, forward, reload
 - Back / forward (`Alt+Left`, `Alt+Right`), reload / stop (`Ctrl+R`, `F5`), reload ignoring cache (`Ctrl+Shift+R`), Home
 - Find in page (`Ctrl+F`, `Enter` / `Shift+Enter` or `Ctrl+G` to step, match count), zoom (`Ctrl++`, `Ctrl+-`, `Ctrl+0`), reopen closed tab (`Ctrl+Shift+T`), full screen (`F11`)
-- Camera, microphone, location, notifications and screen requests ask first, through a bar under the toolbar; the answer is remembered per site
+- Camera, microphone, notifications, clipboard and screen requests ask first, through a bar under the toolbar. Allow lasts for the session; Deny is never stored, so the site can ask again. Location requests are refused outright because QtWebEngine has no location service
 - Right-click menu also offers Cut, Copy and Paste
+- History: every visited page is stored locally in `history.json` (mode 0600, last 5,000 visits); `Ctrl+H` opens a searchable panel with Clear all; the address bar suggests matches from bookmarks and history as you type (`Down` / `Enter`)
+- Ad and tracker blocker: sub-resource requests to a built-in list of ad, analytics and tracking hosts are dropped before they leave the machine; page navigations and a site's own requests are never blocked (`src/adblock.h`)
+- Print (`Ctrl+P`) saves the page as a PDF in Downloads
 - Popups from `window.open` (OAuth) open in their own window and close themselves; `target=_blank` opens a tab
 - Page fullscreen hides the chrome, `Esc` leaves it
 - Downloads go to the XDG Downloads folder without overwriting, with a short confirmation
@@ -53,17 +56,14 @@ Read from the environment, then `~/.config/fish/secrets.fish`, then `~/.config/f
 nodaysidle-browser.pro   qmake6 project
 bin/build, bin/run       build and launch scripts
 src/main.cpp             Wayland setup, persistent profile, downloads, single instance, QML engine
-src/backend.{h,cpp}      bookmarks, URL resolution, clipboard, Anthropic and Jev calls
+src/backend.{h,cpp}      bookmarks, history, URL resolution, clipboard, Anthropic and Jev calls
 src/theme.{h,cpp}        Omarchy colors.toml watcher and Hyprland rounding
 src/Main.qml             window, tabs, toolbar, find and permission bars, assistant panel
 src/ThemedMenu*.qml      themed context menus
+src/adblock.h            hardcoded ad and tracker host blocker
 src/chrome_app.js        window.chrome.app shim
 src/home.html            start page
 src/main.rs              cargo wrapper that starts the Qt binary
 ```
-
-## Not included
-
-History, print, extensions, sync, and reading saved passwords from a password manager. Geolocation prompts appear but position lookups fail, because QtWebEngine ships without a Google location API key.
 
 MIT licensed.

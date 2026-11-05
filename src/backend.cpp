@@ -1,5 +1,6 @@
 #include "backend.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QClipboard>
@@ -10,6 +11,7 @@
 #include <QJsonObject>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUrlQuery>
@@ -18,6 +20,108 @@
 Backend::Backend(QObject *parent) : QObject(parent) {
     loadKeys();
     loadBookmarks();
+    loadHistory();
+    m_historySave.setSingleShot(true);
+    m_historySave.setInterval(2000);
+    connect(&m_historySave, &QTimer::timeout, this, &Backend::flushHistory);
+}
+
+static QString historyPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/history.json";
+}
+
+void Backend::loadHistory() {
+    QFile file(historyPath());
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+    const auto doc = QJsonDocument::fromJson(file.readAll());
+    for (const auto &entry : doc.array())
+        m_history.append(entry.toObject().toVariantMap());
+}
+
+void Backend::flushHistory() {
+    m_historySave.stop();
+    QDir().mkpath(QFileInfo(historyPath()).absolutePath());
+    QFile file(historyPath());
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return;
+    file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
+    QJsonArray array;
+    for (const auto &entry : m_history)
+        array.append(QJsonObject::fromVariantMap(entry.toMap()));
+    file.write(QJsonDocument(array).toJson(QJsonDocument::Compact));
+}
+
+void Backend::recordVisit(const QString &url, const QString &title) {
+    if (!url.startsWith("http://") && !url.startsWith("https://"))
+        return;
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    // Same page again (reload, or the title arriving late): refresh the newest entry.
+    if (!m_history.isEmpty()) {
+        QVariantMap last = m_history.last().toMap();
+        if (last["url"].toString() == url) {
+            if (!title.isEmpty())
+                last["title"] = title;
+            m_history.last() = last;
+            m_historySave.start();
+            return;
+        }
+    }
+    QVariantMap entry;
+    entry["url"] = url;
+    entry["title"] = title.isEmpty() ? url : title;
+    entry["time"] = now;
+    m_history.append(entry);
+    constexpr int maxEntries = 5000;
+    if (m_history.size() > maxEntries)
+        m_history = m_history.mid(m_history.size() - maxEntries);
+    m_historySave.start();
+    emit historyChanged();
+}
+
+QVariantList Backend::searchHistory(const QString &query, int limit) {
+    QVariantList result;
+    QSet<QString> seen;
+    const QString needle = query.trimmed().toLower();
+    for (int i = m_history.size() - 1; i >= 0 && result.size() < limit; --i) {
+        const QVariantMap entry = m_history[i].toMap();
+        const QString url = entry["url"].toString();
+        if (!needle.isEmpty() && !url.toLower().contains(needle) && !entry["title"].toString().toLower().contains(needle))
+            continue;
+        if (needle.isEmpty() || !seen.contains(url)) {
+            seen.insert(url);
+            result.append(entry);
+        }
+    }
+    return result;
+}
+
+QVariantList Backend::suggest(const QString &query, int limit) {
+    QVariantList result;
+    const QString needle = query.trimmed().toLower();
+    if (needle.isEmpty())
+        return result;
+    QSet<QString> seen;
+    auto consider = [&](const QVariantMap &entry) {
+        const QString url = entry["url"].toString();
+        if (seen.contains(url) || result.size() >= limit)
+            return;
+        if (url.toLower().contains(needle) || entry["title"].toString().toLower().contains(needle)) {
+            seen.insert(url);
+            result.append(entry);
+        }
+    };
+    for (const auto &bookmark : m_bookmarks)
+        consider(bookmark.toMap());
+    for (int i = m_history.size() - 1; i >= 0; --i)
+        consider(m_history[i].toMap());
+    return result;
+}
+
+void Backend::clearHistory() {
+    m_history.clear();
+    flushHistory();
+    emit historyChanged();
 }
 
 QString Backend::homeUrl() const {
@@ -162,6 +266,19 @@ void Backend::removeBookmark(const QString &url) {
 QString Backend::readResource(const QString &path) const {
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
+}
+
+QString Backend::pdfPath(const QString &title) const {
+    static const QRegularExpression unsafe("[^A-Za-z0-9._ -]");
+    QString name = title.trimmed();
+    name.replace(unsafe, "_");
+    if (name.isEmpty())
+        name = "page";
+    const QDir dir(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+    QString path = dir.filePath(name + ".pdf");
+    for (int n = 1; QFileInfo::exists(path); ++n)
+        path = dir.filePath(QString("%1 (%2).pdf").arg(name).arg(n));
+    return path;
 }
 
 void Backend::copyText(const QString &text) {

@@ -22,9 +22,10 @@
 - **Stack**: C++17, Qt 6.12 (Quick, QuickControls2, WebEngineQuick), qmake6. `src/main.rs` is only a cargo wrapper that execs the Qt binary.
 - **Key files (`src/`)**:
   - `main.cpp` - Wayland env, persistent profile, Chrome UA, downloads, single instance
-  - `backend.{h,cpp}` - bookmarks, URL resolution, clipboard, Anthropic and Jev calls
+  - `backend.{h,cpp}` - bookmarks, history, URL resolution, clipboard, Anthropic and Jev calls
   - `theme.{h,cpp}` - Omarchy `colors.toml` watcher and Hyprland rounding
   - `Main.qml` - window, tabs, toolbar, find bar, permission bar, assistant panel
+  - `adblock.h` - hardcoded ad/tracker request blocker
   - `chrome_app.js` - `window.chrome.app` shim, required for Google sign-in
 - **Profile**: always the named persistent profile; the default QtWebEngine profile is off-the-record.
 - **Zero Telemetry**: Never add tracking, analytics beacons, or remote logging.

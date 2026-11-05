@@ -7,6 +7,7 @@
 #include <QVariantMap>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QTimer>
 
 class Backend : public QObject {
     Q_OBJECT
@@ -32,6 +33,14 @@ public:
     Q_INVOKABLE void toggleBookmark(const QString &title, const QString &url);
     Q_INVOKABLE void removeBookmark(const QString &url);
     Q_INVOKABLE void copyText(const QString &text);
+    // History
+    Q_INVOKABLE void recordVisit(const QString &url, const QString &title);
+    Q_INVOKABLE QVariantList searchHistory(const QString &query, int limit);
+    Q_INVOKABLE QVariantList suggest(const QString &query, int limit);
+    Q_INVOKABLE void clearHistory();
+    void flushHistory();
+
+    Q_INVOKABLE QString pdfPath(const QString &title) const;
     Q_INVOKABLE QString readResource(const QString &path) const;
 
     // AI Assistant
@@ -40,6 +49,7 @@ public:
     Q_INVOKABLE void cancelAssistant();
 
 signals:
+    void historyChanged();
     void openRequested(const QString &url);
     void notice(const QString &text);
     void bookmarksChanged();
@@ -51,10 +61,13 @@ signals:
 private:
     void loadKeys();
     void loadBookmarks();
+    void loadHistory();
     void saveBookmarks();
     QString findKeyInFish(const QString &target);
 
     QVariantList m_bookmarks;
+    QVariantList m_history;
+    QTimer m_historySave;
     QStringList m_initialUrls;
     QString m_anthropicKey;
     QString m_jevKey;

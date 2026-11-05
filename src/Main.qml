@@ -37,6 +37,10 @@ ApplicationWindow {
     property bool assistantBusy: false
     property bool pageFullScreen: false
     property bool findVisible: false
+    property bool historyVisible: false
+    property var historyItems: []
+    property var suggestions: []
+    property int suggestIndex: -1
     property string findStatus: ""
     property var closedTabs: []
     property var pendingPermission: null
@@ -127,6 +131,25 @@ ApplicationWindow {
         }
     }
 
+    function refreshHistory() {
+        historyItems = backend.searchHistory(historySearch.text, 200);
+    }
+
+    function toggleHistory() {
+        historyVisible = !historyVisible;
+        if (historyVisible) {
+            assistantVisible = false;
+            historySearch.text = "";
+            refreshHistory();
+            historySearch.forceActiveFocus();
+        }
+    }
+
+    function printPage() {
+        var v = activeView;
+        if (v) v.printToPdf(backend.pdfPath(v.title));
+    }
+
     function reopenTab() {
         if (closedTabs.length === 0)
             return;
@@ -183,7 +206,12 @@ ApplicationWindow {
 
     function answerPermission(allow) {
         if (!pendingPermission) return;
-        if (allow) pendingPermission.grant(); else pendingPermission.deny();
+        if (allow) {
+            pendingPermission.grant();
+        } else {
+            pendingPermission.deny();
+            pendingPermission.reset();
+        }
         pendingPermission = null;
     }
 
@@ -231,6 +259,8 @@ ApplicationWindow {
     Shortcut { sequences: ["Ctrl+Shift+R", "Ctrl+F5"]; onActivated: { var v = currentView(); if (v) v.reloadAndBypassCache(); } }
     Shortcut { sequence: "Ctrl+Shift+T"; onActivated: reopenTab() }
     Shortcut { sequence: "Ctrl+F"; onActivated: openFind() }
+    Shortcut { sequence: "Ctrl+H"; onActivated: toggleHistory() }
+    Shortcut { sequence: "Ctrl+P"; onActivated: printPage() }
     Shortcut { sequences: ["Ctrl+G", "F3"]; enabled: findVisible; onActivated: runFind(false) }
     Shortcut { sequences: ["Ctrl+Shift+G", "Shift+F3"]; enabled: findVisible; onActivated: runFind(true) }
     Shortcut { sequences: ["Ctrl++", "Ctrl+="]; onActivated: zoomBy(0.1) }
@@ -245,7 +275,7 @@ ApplicationWindow {
         if (v) backend.toggleBookmark(v.title, v.url.toString());
     }}
     Shortcut { sequence: "Ctrl+B"; onActivated: bookmarksBarVisible = !bookmarksBarVisible }
-    Shortcut { sequence: "Ctrl+Shift+A"; onActivated: assistantVisible = !assistantVisible }
+    Shortcut { sequence: "Ctrl+Shift+A"; onActivated: { assistantVisible = !assistantVisible; if (assistantVisible) historyVisible = false; } }
     Shortcut { sequence: "Alt+Left"; onActivated: { var v = currentView(); if (v && v.canGoBack) v.goBack(); } }
     Shortcut { sequence: "Alt+Right"; onActivated: { var v = currentView(); if (v && v.canGoForward) v.goForward(); } }
     Shortcut { sequence: "Ctrl+Tab"; onActivated: cycleTab(1) }
@@ -253,6 +283,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Q"; onActivated: Qt.quit() }
     Shortcut { sequence: "Escape"; enabled: pageFullScreen; onActivated: { var v = currentView(); if (v) v.fullScreenCancelled(); } }
     Shortcut { sequence: "Escape"; enabled: findVisible && !pageFullScreen; onActivated: closeFind() }
+    Shortcut { sequence: "Escape"; enabled: historyVisible && !pageFullScreen && !findVisible; onActivated: historyVisible = false }
     Shortcut { sequence: "Escape"; enabled: assistantVisible && !pageFullScreen && !findVisible; onActivated: assistantVisible = false }
 
     ColumnLayout {
@@ -551,14 +582,81 @@ ApplicationWindow {
                             clip: true
                             background: null
 
-                            onActiveFocusChanged: if (!activeFocus) syncUrlField()
-                            Keys.onEscapePressed: { focus = false; syncUrlField(); }
+                            onActiveFocusChanged: if (!activeFocus) { suggestions = []; syncUrlField(); }
+                            Keys.onEscapePressed: { suggestions = []; focus = false; syncUrlField(); }
+                            Keys.onDownPressed: if (suggestions.length > 0) suggestIndex = Math.min(suggestions.length - 1, suggestIndex + 1)
+                            Keys.onUpPressed: if (suggestions.length > 0) suggestIndex = Math.max(-1, suggestIndex - 1)
+                            onTextEdited: {
+                                suggestions = backend.suggest(text, 6);
+                                suggestIndex = -1;
+                            }
 
                             onAccepted: {
-                                var target = backend.normalizeUrl(text);
+                                var target = suggestIndex >= 0 ? suggestions[suggestIndex].url : backend.normalizeUrl(text);
+                                suggestions = [];
                                 var v = currentView();
                                 if (v) v.url = target;
                                 focus = false;
+                            }
+
+                            Popup {
+                                y: urlInput.height + 6
+                                width: urlInput.width + 80
+                                padding: 4
+                                visible: suggestions.length > 0 && urlInput.activeFocus
+                                closePolicy: Popup.NoAutoClose
+                                focus: false
+
+                                background: Rectangle {
+                                    color: theme.surface
+                                    border.color: theme.line
+                                    radius: appWindow.cornerRadius
+                                }
+
+                                contentItem: ListView {
+                                    implicitHeight: contentHeight
+                                    model: suggestions
+                                    interactive: false
+
+                                    delegate: Rectangle {
+                                        width: ListView.view.width
+                                        height: 38
+                                        radius: Math.min(appWindow.cornerRadius, 6)
+                                        color: index === suggestIndex ? Qt.alpha(theme.accent, 0.22) : "transparent"
+
+                                        Column {
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.margins: 8
+
+                                            Text {
+                                                width: parent.width
+                                                text: modelData.title
+                                                elide: Text.ElideRight
+                                                color: theme.textStrong
+                                                font.pixelSize: 12
+                                            }
+                                            Text {
+                                                width: parent.width
+                                                text: modelData.url
+                                                elide: Text.ElideRight
+                                                color: theme.muted
+                                                font.pixelSize: 11
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            onClicked: {
+                                                var v = currentView();
+                                                if (v) v.url = modelData.url;
+                                                suggestions = [];
+                                                urlInput.focus = false;
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -633,7 +731,7 @@ ApplicationWindow {
                         id: aiHover
                         anchors.fill: parent
                         hoverEnabled: true
-                        onClicked: assistantVisible = !assistantVisible
+                        onClicked: { assistantVisible = !assistantVisible; if (assistantVisible) historyVisible = false; }
                     }
                 }
             }
@@ -847,18 +945,26 @@ ApplicationWindow {
                             }
 
                             onTitleChanged: {
+                                if (!loading)
+                                    backend.recordVisit(url.toString(), title);
                                 if (index < tabsModel.count)
                                     tabsModel.setProperty(index, "title", title);
                             }
 
                             onLoadingChanged: function(loadRequest) {
-                                if (loadRequest.status === WebEngineView.LoadSucceededStatus)
+                                if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
                                     applyHomeTheme(webView);
+                                    backend.recordVisit(url.toString(), title);
+                                }
                                 if (index < tabsModel.count) {
                                     tabsModel.setProperty(index, "loading", loadRequest.status === WebEngineView.LoadStartedStatus);
                                     tabsModel.setProperty(index, "canGoBack", canGoBack);
                                     tabsModel.setProperty(index, "canGoForward", canGoForward);
                                 }
+                            }
+
+                            onPdfPrintingFinished: function(filePath, success) {
+                                backend.notice(success ? "Saved " + filePath.split("/").pop() + " to Downloads" : "Could not save the PDF");
                             }
 
                             onFindTextFinished: function(result) {
@@ -869,7 +975,16 @@ ApplicationWindow {
                             }
 
                             onPermissionRequested: function(permission) {
-                                if (pendingPermission) pendingPermission.deny();
+                                // QtWebEngine has no location service key, so a grant could never produce a position.
+                                if (permission.permissionType === WebEnginePermission.PermissionType.Geolocation) {
+                                    permission.deny();
+                                    permission.reset();
+                                    return;
+                                }
+                                if (pendingPermission) {
+                                    pendingPermission.deny();
+                                    pendingPermission.reset();
+                                }
                                 pendingPermission = permission;
                             }
 
@@ -956,6 +1071,128 @@ ApplicationWindow {
                                 ThemedMenuItem {
                                     text: "Reload"
                                     onTriggered: webView.reload()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // History side panel (Ctrl+H)
+                Rectangle {
+                    Layout.preferredWidth: 360
+                    Layout.fillHeight: true
+                    visible: historyVisible && !pageFullScreen
+                    color: theme.surface
+                    border.color: theme.line
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 10
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Text {
+                                text: "History"
+                                font.pixelSize: 15
+                                font.bold: true
+                                color: theme.textStrong
+                                Layout.fillWidth: true
+                            }
+
+                            Text {
+                                text: "Clear all"
+                                font.pixelSize: 12
+                                font.bold: true
+                                color: theme.accent
+                                visible: historyItems.length > 0
+                                MouseArea {
+                                    anchors.fill: parent
+                                    anchors.margins: -6
+                                    onClicked: { backend.clearHistory(); refreshHistory(); }
+                                }
+                            }
+
+                            Text {
+                                text: "×"
+                                font.pixelSize: 18
+                                color: theme.muted
+                                MouseArea {
+                                    anchors.fill: parent
+                                    anchors.margins: -4
+                                    onClicked: historyVisible = false
+                                }
+                            }
+                        }
+
+                        TextField {
+                            id: historySearch
+                            Layout.fillWidth: true
+                            placeholderText: "Search history"
+                            placeholderTextColor: theme.muted
+                            color: theme.textStrong
+                            font.pixelSize: 12
+                            selectByMouse: true
+                            background: Rectangle {
+                                radius: appWindow.cornerRadius
+                                color: theme.chrome
+                                border.color: historySearch.activeFocus ? theme.accent : theme.line
+                            }
+                            onTextChanged: refreshHistory()
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: historyItems.length === 0
+                            text: historySearch.text.length > 0 ? "Nothing matches." : "No history yet."
+                            color: theme.muted
+                            font.pixelSize: 12
+                        }
+
+                        ListView {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            model: historyItems
+                            spacing: 2
+
+                            delegate: Rectangle {
+                                width: ListView.view.width
+                                height: 46
+                                radius: Math.min(appWindow.cornerRadius, 6)
+                                color: histHover.containsMouse ? Qt.alpha(theme.accent, 0.18) : "transparent"
+
+                                Column {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.margins: 8
+
+                                    Text {
+                                        width: parent.width
+                                        text: modelData.title
+                                        elide: Text.ElideRight
+                                        color: theme.textStrong
+                                        font.pixelSize: 12
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        text: Qt.formatDateTime(new Date(modelData.time * 1000), "MMM d, HH:mm") + "  " + modelData.url
+                                        elide: Text.ElideRight
+                                        color: theme.muted
+                                        font.pixelSize: 11
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: histHover
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onClicked: {
+                                        var v = currentView();
+                                        if (v) v.url = modelData.url;
+                                    }
                                 }
                             }
                         }

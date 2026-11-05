@@ -14,6 +14,7 @@
 #include <QQuickWebEngineProfile>
 #include <QtWebEngineQuick/qquickwebenginedownloadrequest.h>
 
+#include "adblock.h"
 #include "backend.h"
 #include "theme.h"
 
@@ -92,6 +93,8 @@ int main(int argc, char *argv[]) {
     profile->setHttpUserAgent(QString("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
                                       "Chrome/%1.0.0.0 Safari/537.36").arg(chromeMajor));
     profile->setHttpAcceptLanguage("en-US,en;q=0.9");
+    profile->setPersistentPermissionsPolicy(QQuickWebEngineProfile::PersistentPermissionsPolicy::StoreInMemory);
+    profile->setUrlRequestInterceptor(new AdBlocker(profile));
 
     QObject::connect(profile, &QQuickWebEngineProfile::downloadRequested, &backend,
                      [&backend](QQuickWebEngineDownloadRequest *download) {
@@ -105,6 +108,8 @@ int main(int argc, char *argv[]) {
                 emit backend.notice("Download failed: " + download->downloadFileName());
         });
     });
+
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &Backend::flushHistory);
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("theme", &theme);

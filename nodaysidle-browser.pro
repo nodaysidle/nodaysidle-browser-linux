@@ -6,7 +6,8 @@ TEMPLATE = app
 
 HEADERS += \
     src/backend.h \
-    src/theme.h
+    src/theme.h \
+    src/adblock.h
 
 SOURCES += \
     src/main.cpp \
