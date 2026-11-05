@@ -28,7 +28,7 @@
     }
     .container {
       width: 100%;
-      max-width: 640px;
+      max-width: 520px;
       padding: 24px;
       display: flex;
       flex-direction: column;
@@ -52,9 +52,10 @@
     }
     .search-input {
       width: 100%;
-      padding: 16px 20px;
+      height: 44px;
+      padding: 0 22px;
       font-size: 15px;
-      border-radius: var(--radius);
+      border-radius: 22px;
       border: 1px solid var(--line);
       background: var(--surface);
       color: var(--strong);
@@ -68,47 +69,6 @@
     .search-input::placeholder {
       color: var(--muted);
     }
-    .tiles {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 16px;
-      width: 100%;
-    }
-    .tile {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 18px 12px;
-      border-radius: var(--radius);
-      background: var(--surface);
-      border: 1px solid var(--line);
-      color: var(--text);
-      text-decoration: none;
-      font-size: 13px;
-      font-weight: 500;
-      transition: all 0.15s ease;
-      gap: 10px;
-    }
-    .tile:hover {
-      border-color: var(--accent);
-      color: var(--strong);
-      transform: translateY(-2px);
-    }
-    .tile-badge {
-      font-size: 14px;
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      width: 36px;
-      height: 36px;
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: var(--bg);
-      color: var(--accent);
-      border: 1px solid var(--line);
-    }
   </style>
 </head>
 <body>
@@ -118,25 +78,6 @@
     <form class="search-box" action="https://duckduckgo.com/" method="get">
       <input type="text" name="q" class="search-input" placeholder="Search the web or type a URL..." autofocus autocomplete="off">
     </form>
-
-    <div class="tiles">
-      <a href="https://gemini.google.com" class="tile">
-        <div class="tile-badge">GM</div>
-        <div>Gemini</div>
-      </a>
-      <a href="https://google.com" class="tile">
-        <div class="tile-badge">G</div>
-        <div>Google</div>
-      </a>
-      <a href="https://github.com" class="tile">
-        <div class="tile-badge">GH</div>
-        <div>GitHub</div>
-      </a>
-      <a href="https://youtube.com" class="tile">
-        <div class="tile-badge">YT</div>
-        <div>YouTube</div>
-      </a>
-    </div>
   </div>
 </body>
 </html>
