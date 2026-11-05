@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+if [ ! -f "$ROOT/build/nodaysidle-browser" ]; then
+    "$ROOT/bin/build"
+fi
+
+exec "$ROOT/build/nodaysidle-browser" "$@"

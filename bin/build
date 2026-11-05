@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+mkdir -p "$ROOT/build"
+cd "$ROOT/build"
+
+echo "Configuring with qmake6..."
+qmake6 "$ROOT/nodaysidle-browser.pro"
+
+echo "Building with make..."
+make -j"$(nproc)"
+
+echo "Successfully built $ROOT/build/nodaysidle-browser"

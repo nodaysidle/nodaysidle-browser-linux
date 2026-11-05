@@ -1,0 +1,314 @@
+#include "backend.h"
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkRequest>
+#include <QRegularExpression>
+#include <QStandardPaths>
+#include <QUrl>
+#include <QUrlQuery>
+
+Backend::Backend(QObject *parent) : QObject(parent) {
+    loadKeys();
+    loadBookmarks();
+}
+
+QString Backend::homeUrl() const {
+    return "qrc:/home.html";
+}
+
+void Backend::loadKeys() {
+    m_anthropicKey = qEnvironmentVariable("ANTHROPIC_API_KEY");
+    if (m_anthropicKey.isEmpty())
+        m_anthropicKey = qEnvironmentVariable("HAIKU_API_KEY");
+    if (m_anthropicKey.isEmpty())
+        m_anthropicKey = findKeyInFish("HAIKU_API_KEY");
+    if (m_anthropicKey.isEmpty())
+        m_anthropicKey = findKeyInFish("ANTHROPIC_API_KEY");
+
+    m_jevKey = qEnvironmentVariable("TYPESAFE_API_KEY");
+    if (m_jevKey.isEmpty())
+        m_jevKey = findKeyInFish("TYPESAFE_API_KEY");
+}
+
+QString Backend::findKeyInFish(const QString &target) {
+    const QString home = QDir::homePath();
+    // 1. secrets.fish
+    QFile secrets(home + "/.config/fish/secrets.fish");
+    if (secrets.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!secrets.atEnd()) {
+            QString line = QString::fromUtf8(secrets.readLine()).trimmed();
+            QString prefix = QString("set -gx %1 ").arg(target);
+            if (line.startsWith(prefix)) {
+                QString val = line.mid(prefix.length()).trimmed();
+                if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith('\'') && val.endsWith('\'')))
+                    val = val.mid(1, val.length() - 2);
+                if (!val.isEmpty())
+                    return val;
+            }
+        }
+    }
+
+    // 2. fish_variables
+    QFile vars(home + "/.config/fish/fish_variables");
+    if (vars.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!vars.atEnd()) {
+            QString line = QString::fromUtf8(vars.readLine());
+            if (line.contains(target + ":")) {
+                int idx = line.indexOf(target + ":");
+                QString val = line.mid(idx + target.length() + 1).trimmed();
+                if (!val.isEmpty())
+                    return val;
+            }
+        }
+    }
+
+    return QString();
+}
+
+void Backend::loadBookmarks() {
+    m_bookmarks.clear();
+    const QString dataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QFile file(dataPath + "/nodaysidle-browser/bookmarks.json");
+    if (file.open(QIODevice::ReadOnly)) {
+        const auto doc = QJsonDocument::fromJson(file.readAll());
+        if (doc.isArray()) {
+            for (const auto &val : doc.array()) {
+                m_bookmarks.append(val.toObject().toVariantMap());
+            }
+            emit bookmarksChanged();
+            return;
+        }
+    }
+
+    // Default bookmarks
+    QVariantMap gemini, google, github, youtube;
+    gemini["title"] = "Gemini";
+    gemini["url"] = "https://gemini.google.com";
+    google["title"] = "Google";
+    google["url"] = "https://google.com";
+    github["title"] = "GitHub";
+    github["url"] = "https://github.com";
+    youtube["title"] = "YouTube";
+    youtube["url"] = "https://youtube.com";
+
+    m_bookmarks = {gemini, google, github, youtube};
+    saveBookmarks();
+    emit bookmarksChanged();
+}
+
+void Backend::saveBookmarks() {
+    const QString dataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir().mkpath(dataPath + "/nodaysidle-browser");
+    QFile file(dataPath + "/nodaysidle-browser/bookmarks.json");
+    if (file.open(QIODevice::WriteOnly)) {
+        QJsonArray arr;
+        for (const auto &v : m_bookmarks) {
+            arr.append(QJsonObject::fromVariantMap(v.toMap()));
+        }
+        file.write(QJsonDocument(arr).toJson(QJsonDocument::Indented));
+    }
+}
+
+bool Backend::isBookmarked(const QString &url) {
+    const QString norm = url.trimmed().toLower();
+    for (const auto &b : m_bookmarks) {
+        if (b.toMap()["url"].toString().trimmed().toLower() == norm)
+            return true;
+    }
+    return false;
+}
+
+void Backend::toggleBookmark(const QString &title, const QString &url) {
+    const QString norm = url.trimmed().toLower();
+    if (norm.isEmpty() || norm == "about:blank" || norm.startsWith("qrc:"))
+        return;
+
+    for (int i = 0; i < m_bookmarks.size(); ++i) {
+        if (m_bookmarks[i].toMap()["url"].toString().trimmed().toLower() == norm) {
+            m_bookmarks.removeAt(i);
+            saveBookmarks();
+            emit bookmarksChanged();
+            return;
+        }
+    }
+
+    QVariantMap bm;
+    bm["title"] = title.trimmed().isEmpty() ? url : title.trimmed();
+    bm["url"] = url.trimmed();
+    m_bookmarks.append(bm);
+    saveBookmarks();
+    emit bookmarksChanged();
+}
+
+void Backend::removeBookmark(const QString &url) {
+    const QString norm = url.trimmed().toLower();
+    for (int i = 0; i < m_bookmarks.size(); ++i) {
+        if (m_bookmarks[i].toMap()["url"].toString().trimmed().toLower() == norm) {
+            m_bookmarks.removeAt(i);
+            saveBookmarks();
+            emit bookmarksChanged();
+            return;
+        }
+    }
+}
+
+QString Backend::normalizeUrl(const QString &input) {
+    const QString trimmed = input.trimmed();
+    if (trimmed.isEmpty())
+        return "about:blank";
+
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("about:") || trimmed.startsWith("qrc:"))
+        return trimmed;
+
+    // Check if it looks like a domain (has dot and no whitespace)
+    if (!trimmed.contains(' ') && trimmed.contains('.'))
+        return "https://" + trimmed;
+
+    // Otherwise, treat as search query (DuckDuckGo / Google)
+    QUrl searchUrl("https://duckduckgo.com/");
+    QUrlQuery query;
+    query.addQueryItem("q", trimmed);
+    searchUrl.setQuery(query);
+    return searchUrl.toString();
+}
+
+void Backend::cancelAssistant() {
+    if (m_activeReply) {
+        m_activeReply->abort();
+        m_activeReply->deleteLater();
+        m_activeReply = nullptr;
+    }
+}
+
+void Backend::askAssistant(const QString &title, const QString &url, const QString &text, const QString &prompt) {
+    cancelAssistant();
+
+    if (m_anthropicKey.isEmpty()) {
+        emit assistantError("Set ANTHROPIC_API_KEY or HAIKU_API_KEY in your shell.");
+        return;
+    }
+
+    QNetworkRequest request(QUrl("https://api.anthropic.com/v1/messages"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("x-api-key", m_anthropicKey.toUtf8());
+    request.setRawHeader("anthropic-version", "2023-06-01");
+
+    QJsonObject body;
+    body["model"] = "claude-haiku-5-5";
+    body["max_tokens"] = 4000;
+    body["stream"] = true;
+
+    QString truncatedText = text.left(12000);
+    QString system = QString("You answer questions about the web page below for the person reading it. Be concise, direct and helpful.\n\nTitle: %1\nURL: %2\n<page>\n%3\n</page>")
+                         .arg(title, url, truncatedText);
+    body["system"] = system;
+
+    QJsonArray messages;
+    QJsonObject msg;
+    msg["role"] = "user";
+    msg["content"] = prompt;
+    messages.append(msg);
+    body["messages"] = messages;
+
+    m_activeReply = m_nam.post(request, QJsonDocument(body).toJson());
+
+    connect(m_activeReply, &QNetworkReply::readyRead, this, [this]() {
+        if (!m_activeReply)
+            return;
+        while (m_activeReply->canReadLine()) {
+            QByteArray line = m_activeReply->readLine().trimmed();
+            if (line.startsWith("data: ")) {
+                QByteArray data = line.mid(6);
+                if (data == "[DONE]") {
+                    emit assistantDone();
+                    return;
+                }
+                auto doc = QJsonDocument::fromJson(data);
+                if (doc.isObject()) {
+                    auto obj = doc.object();
+                    if (obj["type"].toString() == "content_block_delta") {
+                        QString chunk = obj["delta"].toObject()["text"].toString();
+                        if (!chunk.isEmpty())
+                            emit assistantChunk(chunk);
+                    }
+                }
+            }
+        }
+    });
+
+    connect(m_activeReply, &QNetworkReply::finished, this, [this]() {
+        if (!m_activeReply)
+            return;
+        if (m_activeReply->error() != QNetworkReply::NoError && m_activeReply->error() != QNetworkReply::OperationCanceledError) {
+            emit assistantError(m_activeReply->errorString());
+        } else {
+            emit assistantDone();
+        }
+        m_activeReply->deleteLater();
+        m_activeReply = nullptr;
+    });
+}
+
+void Backend::checkScam(const QString &title, const QString &url, const QString &text) {
+    if (m_jevKey.isEmpty()) {
+        emit assistantError("Set TYPESAFE_API_KEY in your shell.");
+        return;
+    }
+
+    QUrl qurl(url);
+    QString host = qurl.host();
+
+    QNetworkRequest request(QUrl("https://api.typesafe.ai/v1/systemone"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Authorization", ("Bearer " + m_jevKey).toUtf8());
+
+    QJsonObject state;
+    state["host"] = host;
+    state["title"] = title;
+    state["text"] = text.left(12000);
+
+    QJsonObject questions;
+    QJsonObject q1, q2, q3;
+    q1["type"] = "noul";
+    q1["instructions"] = "Does the page in `state` present itself as a well-known brand, bank or service that its `host` does not belong to?";
+    q2["type"] = "noul";
+    q2["instructions"] = "Does the page in `state` ask the visitor for a password, one-time code, payment card or account recovery details?";
+    q3["type"] = "noul";
+    q3["instructions"] = "Does the page in `state` use threats, deadlines or alarming warnings to rush the visitor into acting?";
+    questions["impersonation"] = q1;
+    questions["credentials"] = q2;
+    questions["pressure"] = q3;
+
+    QJsonObject body;
+    body["model"] = "jev-latest";
+    body["state"] = state;
+    body["questions"] = questions;
+
+    auto *reply = m_nam.post(request, QJsonDocument(body).toJson());
+    connect(reply, &QNetworkReply::finished, this, [this, reply, host]() {
+        if (reply->error() == QNetworkReply::NoError) {
+            auto doc = QJsonDocument::fromJson(reply->readAll());
+            auto answers = doc.object()["answers"].toObject();
+            double imp = answers["impersonation"].toObject()["noul"].toDouble(0.0);
+            double cred = answers["credentials"].toObject()["noul"].toDouble(0.0);
+            double press = answers["pressure"].toObject()["noul"].toDouble(0.0);
+
+            QString verdict = "No strong scam signals.";
+            if (imp >= 0.7 && (cred >= 0.5 || press >= 0.7)) {
+                verdict = "High risk: looks like a scam!";
+            } else if (imp >= 0.7 || press >= 0.7) {
+                verdict = "Be careful: some scam signals detected.";
+            }
+
+            emit scamResult(verdict, qRound(imp * 100), qRound(cred * 100), qRound(press * 100), host);
+        } else {
+            emit assistantError("TypeSafe Jev request failed: " + reply->errorString());
+        }
+        reply->deleteLater();
+    });
+}

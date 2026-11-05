@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nodaysidle</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background-color: #090A0C;
+      color: #F8FAFC;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+      user-select: none;
+    }
+    .container {
+      width: 100%;
+      max-width: 640px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 32px;
+      animation: fadeIn 0.4s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .logo {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: #F8FAFC;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo span {
+      color: #CBD5E1;
+    }
+    .search-box {
+      width: 100%;
+      position: relative;
+    }
+    .search-input {
+      width: 100%;
+      padding: 16px 20px;
+      font-size: 16px;
+      border-radius: 12px;
+      border: 1px solid #1E293B;
+      background: #14171A;
+      color: #FFFFFF;
+      outline: none;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+    .search-input:focus {
+      border-color: #64748B;
+      background: #1A1E24;
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+    }
+    .search-input::placeholder {
+      color: #64748B;
+    }
+    .tiles {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      width: 100%;
+    }
+    .tile {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 18px 12px;
+      border-radius: 12px;
+      background: #14171A;
+      border: 1px solid #1E293B;
+      color: #94A3B8;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 500;
+      transition: all 0.15s ease;
+      gap: 10px;
+    }
+    .tile:hover {
+      background: #1E293B;
+      border-color: #475569;
+      color: #FFFFFF;
+      transform: translateY(-2px);
+    }
+    .tile-icon {
+      font-size: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      nodays<span>idle</span>
+    </div>
+
+    <form class="search-box" action="https://duckduckgo.com/" method="get">
+      <input type="text" name="q" class="search-input" placeholder="Search the web or type a URL..." autofocus autocomplete="off">
+    </form>
+
+    <div class="tiles">
+      <a href="https://gemini.google.com" class="tile">
+        <div class="tile-icon">✨</div>
+        <div>Gemini</div>
+      </a>
+      <a href="https://google.com" class="tile">
+        <div class="tile-icon">🔍</div>
+        <div>Google</div>
+      </a>
+      <a href="https://github.com" class="tile">
+        <div class="tile-icon">🐙</div>
+        <div>GitHub</div>
+      </a>
+      <a href="https://youtube.com" class="tile">
+        <div class="tile-icon">▶️</div>
+        <div>YouTube</div>
+      </a>
+    </div>
+  </div>
+</body>
+</html>
