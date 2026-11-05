@@ -45,16 +45,10 @@ type WindowList = Rc<RefCell<Vec<TabManager>>>;
 fn main() -> glib::ExitCode {
     #[cfg(target_os = "linux")]
     {
-        // On Wayland / Hyprland, WebKitGTK's DMA-BUF zero-copy renderer and
-        // accelerated compositing mode cause severe pipeline stutter, buffer lockups,
-        // and broken texture allocations (e.g. "Couldn't load image" on heavy SPAs like Gemini).
-        // Disabling DMA-BUF and forcing direct Wayland SHM compositing makes
-        // rendering instant, silky smooth, and glitch-free.
-        if std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err() {
-            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        }
-        if std::env::var("WEBKIT_DISABLE_COMPOSITING_MODE").is_err() {
-            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        // Disable accessibility bridge to prevent blocking AT-SPI DBus socket timeouts
+        // which cause severe GTK main-loop freezes on Hyprland/Wayland.
+        if std::env::var("NO_AT_BRIDGE").is_err() {
+            std::env::set_var("NO_AT_BRIDGE", "1");
         }
     }
 

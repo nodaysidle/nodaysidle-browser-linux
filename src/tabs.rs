@@ -1516,8 +1516,6 @@ fn configure_view(webview: &WebView) {
         settings.set_enable_encrypted_media(true);
         // Disable artificial software smooth scrolling to eliminate Wayland/Hyprland input jitter
         settings.set_enable_smooth_scrolling(false);
-        // Avoid forcing GPU texture compositing on Wayland which deadlocks DMA-BUF on Hyprland
-        settings.set_hardware_acceleration_policy(webkit2gtk::HardwareAccelerationPolicy::Never);
         settings.set_enable_developer_extras(true);
         settings.set_enable_page_cache(true);
         settings.set_javascript_can_access_clipboard(true);
