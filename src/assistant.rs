@@ -42,9 +42,113 @@ pub struct AssistantPanel {
 }
 
 fn env_key(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .filter(|key| !key.trim().is_empty())
+    let names: Vec<&str> = if name == "ANTHROPIC_API_KEY" {
+        vec!["ANTHROPIC_API_KEY", "HAIKU_API_KEY", "CLAUDE_API_KEY"]
+    } else {
+        vec![name]
+    };
+
+    // 1. Process environment variable
+    for target in &names {
+        if let Ok(key) = std::env::var(target) {
+            let trimmed = key.trim().to_string();
+            if !trimmed.is_empty() {
+                return Some(trimmed);
+            }
+        }
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        // 2. Read fish secrets (~/.config/fish/secrets.fish)
+        let fish_secrets = home.join(".config/fish/secrets.fish");
+        if let Ok(content) = std::fs::read_to_string(&fish_secrets) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                for target in &names {
+                    let prefix = format!("set -gx {target} ");
+                    if trimmed.starts_with(&prefix) {
+                        if let Some(val) = trimmed.strip_prefix(&prefix) {
+                            let clean = val
+                                .trim()
+                                .trim_matches('"')
+                                .trim_matches('\'')
+                                .trim()
+                                .to_string();
+                            if !clean.is_empty() {
+                                return Some(clean);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Read fish variables (~/.config/fish/fish_variables)
+        let fish_vars = home.join(".config/fish/fish_variables");
+        if let Ok(content) = std::fs::read_to_string(&fish_vars) {
+            for line in content.lines() {
+                for target in &names {
+                    if line.contains(target) {
+                        if let Some(val) = line.split(&format!("{target}:")).nth(1) {
+                            let trimmed = val.trim().to_string();
+                            if !trimmed.is_empty() {
+                                return Some(trimmed);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Fallback to .env files & reverseduo secrets
+        for rel in [
+            ".env",
+            ".hermes/.env",
+            ".config/nodaysidle/.env",
+            ".config/reverseduo/secrets.json",
+        ] {
+            let env_file = home.join(rel);
+            if let Ok(content) = std::fs::read_to_string(&env_file) {
+                if rel.ends_with(".json") {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if name == "ANTHROPIC_API_KEY" {
+                            if let Some(s) = val
+                                .get("values")
+                                .and_then(|v| v.get("anthropic"))
+                                .and_then(|k| k.as_str())
+                            {
+                                if !s.trim().is_empty() {
+                                    return Some(s.trim().to_string());
+                                }
+                            }
+                        }
+                    }
+                    continue;
+                }
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with('#') {
+                        continue;
+                    }
+                    for target in &names {
+                        if let Some(val) = trimmed.strip_prefix(&format!("{target}=")) {
+                            let clean = val
+                                .trim()
+                                .trim_matches('"')
+                                .trim_matches('\'')
+                                .trim()
+                                .to_string();
+                            if !clean.is_empty() {
+                                return Some(clean);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn model() -> String {
@@ -67,20 +171,12 @@ pub(crate) fn build_panel() -> AssistantPanel {
     let claude = env_key("ANTHROPIC_API_KEY").is_some();
     let jev = env_key("TYPESAFE_API_KEY").is_some();
     // Always visible, so it is clear what leaves the machine and where to.
-    let notice =
-        gtk::Label::new(Some(&match (claude, jev) {
-            (false, false) => "Set TYPESAFE_API_KEY (scam check) or ANTHROPIC_API_KEY (answers) \
-                           in your environment and restart the browser."
-                .to_string(),
-            _ => {
-                format!(
-            "Sends this page's text only when you click: scam check to typesafe.ai (Jev{}), \
-             questions to api.anthropic.com ({}).",
-            if jev { "" } else { ", no key" },
-            if claude { model() } else { "set ANTHROPIC_API_KEY".into() }
-        )
-            }
-        }));
+    let notice = gtk::Label::new(Some(&match (claude, jev) {
+        (true, true) => "⚡ Claude Haiku 5.5 + TypeSafe Jev • Private".to_string(),
+        (true, false) => "⚡ Claude Haiku 5.5 (no Jev key) • Private".to_string(),
+        (false, true) => "TypeSafe Jev (set ANTHROPIC_API_KEY for Claude)".to_string(),
+        (false, false) => "Set TYPESAFE_API_KEY or ANTHROPIC_API_KEY".to_string(),
+    }));
     notice.style_context().add_class("assistant-notice");
     notice.set_line_wrap(true);
     // GTK 3 only wraps a label once its width is capped.
@@ -88,14 +184,17 @@ pub(crate) fn build_panel() -> AssistantPanel {
     notice.set_xalign(0.0);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    let summarize = gtk::Button::with_mnemonic("_Summarize");
+    let summarize = gtk::Button::with_label("✨ Summarize");
     summarize.set_sensitive(claude);
-    let scam_check = gtk::Button::with_mnemonic("Scam _check");
+    summarize.style_context().add_class("assistant-btn");
+    let scam_check = gtk::Button::with_label("🛡️ Scam check");
     scam_check.set_sensitive(jev);
+    scam_check.style_context().add_class("assistant-btn");
     scam_check.set_tooltip_text(Some(
         "Ask Jev whether this page impersonates a brand, asks for secrets or pressures you",
     ));
     let stop = gtk::Button::with_label("Stop");
+    stop.style_context().add_class("assistant-btn");
     stop.set_no_show_all(true);
     actions.pack_start(&summarize, false, false, 0);
     actions.pack_start(&scam_check, false, false, 0);
@@ -105,15 +204,43 @@ pub(crate) fn build_panel() -> AssistantPanel {
     output.set_editable(false);
     output.set_cursor_visible(false);
     output.set_wrap_mode(gtk::WrapMode::WordChar);
-    output.set_left_margin(4);
-    output.set_right_margin(4);
+    output.set_left_margin(8);
+    output.set_right_margin(8);
     output.style_context().add_class("assistant-output");
     let buffer = output.buffer().expect("a new TextView has a buffer");
     if let Some(table) = buffer.tag_table() {
         let you = gtk::TextTag::new(Some("you"));
         you.set_weight(700);
         table.add(&you);
-        table.add(&gtk::TextTag::new(Some("error")));
+
+        let header = gtk::TextTag::new(Some("header"));
+        header.set_weight(700);
+        header.set_pixels_above_lines(4);
+        header.set_pixels_below_lines(2);
+        table.add(&header);
+
+        let safe = gtk::TextTag::new(Some("safe"));
+        safe.set_weight(700);
+        safe.set_foreground(Some("#22c55e"));
+        table.add(&safe);
+
+        let warning = gtk::TextTag::new(Some("warning"));
+        warning.set_weight(700);
+        warning.set_foreground(Some("#eab308"));
+        table.add(&warning);
+
+        let danger = gtk::TextTag::new(Some("danger"));
+        danger.set_weight(700);
+        danger.set_foreground(Some("#ef4444"));
+        table.add(&danger);
+
+        let muted = gtk::TextTag::new(Some("muted"));
+        muted.set_foreground(Some("#888888"));
+        table.add(&muted);
+
+        let error = gtk::TextTag::new(Some("error"));
+        error.set_foreground(Some("#f87171"));
+        table.add(&error);
     }
 
     let scroll = gtk::ScrolledWindow::new(None::<&gtk::Adjustment>, None::<&gtk::Adjustment>);
@@ -134,7 +261,7 @@ pub(crate) fn build_panel() -> AssistantPanel {
 
     let entry = gtk::Entry::new();
     entry.set_placeholder_text(Some(if claude {
-        "Ask a question, then press Enter"
+        "Ask Claude about this page… (Enter)"
     } else {
         "Needs ANTHROPIC_API_KEY"
     }));
@@ -421,7 +548,7 @@ fn ask(mgr: &Rc<RefCell<TabManagerInner>>, question: &str) {
         return;
     };
     let generation = start(&panel, "Reading the page…");
-    append(&panel, &format!("\n{question}\n"), Some("you"));
+    append(&panel, &format!("\n💬 {}\n\n", question), Some("header"));
     let mgr = mgr.clone();
     let question = question.to_string();
     glib::MainContext::default().spawn_local(async move {
@@ -567,7 +694,7 @@ fn scam_check(mgr: &Rc<RefCell<TabManagerInner>>) {
         return;
     };
     let generation = start(&panel, "Reading the page…");
-    append(&panel, "\nScam check\n", Some("you"));
+    append(&panel, "\n🛡️ Scam Check\n", Some("header"));
     let mgr = mgr.clone();
     glib::MainContext::default().spawn_local(async move {
         let page = match page_text(&mgr).await {
@@ -610,7 +737,8 @@ fn scam_check(mgr: &Rc<RefCell<TabManagerInner>>) {
             if message.status_code() != 200 {
                 return Err(http_error("TypeSafe", message.status_code(), &text));
             }
-            serde_json::from_str::<Value>(&text).map_err(|_| "TypeSafe sent an unreadable reply.".to_string())
+            serde_json::from_str::<Value>(&text)
+                .map_err(|_| "TypeSafe sent an unreadable reply.".to_string())
         }
         .await;
         if panel.generation.get() != generation {
@@ -620,16 +748,37 @@ fn scam_check(mgr: &Rc<RefCell<TabManagerInner>>) {
             Ok(json) => {
                 let p = |name: &str| json["answers"][name]["noul"].as_f64().unwrap_or(0.0);
                 let (imp, cred, press) = (p("impersonation"), p("credentials"), p("pressure"));
+                let tag = if imp >= 0.7 && (cred >= 0.5 || press >= 0.7) {
+                    "danger"
+                } else if imp >= 0.7 || press >= 0.7 {
+                    "warning"
+                } else {
+                    "safe"
+                };
                 append(
                     &panel,
-                    &format!(
-                        "{}\nPretends to be another brand: {:.0}%\nAsks for passwords or card details: {:.0}%\nPressures you to act fast: {:.0}%\n(Jev's estimate for {host}; it can be wrong.)\n",
-                        scam_verdict(imp, cred, press),
-                        imp * 100.0,
-                        cred * 100.0,
-                        press * 100.0
-                    ),
+                    &format!("Result: {}\n", scam_verdict(imp, cred, press)),
+                    Some(tag),
+                );
+                append(
+                    &panel,
+                    &format!("  • Impersonation risk:  {:.0}%\n", imp * 100.0),
                     None,
+                );
+                append(
+                    &panel,
+                    &format!("  • Credential harvest:  {:.0}%\n", cred * 100.0),
+                    None,
+                );
+                append(
+                    &panel,
+                    &format!("  • Urgency / pressure:  {:.0}%\n", press * 100.0),
+                    None,
+                );
+                append(
+                    &panel,
+                    &format!("  (Jev estimate for {host})\n\n"),
+                    Some("muted"),
                 );
                 finish(&panel, "Done.");
             }

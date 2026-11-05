@@ -35,6 +35,9 @@ pub struct TabChrome {
     pub forward_btn: Button,
     pub reload_btn: Button,
     pub home_btn: Button,
+    pub star_btn: Button,
+    pub bookmarks_bar: GtkBox,
+    pub bookmarks_separator: Separator,
     pub find_bar: FindBar,
     pub assistant: crate::assistant::AssistantPanel,
 }
@@ -121,6 +124,9 @@ pub(crate) struct TabManagerInner {
     /// When page scripts last opened windows, to stop pop-up floods.
     pub(crate) script_window_times: Vec<std::time::Instant>,
     pub(crate) assistant: crate::assistant::AssistantPanel,
+    pub(crate) star_btn: Button,
+    pub(crate) bookmarks_bar: GtkBox,
+    pub(crate) bookmarks_separator: Separator,
 }
 
 impl TabManager {
@@ -160,11 +166,17 @@ impl TabManager {
             menu_btn: None,
             script_window_times: Vec::new(),
             assistant: chrome.assistant,
+            star_btn: chrome.star_btn,
+            bookmarks_bar: chrome.bookmarks_bar,
+            bookmarks_separator: chrome.bookmarks_separator,
         };
         wire_tab_reveal(&inner.tab_scroll, &inner.tab_strip, &inner.reveal);
-        Self {
+        let mgr = Self {
             inner: Rc::new(RefCell::new(inner)),
-        }
+        };
+        let bar = mgr.inner.borrow().bookmarks_bar.clone();
+        refresh_bookmarks_bar(&bar, &mgr.inner);
+        mgr
     }
 
     pub fn clone_handle(&self) -> Self {
@@ -301,6 +313,29 @@ impl TabManager {
         self.inner.borrow().url_entry.connect_changed(|entry| {
             if entry.is_focus() {
                 show_security(entry, Security::None);
+            }
+        });
+
+        let mgr_star = self.inner.clone();
+        self.inner.borrow().star_btn.connect_clicked(move |_| {
+            let (title, uri) = {
+                let inner = mgr_star.borrow();
+                let view = inner.selected_tab_view();
+                let title = view
+                    .as_ref()
+                    .and_then(|v| v.title().map(|t| t.to_string()))
+                    .unwrap_or_default();
+                let uri = view
+                    .as_ref()
+                    .and_then(|v| v.uri().map(|u| u.to_string()))
+                    .unwrap_or_default();
+                (title, uri)
+            };
+            if !uri.is_empty() && !is_home_marker(&uri) {
+                crate::bookmarks::toggle_bookmark(&title, &uri);
+                sync_bookmark_star(&mgr_star);
+                let bar = mgr_star.borrow().bookmarks_bar.clone();
+                refresh_bookmarks_bar(&bar, &mgr_star);
             }
         });
 
@@ -711,6 +746,83 @@ impl TabManager {
         let mgr_create = mgr.clone();
         webview.connect_create(move |parent, action| {
             TabManager::create_related_view(&mgr_create, parent, action).map(|view| view.upcast())
+        });
+
+        let mgr_menu = mgr.clone();
+        let view_menu = webview.clone();
+        webview.connect_context_menu(move |_, _, event, hit_test| {
+            use webkit2gtk::HitTestResultExt;
+            let menu = gtk::Menu::new();
+            if hit_test.context_is_link() {
+                if let Some(uri) = hit_test.link_uri() {
+                    let uri_str = uri.to_string();
+
+                    let item_new_tab = gtk::MenuItem::with_label("Open Link in New Tab");
+                    let mgr_t = mgr_menu.clone();
+                    let u = uri_str.clone();
+                    item_new_tab.connect_activate(move |_| {
+                        TabManager::open_tab(&mgr_t, TabOpen::Url(u.clone()), true);
+                    });
+                    menu.append(&item_new_tab);
+
+                    let item_new_bg = gtk::MenuItem::with_label("Open Link in Background Tab");
+                    let mgr_bg = mgr_menu.clone();
+                    let u = uri_str.clone();
+                    item_new_bg.connect_activate(move |_| {
+                        TabManager::open_tab(&mgr_bg, TabOpen::Url(u.clone()), false);
+                    });
+                    menu.append(&item_new_bg);
+
+                    let item_copy = gtk::MenuItem::with_label("Copy Link Address");
+                    let u = uri_str.clone();
+                    item_copy.connect_activate(move |_| {
+                        if let Some(display) = gdk::Display::default() {
+                            if let Some(clipboard) = gtk::Clipboard::default(&display) {
+                                clipboard.set_text(&u);
+                            }
+                        }
+                    });
+                    menu.append(&item_copy);
+                    menu.append(&gtk::SeparatorMenuItem::new());
+                }
+            }
+
+            let item_back = gtk::MenuItem::with_label("Back");
+            let v = view_menu.clone();
+            item_back.set_sensitive(v.can_go_back());
+            item_back.connect_activate(move |_| v.go_back());
+            menu.append(&item_back);
+
+            let item_forward = gtk::MenuItem::with_label("Forward");
+            let v = view_menu.clone();
+            item_forward.set_sensitive(v.can_go_forward());
+            item_forward.connect_activate(move |_| v.go_forward());
+            menu.append(&item_forward);
+
+            let item_reload = gtk::MenuItem::with_label("Reload");
+            let v = view_menu.clone();
+            item_reload.connect_activate(move |_| v.reload());
+            menu.append(&item_reload);
+
+            menu.append(&gtk::SeparatorMenuItem::new());
+
+            let item_inspect = gtk::MenuItem::with_label("Inspect Element");
+            let v = view_menu.clone();
+            item_inspect.connect_activate(move |_| {
+                use webkit2gtk::WebInspectorExt;
+                if let Some(inspector) = v.inspector() {
+                    inspector.show();
+                }
+            });
+            menu.append(&item_inspect);
+
+            menu.show_all();
+            if let Some(button_event) = event.downcast_ref::<gdk::EventButton>() {
+                menu.popup_at_pointer(Some(button_event));
+            } else {
+                menu.popup_easy(3, gtk::current_event_time());
+            }
+            true
         });
 
         let mgr_close = mgr.clone();
@@ -1399,7 +1511,10 @@ fn configure_view(webview: &WebView) {
         settings.set_enable_html5_local_storage(true);
         settings.set_enable_webgl(true);
         settings.set_enable_webaudio(true);
-        settings.set_enable_smooth_scrolling(true);
+        // Disable artificial software smooth scrolling to eliminate Wayland/Hyprland input jitter
+        settings.set_enable_smooth_scrolling(false);
+        // Enforce hardware accelerated GPU compositing
+        settings.set_hardware_acceleration_policy(webkit2gtk::HardwareAccelerationPolicy::Always);
         settings.set_enable_developer_extras(true);
         settings.set_enable_page_cache(true);
         settings.set_javascript_can_access_clipboard(true);
@@ -1540,6 +1655,81 @@ fn sync_view_chrome(
     back_btn.set_sensitive(view.can_go_back());
     forward_btn.set_sensitive(view.can_go_forward());
     reload_btn.set_sensitive(true);
+    sync_bookmark_star(mgr);
+}
+
+pub(crate) fn sync_bookmark_star(mgr: &Rc<RefCell<TabManagerInner>>) {
+    let Ok(inner) = mgr.try_borrow() else {
+        return;
+    };
+    let star_btn = inner.star_btn.clone();
+    let current_uri = inner
+        .selected_tab_view()
+        .and_then(|v| v.uri().map(|u| u.to_string()))
+        .unwrap_or_default();
+    drop(inner);
+
+    if crate::bookmarks::is_bookmarked(&current_uri) {
+        star_btn.style_context().add_class("bookmarked");
+    } else {
+        star_btn.style_context().remove_class("bookmarked");
+    }
+}
+
+pub(crate) fn refresh_bookmarks_bar(bar: &GtkBox, mgr: &Rc<RefCell<TabManagerInner>>) {
+    for child in bar.children() {
+        bar.remove(&child);
+    }
+    let bookmarks = crate::bookmarks::load_bookmarks();
+    for bm in bookmarks {
+        let btn = Button::with_label(&bm.title);
+        btn.set_tooltip_text(Some(&bm.url));
+        btn.style_context().add_class("bookmark-pill");
+        btn.set_relief(gtk::ReliefStyle::None);
+        btn.set_focus_on_click(false);
+
+        let mgr_click = mgr.clone();
+        let url = bm.url.clone();
+        btn.connect_clicked(move |_| {
+            if let Some(tab_id) = mgr_click.borrow().selected {
+                TabManager::load_uri_tab(&mgr_click, tab_id, &url);
+            }
+        });
+
+        let mgr_right = mgr.clone();
+        let bar_right = bar.clone();
+        let url_del = bm.url.clone();
+        btn.connect_button_press_event(move |_, event| {
+            if event.button() == 3 {
+                let menu = gtk::Menu::new();
+                let item_open = gtk::MenuItem::with_label("Open in New Tab");
+                let mgr_open = mgr_right.clone();
+                let u_open = url_del.clone();
+                item_open.connect_activate(move |_| {
+                    TabManager::open_tab(&mgr_open, TabOpen::Url(u_open.clone()), true);
+                });
+                menu.append(&item_open);
+
+                let item_del = gtk::MenuItem::with_label("Delete Bookmark");
+                let bar_del = bar_right.clone();
+                let mgr_del = mgr_right.clone();
+                let u_del = url_del.clone();
+                item_del.connect_activate(move |_| {
+                    crate::bookmarks::remove_bookmark(&u_del);
+                    refresh_bookmarks_bar(&bar_del, &mgr_del);
+                    sync_bookmark_star(&mgr_del);
+                });
+                menu.append(&item_del);
+                menu.show_all();
+                menu.popup_easy(3, gtk::current_event_time());
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+
+        bar.pack_start(&btn, false, false, 0);
+    }
+    bar.show_all();
 }
 
 /// Page scripts may open one window per second: enough for a sign-in pop-up
@@ -1771,6 +1961,8 @@ pub(crate) enum Shortcut {
     ShowShortcuts,
     OpenMenu,
     Assistant,
+    BookmarkPage,
+    ToggleBookmarksBar,
 }
 
 const MAX_CLOSED_TABS: usize = 20;
@@ -1891,6 +2083,10 @@ pub(crate) fn shortcut_for(keyval: &gdk::keys::Key, state: gdk::ModifierType) ->
         Shortcut::ShowShortcuts
     } else if ctrl_shift && keyval == key::a {
         Shortcut::Assistant
+    } else if ctrl && keyval == key::d {
+        Shortcut::BookmarkPage
+    } else if (ctrl || ctrl_shift) && keyval == key::b {
+        Shortcut::ToggleBookmarksBar
     } else if none && keyval == key::F10 {
         Shortcut::OpenMenu
     } else if ctrl && keyval == key::t {
@@ -2021,6 +2217,35 @@ fn run_shortcut(mgr: &Rc<RefCell<TabManagerInner>>, shortcut: Shortcut) {
             }
         }
         Shortcut::Assistant => crate::assistant::toggle(mgr),
+        Shortcut::BookmarkPage => {
+            let (title, uri) = {
+                let inner = mgr.borrow();
+                let view = inner.selected_tab_view();
+                let title = view
+                    .as_ref()
+                    .and_then(|v| v.title().map(|t| t.to_string()))
+                    .unwrap_or_default();
+                let uri = view
+                    .as_ref()
+                    .and_then(|v| v.uri().map(|u| u.to_string()))
+                    .unwrap_or_default();
+                (title, uri)
+            };
+            if !uri.is_empty() && !is_home_marker(&uri) {
+                crate::bookmarks::toggle_bookmark(&title, &uri);
+                sync_bookmark_star(mgr);
+                let bar = mgr.borrow().bookmarks_bar.clone();
+                refresh_bookmarks_bar(&bar, mgr);
+            }
+        }
+        Shortcut::ToggleBookmarksBar => {
+            let inner = mgr.borrow();
+            let bar = inner.bookmarks_bar.clone();
+            let sep = inner.bookmarks_separator.clone();
+            let is_visible = bar.is_visible();
+            bar.set_visible(!is_visible);
+            sep.set_visible(!is_visible);
+        }
         Shortcut::OpenMenu => {
             let menu_btn = { mgr.borrow().menu_btn.clone() };
             if let Some(menu_btn) = menu_btn {
@@ -2342,7 +2567,22 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
     url_entry.style_context().add_class("url-bar");
     toolbar.pack_start(&url_entry, true, true, 0);
 
+    let star_btn = icon_button("starred-symbolic", "Bookmark this page (Ctrl+D)");
+    star_btn.style_context().add_class("star-btn");
+    star_btn.style_context().add_class("ghost-btn");
+    toolbar.pack_start(&star_btn, false, false, 0);
+
     root.pack_start(&toolbar, false, false, 0);
+
+    let bookmarks_bar = GtkBox::new(Orientation::Horizontal, 4);
+    bookmarks_bar.set_height_request(28);
+    bookmarks_bar.style_context().add_class("chrome");
+    bookmarks_bar.style_context().add_class("bookmarks-bar");
+    root.pack_start(&bookmarks_bar, false, false, 0);
+
+    let sep_bm = Separator::new(Orientation::Horizontal);
+    sep_bm.style_context().add_class("chrome-separator");
+    root.pack_start(&sep_bm, false, false, 0);
 
     let sep2 = Separator::new(Orientation::Horizontal);
     sep2.style_context().add_class("chrome-separator");
@@ -2373,6 +2613,9 @@ pub fn build_chrome_layout(root: &gtk::Box) -> (TabChrome, Button) {
         forward_btn,
         reload_btn,
         home_btn,
+        star_btn,
+        bookmarks_bar,
+        bookmarks_separator: sep_bm,
         find_bar,
         assistant,
     };

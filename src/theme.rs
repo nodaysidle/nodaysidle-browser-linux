@@ -241,27 +241,81 @@ window.browser-window.tiled .browser-frame {
   box-shadow: 0 0 0 1px alpha(@accent, 0.55);
 }
 
+/* Bookmarks styling */
+.star-btn {
+  color: @muted;
+}
+
+.star-btn:hover {
+  color: @text_strong;
+  background-color: @surface;
+}
+
+.star-btn.bookmarked {
+  color: @accent;
+}
+
+.bookmarks-bar {
+  padding: 3px 8px;
+  background-color: @chrome;
+}
+
+.bookmark-pill {
+  background-color: transparent;
+  color: @text;
+  font-size: 12px;
+  border-radius: 4px;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+}
+
+.bookmark-pill:hover {
+  background-color: @surface;
+  border-color: @hairline;
+  color: @text_strong;
+}
+
 /* Page assistant side panel. */
 .assistant-panel {
-  background-color: @chrome;
+  background-color: @surface;
   border-left: 1px solid @line;
-  padding: 10px 12px;
+  padding: 12px 14px;
 }
 
 .assistant-title {
   color: @text_strong;
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 14px;
 }
 
 .assistant-notice {
   color: @muted;
+  font-size: 11px;
+}
+
+.assistant-btn {
+  background-color: @chrome;
+  color: @text;
+  border: 1px solid @line;
+  border-radius: 6px;
+  padding: 4px 10px;
   font-size: 12px;
+  font-weight: 500;
+}
+
+.assistant-btn:hover {
+  background-color: @surface;
+  border-color: @hairline;
+  color: @text_strong;
 }
 
 .assistant-output,
 .assistant-output text {
   background-color: @chrome;
   color: @text;
+  font-size: 13px;
+  border-radius: 6px;
+  padding: 6px;
 }
 
 .find-bar {
