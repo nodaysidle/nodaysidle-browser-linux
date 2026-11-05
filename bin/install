@@ -1,0 +1,7 @@
+#!/bin/sh
+# Builds the Arch package and installs it, so nodaysidle shows up in the Omarchy launcher.
+set -eu
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+cd "$ROOT/pkgbuild"
+makepkg -fsi --noconfirm
+rm -rf src pkg ./*.pkg.tar.zst

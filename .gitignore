@@ -4,3 +4,6 @@
 /agenthandoff_audit.md
 /artifacts/
 build/
+pkgbuild/src/
+pkgbuild/pkg/
+pkgbuild/*.pkg.tar.zst

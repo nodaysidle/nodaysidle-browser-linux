@@ -354,13 +354,21 @@ ApplicationWindow {
                             anchors.rightMargin: 8
                             spacing: 6
 
-                            // Status indicator dot
+                            // Site icon; the accent dot shows while loading or when the site has none
+                            Image {
+                                id: favicon
+                                Layout.preferredWidth: 14
+                                Layout.preferredHeight: 14
+                                sourceSize: Qt.size(28, 28)
+                                source: model.icon
+                                visible: !model.loading && model.icon !== "" && status === Image.Ready
+                            }
                             Rectangle {
-                                width: 6
-                                height: 6
+                                Layout.preferredWidth: 6
+                                Layout.preferredHeight: 6
                                 radius: 3
                                 color: model.loading ? theme.accent : theme.muted
-                                visible: model.loading || index === currentTabIndex
+                                visible: !favicon.visible && (model.loading || index === currentTabIndex)
                             }
 
                             Text {
@@ -942,6 +950,11 @@ ApplicationWindow {
                                     tabsModel.setProperty(index, "url", url.toString());
                                 if (index === currentTabIndex)
                                     syncUrlField();
+                            }
+
+                            onIconChanged: {
+                                if (index < tabsModel.count)
+                                    tabsModel.setProperty(index, "icon", icon.toString());
                             }
 
                             onTitleChanged: {

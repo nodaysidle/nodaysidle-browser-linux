@@ -1,0 +1,31 @@
+# Maintainer: nodaysidle
+pkgname=nodaysidle-browser
+pkgver=0.3.0
+pkgrel=1
+pkgdesc='Quiet Qt 6 browser for Omarchy, built on QtWebEngine'
+arch=('x86_64')
+url='https://github.com/nodaysidle/nodaysidle-browser-linux'
+license=('MIT')
+options=('!debug')
+depends=('qt6-base' 'qt6-declarative' 'qt6-webengine' 'qt6-wayland')
+
+# Builds from the working tree this file sits in, so bin/install packages what you see.
+build() {
+  local src="$startdir/.."
+  mkdir -p "$srcdir/b"
+  cd "$srcdir/b"
+  qmake6 "$src/nodaysidle-browser.pro"
+  make -j"$(nproc)"
+}
+
+package() {
+  local src="$startdir/.."
+  install -Dm755 "$srcdir/b/nodaysidle-browser" "$pkgdir/usr/bin/nodaysidle-browser"
+  install -Dm644 "$src/desktop/com.nodaysidle.Browser.desktop" \
+    "$pkgdir/usr/share/applications/com.nodaysidle.Browser.desktop"
+  install -Dm644 "$src/assets/icon.svg" \
+    "$pkgdir/usr/share/icons/hicolor/scalable/apps/nodaysidle-browser.svg"
+  install -Dm644 "$src/completions/nodaysidle-browser.fish" \
+    "$pkgdir/usr/share/fish/vendor_completions.d/nodaysidle-browser.fish"
+  install -Dm644 "$src/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

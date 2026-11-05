@@ -10,7 +10,8 @@ Requires Qt 6.12 (`qt6-base`, `qt6-declarative`, `qt6-webengine`) and Rust for t
 ./bin/build           # qmake6 + make -> build/nodaysidle-browser
 ./bin/run [URL]       # launch
 cargo run --release   # same binary, started through the Rust wrapper
-./scripts/install-desktop.sh   # install for your user: Omarchy app menu entry, icon, ~/.local/bin
+./bin/install         # makepkg -fsi: installs the package, so nodaysidle shows in the Omarchy launcher (Super + Space)
+./scripts/install-desktop.sh   # alternative: per-user install into ~/.local without a package
 ```
 
 Launching again while it runs hands the URLs to the open window, so links from other apps open as tabs and the profile is never opened twice. Set it as the default browser with `xdg-settings set default-web-browser com.nodaysidle.Browser.desktop`.
@@ -19,7 +20,7 @@ The app forces `QT_QPA_PLATFORM=wayland` and `QT_WAYLAND_DISABLE_WINDOWDECORATIO
 
 ## Features
 
-- Tabs: pills with an accent line under the active one, close button, middle-click close, `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`
+- Tabs: site icons, pills with an accent line under the active one, close button, middle-click close, `Ctrl+T`, `Ctrl+W`, `Ctrl+Tab` / `Ctrl+Shift+Tab`
 - Omnibox: URL or DuckDuckGo search, local hosts over http, `Ctrl+L` / `Alt+D`, https indicator, star bookmark (`Ctrl+D`)
 - Bookmarks bar (`Ctrl+B`) stored in `~/.local/share/nodaysidle-browser/bookmarks.json`; right-click for Open in New Tab / Delete
 - Page context menu: open link in new tab, copy link address, back, forward, reload
@@ -55,6 +56,7 @@ Read from the environment, then `~/.config/fish/secrets.fish`, then `~/.config/f
 ```text
 nodaysidle-browser.pro   qmake6 project
 bin/build, bin/run       build and launch scripts
+bin/install, pkgbuild/   Arch package for the Omarchy launcher
 src/main.cpp             Wayland setup, persistent profile, downloads, single instance, QML engine
 src/backend.{h,cpp}      bookmarks, history, URL resolution, clipboard, Anthropic and Jev calls
 src/theme.{h,cpp}        Omarchy colors.toml watcher and Hyprland rounding

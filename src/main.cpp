@@ -29,7 +29,8 @@ int main(int argc, char *argv[]) {
             "--ignore-gpu-blocklist "
             "--enable-gpu-rasterization "
             "--enable-zero-copy "
-            "--no-sandbox");
+            "--no-sandbox "
+            + qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"));
 
     QtWebEngineQuick::initialize();
 
