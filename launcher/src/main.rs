@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 fn main() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
     let native_bin = root.join("build/nodaysidle-browser");
 
     if !native_bin.exists() {

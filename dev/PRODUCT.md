@@ -42,7 +42,7 @@ Start: `cargo run`
 Unit/Integration Checks: `cargo test -- --test-threads=1`
 Linter / Static Analysis: `cargo clippy -- -D warnings && cargo fmt --check`
 Release Validation: `bash scripts/validate.sh`
-Local Verification: `./harness status`
+Local Verification: `cd dev && ./harness status`
 
 ## Scope Boundary
 

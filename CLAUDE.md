@@ -13,13 +13,13 @@
 |---------|---------|
 | `./bin/build` | qmake6 + make into `build/nodaysidle-browser` |
 | `./bin/run [URL]` | Launch the built binary |
-| `cargo build --release` | Build the Rust launcher wrapper |
+| `cargo build --release --manifest-path launcher/Cargo.toml` | Build the Rust launcher wrapper |
 | `bash scripts/validate.sh` | Build, qmllint, cargo build, fmt, clippy |
 | `bash scripts/install-desktop.sh` | Install binary, launcher entry and icon for the current user |
 
 ## 3. Architecture & Threading Rules
 - **Product**: Quiet, native Linux browser: Qt 6 Quick on QtWebEngine, pure Wayland, minimal chrome, local-first privacy.
-- **Stack**: C++17, Qt 6.12 (Quick, QuickControls2, WebEngineQuick), qmake6. `src/main.rs` is only a cargo wrapper that execs the Qt binary.
+- **Stack**: C++17, Qt 6.12 (Quick, QuickControls2, WebEngineQuick), qmake6. `launcher/src/main.rs` is only a cargo wrapper that execs the Qt binary.
 - **Key files (`src/`)**:
   - `main.cpp` - Wayland env, persistent profile, Chrome UA, downloads, single instance
   - `backend.{h,cpp}` - bookmarks, history, URL resolution, clipboard, Anthropic and Jev calls
@@ -35,18 +35,18 @@
 
 ## 4. Negative Constraints (Anti-Defaults)
 - Never bypass Rust borrow-checker safety with unjustified `unsafe` blocks.
-- Never introduce new external crates to `Cargo.toml` without explicit user permission.
+- Never introduce new external crates to `launcher/Cargo.toml` without explicit user permission.
 - Never write placeholder functions or mock implementations.
 
 ## 5. Modular Imports
-@AGENTS.md
+@dev/AGENTS.md
 @README.md
 
 ## 6. Product Harness & Verification Discipline
-- Read PRODUCT.md for high-level goals, scope boundaries, and verified commands.
-- Read CONTRACT.md for the active feature's strict checks and evidence criteria.
-- Read FEATURES.json and HANDOFF.md when starting or resuming work.
+- Read dev/PRODUCT.md for high-level goals, scope boundaries, and verified commands.
+- Read dev/CONTRACT.md for the active feature's strict checks and evidence criteria.
+- Read dev/FEATURES.json and HANDOFF.md when starting or resuming work.
 - Build one agreed feature at a time; never break existing tests or touch unrelated code.
 - Save full verification logs under artifacts/<run-id>/.
-- Mark a feature PASS in FEATURES.json ONLY after the independent EVALUATOR verifies evidence against the recorded git commit.
+- Mark a feature PASS in dev/FEATURES.json ONLY after the independent EVALUATOR verifies evidence against the recorded git commit.
 - Repair rounds are capped at 2 before stopping for human review.
