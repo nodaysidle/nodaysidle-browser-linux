@@ -14,10 +14,12 @@
     {
       "id": "F02",
       "title": "Deterministic UI Design and Navigation Polish",
-      "status": "in_progress",
+      "status": "done",
       "contract": "CONTRACT.md",
-      "code_revision": null,
-      "evidence": []
+      "code_revision": "8514c0f0d7e3a973844a3541aadce3186d172912",
+      "evidence": [
+        "artifacts/20261105_012650_8514c0f/eval_evidence.txt"
+      ]
     },
     {
       "id": "F03",

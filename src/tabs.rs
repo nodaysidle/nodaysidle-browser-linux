@@ -1397,6 +1397,12 @@ fn configure_view(webview: &WebView) {
         settings.set_enable_javascript(true);
         settings.set_enable_html5_database(true);
         settings.set_enable_html5_local_storage(true);
+        settings.set_enable_webgl(true);
+        settings.set_enable_webaudio(true);
+        settings.set_enable_smooth_scrolling(true);
+        settings.set_enable_developer_extras(true);
+        settings.set_enable_page_cache(true);
+        settings.set_javascript_can_access_clipboard(true);
         settings.set_user_agent(Some(crate::profile::CHROME_LINUX_USER_AGENT));
         // WebKit's quirks replace a custom User-Agent per host, including
         // accounts.google.com. The switch is global: there is no per-host one.
