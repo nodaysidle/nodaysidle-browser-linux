@@ -103,7 +103,7 @@ QList<QVariantList> readRows(const QString &dbFile, const QString &sql, int colu
     const QString copy = temp.filePath("db.sqlite");
     if (!QFile::copy(dbFile, copy))
         return rows;
-    for (const QString &suffix : {"-wal", "-shm"})
+    for (const QString suffix : {"-wal", "-shm"})
         if (QFileInfo::exists(dbFile + suffix))
             QFile::copy(dbFile + suffix, copy + suffix);
 
