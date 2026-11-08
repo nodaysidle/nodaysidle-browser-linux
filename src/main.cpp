@@ -26,12 +26,11 @@ int main(int argc, char *argv[]) {
     qputenv("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1");
     qputenv("NO_AT_BRIDGE", "1");
 
-    // Disable in-process GPU sandbox trap and let QtWebEngine use native Wayland hardware acceleration
+    // Let QtWebEngine use native Wayland hardware acceleration; the renderer sandbox stays on.
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
             "--ignore-gpu-blocklist "
             "--enable-gpu-rasterization "
             "--enable-zero-copy "
-            "--no-sandbox "
             + qgetenv("QTWEBENGINE_CHROMIUM_FLAGS"));
 
     QtWebEngineQuick::initialize();

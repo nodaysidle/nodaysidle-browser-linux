@@ -21,7 +21,9 @@ constexpr int tagSize = 16;
 
 QByteArray randomBytes(int count) {
     QByteArray bytes(count, 0);
-    RAND_bytes(reinterpret_cast<unsigned char *>(bytes.data()), count);
+    // A zero key, IV or nonce would silently break the vault and the login message check.
+    if (RAND_bytes(reinterpret_cast<unsigned char *>(bytes.data()), count) != 1)
+        qFatal("OpenSSL could not produce random bytes");
     return bytes;
 }
 

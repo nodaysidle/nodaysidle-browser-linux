@@ -310,12 +310,29 @@ ApplicationWindow {
 
             property alias webView: popupView
 
+            // Read-only address line, so a popup cannot hide which site it shows.
+            Rectangle {
+                id: popupBar
+                anchors { top: parent.top; left: parent.left; right: parent.right }
+                height: 28
+                color: theme.chrome
+                Text {
+                    anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
+                    verticalAlignment: Text.AlignVCenter
+                    text: popupView.url.toString()
+                    color: theme.text
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                }
+            }
+
             WebEngineView {
                 id: popupView
-                anchors.fill: parent
+                anchors { top: popupBar.bottom; left: parent.left; right: parent.right; bottom: parent.bottom }
                 profile: appProfile
                 userScripts.collection: pageScripts
-                settings.javascriptCanOpenWindows: true
+                // Popup blocker: windows open only from a click or key press.
+                settings.javascriptCanOpenWindows: false
                 settings.webGLEnabled: true
                 settings.accelerated2dCanvasEnabled: true
 
@@ -1031,7 +1048,8 @@ ApplicationWindow {
                             profile: appProfile
                             userScripts.collection: pageScripts
 
-                            settings.javascriptCanOpenWindows: true
+                            // Popup blocker: windows open only from a click or key press.
+                            settings.javascriptCanOpenWindows: false
                             settings.webGLEnabled: true
                             settings.accelerated2dCanvasEnabled: true
                             settings.dnsPrefetchEnabled: true
