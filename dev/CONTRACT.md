@@ -2,6 +2,8 @@
 
 Feature: F02 — Deterministic UI Design & Navigation Polish
 State: Complete; all checks passed independent evaluation at 8514c0f
+
+> Historical: 8514c0f is the old Rust + GTK app, so the checks below (`url_bar`, GTK CSS tokens, `cargo test`, `cargo clippy`) describe that app. The Qt rewrite (v0.3.0 on) has no Rust and no cargo. Write F03's contract against the Qt app and `bash scripts/validate.sh`.
 Code revision under evaluation: 8514c0f
 
 ## Behavior

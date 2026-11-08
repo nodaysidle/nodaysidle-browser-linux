@@ -20,7 +20,7 @@ It focuses on:
 
 - **F01**: **Persistent Google Login & Secure Auth Session**
   - Configure custom desktop User-Agent string (Chrome/Linux) to avoid Google login blocks.
-  - Set WebKit `CookieAcceptPolicy::Always` on persistent CookieManager SQLite storage.
+  - Use the named persistent `QQuickWebEngineProfile` with `ForcePersistentCookies` (the default QtWebEngine profile is off-the-record).
   - Verify cookies and site data persist across restarts.
 - **F02**: **Deterministic UI Design & Navigation Polish**
   - Eliminate layout jumps and placeholder text styling issues in the tab strip, address bar, and find overlay.
@@ -30,20 +30,19 @@ It focuses on:
 
 ## Decisions Settled
 
-- **Stack**: Rust 2021, GTK 3 (`gtk = "0.18"`), WebKitGTK 4.1 (`webkit2gtk = "2.0"`), Soup3, JavaScriptCore.
-- **User-Agent**: Modern Chrome on Linux (`Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36`).
-- **Cookie Storage**: SQLite in `~/.local/share/nodaysidle-browser/webkit-data/cookies.sqlite` with strict user-only permissions.
-- **Negative Constraints**: Zero telemetry, no unjustified unsafe Rust blocks, no external crates without explicit permission.
+- **Stack**: C++17, Qt 6 Quick + QtWebEngine (Chromium), pure Wayland, qmake6 (`nodaysidle-browser.pro`). The Rust + GTK 3 + WebKitGTK app ended at v0.2.2; v0.3.0 is the Qt rewrite. There is no Rust left in the repo.
+- **User-Agent**: Plain Chrome on Linux whose major version matches the engine's Chromium (`Chrome/<major>.0.0.0`, set in `src/main.cpp`), plus the `window.chrome.app` shim; both are needed for Google sign-in.
+- **Profile Storage**: `~/.local/share/nodaysidle-browser/webengine` (cookies, site data) and `.../cache`; history, bookmarks and the encrypted `passwords.vault` sit in `~/.local/share/nodaysidle-browser/`.
+- **Negative Constraints**: Zero telemetry, no new library dependencies without explicit permission, renderer sandbox stays on (no `--no-sandbox`).
 
 ## Actual Project Commands
 
-Setup: `cargo build`
-Start: `cargo run`
-Unit/Integration Checks: `cargo test -- --test-threads=1`
-Linter / Static Analysis: `cargo clippy -- -D warnings && cargo fmt --check`
-Release Validation: `bash scripts/validate.sh`
+Setup: `./bin/build` (qmake6 + make into `build/nodaysidle-browser`)
+Start: `./bin/run [URL]`
+Unit/Integration Checks: none automated in the Qt app; verify in the running app with a scratch `HOME`/`XDG_DATA_HOME` (see `.trail/learnings`)
+Release Validation: `bash scripts/validate.sh` (build, then qmllint)
 Local Verification: `cd dev && ./harness status`
 
 ## Scope Boundary
 
-Focus on native Linux WebKit client. No account sync clouds, no telemetry, no bloated extensions system.
+Focus on a native Linux QtWebEngine client. No account sync clouds, no telemetry, no bloated extensions system.
