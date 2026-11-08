@@ -142,7 +142,7 @@ Needs Qt 6 (`qt6-base`, `qt6-declarative`, `qt6-webengine`, `qt6-wayland`), `ope
 ./bin/run [URL]                    # run it
 ./bin/install                      # makepkg -fsi: install the package so it shows in the launcher
 ./scripts/install-desktop.sh       # or install into ~/.local without a package
-bash scripts/validate.sh           # build, qmllint, cargo build, fmt, clippy
+bash scripts/validate.sh           # build and qmllint
 ```
 
 Set it as your default browser with `xdg-settings set default-web-browser com.nodaysidle.Browser.desktop`.
@@ -166,7 +166,6 @@ Set it as your default browser with `xdg-settings set default-web-browser com.no
 | QML | window, panels, bars, menus, icons | 1,989 |
 | JavaScript | login agent, `window.chrome.app` shim | 161 |
 | HTML / CSS | start page | 83 |
-| Rust | `launcher/src/main.rs`, a 23-line cargo wrapper that starts the Qt binary | 23 |
 
 ## Repository architecture
 
@@ -185,7 +184,6 @@ Set it as your default browser with `xdg-settings set default-web-browser com.no
 | `src/login.js`, `src/chrome_app.js` | Login agent, Google sign-in shim |
 | `src/home.html` | Start page |
 | `pkgbuild/`, `bin/install` | Arch package for the Omarchy launcher |
-| `launcher/` | Optional cargo wrapper (`Cargo.toml`, `Cargo.lock`, `src/main.rs`) that starts the Qt binary |
 | `dev/` | Agent instructions, the product harness, roles and feature contract used while building the app |
 | `bin/build`, `bin/run`, `scripts/` | Build, run, validate, per-user install |
 
