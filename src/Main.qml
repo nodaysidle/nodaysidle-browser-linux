@@ -331,7 +331,8 @@ ApplicationWindow {
                 anchors { top: popupBar.bottom; left: parent.left; right: parent.right; bottom: parent.bottom }
                 profile: appProfile
                 userScripts.collection: pageScripts
-                settings.javascriptCanOpenWindows: true
+                // Popup blocker: windows open only from a click or key press.
+                settings.javascriptCanOpenWindows: false
                 settings.webGLEnabled: true
                 settings.accelerated2dCanvasEnabled: true
 
@@ -1047,7 +1048,8 @@ ApplicationWindow {
                             profile: appProfile
                             userScripts.collection: pageScripts
 
-                            settings.javascriptCanOpenWindows: true
+                            // Popup blocker: windows open only from a click or key press.
+                            settings.javascriptCanOpenWindows: false
                             settings.webGLEnabled: true
                             settings.accelerated2dCanvasEnabled: true
                             settings.dnsPrefetchEnabled: true
