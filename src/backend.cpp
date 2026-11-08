@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSaveFile>
 #include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
@@ -43,14 +44,15 @@ void Backend::loadHistory() {
 void Backend::flushHistory() {
     m_historySave.stop();
     QDir().mkpath(QFileInfo(historyPath()).absolutePath());
-    QFile file(historyPath());
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+    QSaveFile file(historyPath());
+    if (!file.open(QIODevice::WriteOnly))
         return;
-    file.setPermissions(QFile::ReadOwner | QFile::WriteOwner);
     QJsonArray array;
     for (const auto &entry : m_history)
         array.append(QJsonObject::fromVariantMap(entry.toMap()));
     file.write(QJsonDocument(array).toJson(QJsonDocument::Compact));
+    if (file.commit())
+        QFile::setPermissions(historyPath(), QFile::ReadOwner | QFile::WriteOwner);
 }
 
 void Backend::recordVisit(const QString &url, const QString &title) {
@@ -254,13 +256,14 @@ void Backend::loadBookmarks() {
 void Backend::saveBookmarks() {
     const QString dataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dataPath);
-    QFile file(dataPath + "/bookmarks.json");
+    QSaveFile file(dataPath + "/bookmarks.json");
     if (file.open(QIODevice::WriteOnly)) {
         QJsonArray arr;
         for (const auto &v : m_bookmarks) {
             arr.append(QJsonObject::fromVariantMap(v.toMap()));
         }
         file.write(QJsonDocument(arr).toJson(QJsonDocument::Indented));
+        file.commit();
     }
 }
 
