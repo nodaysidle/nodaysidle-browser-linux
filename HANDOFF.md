@@ -6,7 +6,7 @@ Facts below were checked on 2026-11-09 unless marked otherwise.
 A quiet, native Linux browser for Omarchy: C++17, Qt 6 Quick on QtWebEngine (Chromium), pure Wayland, qmake6 build (`nodaysidle-browser.pro`). There is no Rust in the repo: the old Rust + GTK 3 + WebKitGTK app ended at `v0.2.2`, and the cargo launcher wrapper (`launcher/`) was removed on branch `remove-rust-launcher`. See `README.md` for features and `dev/PRODUCT.md` for scope.
 
 ## State
-- `master` at the merge `f48a005` (2026-11-09), **not pushed**: `origin/master` is still `cc5a65c`. It merges two reviewed local branches, both kept:
+- `master` pushed to `origin/master` on 2026-11-09 (merge `f48a005` plus this handoff). It merges two reviewed branches, both still kept locally:
   - `audit-fixes` (merged in `d2afdcb`): the 2026-11-08 audit. H1 renderer sandbox back on (`--no-sandbox` removed), M1 stop on `RAND_bytes` failure, M2 atomic history and bookmarks writes, M4 read-only address line in popups, M5 popup blocker (popups only from a click or key press), plus two trail learnings. Each fix was checked in the running app; logs under `artifacts/audit-fixes/` (gitignored).
   - `remove-rust-launcher` (merged in `f48a005`): deletes `launcher/`, drops the cargo steps from `scripts/validate.sh`, and brings `CLAUDE.md`, this file, `dev/PRODUCT.md`, `dev/CONTRACT.md` and `dev/harness.py` up to date with the Qt stack.
 - `scripts/validate.sh` now means: `./bin/build`, then `qmllint` on every QML file. It passed on merged `master` on 2026-11-09.
@@ -21,7 +21,7 @@ A quiet, native Linux browser for Omarchy: C++17, Qt 6 Quick on QtWebEngine (Chr
 - Low follow-ups: assistant API error text is lost and mid-stream errors end as success (`src/backend.cpp:409-431`); the single-instance `listen()` result is unchecked and URL lines can split across reads (`src/main.cpp:70-79`); fish `\xNN` escapes are not decoded when reading keys (`src/backend.cpp:218`); the `__nd_user` marker sits in the page's own `sessionStorage` (`src/login.js:455`); popups closed by the window manager are never destroyed (`src/Main.qml`, popup `onWindowCloseRequested`); downloads are accepted without a prompt (`src/main.cpp:102`); `bookmarks.json` is not 0600; `Backend::readResource` takes any path (QML-only).
 
 ## Next
-1. Push `master` when the owner says so (both branches are merged locally; validate.sh passed on the merge).
+1. Decide M3 (recommended: fill passwords only after a click on the field, never on `http://`).
 2. F03 (tab session restore): write `dev/CONTRACT.md` for it against the Qt app, build one feature at a time, mark PASS only after the independent EVALUATOR checks evidence against the recorded commit (`CLAUDE.md` section 6).
 3. Decide what to do with `review-fixes-old-base` (delete or review).
 
