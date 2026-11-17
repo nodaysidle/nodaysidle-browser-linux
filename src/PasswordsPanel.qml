@@ -66,15 +66,12 @@ Rectangle {
                 Layout.fillWidth: true
             }
 
-            Text {
-                text: "×"
-                font.pixelSize: 18
-                color: theme.muted
-                MouseArea {
-                    anchors.fill: parent
-                    anchors.margins: -4
-                    onClicked: root.closeRequested()
-                }
+            IconButton {
+                icon: "close"
+                buttonSize: 24
+                accessibleName: "Close passwords"
+                cornerRadius: root.cornerRadius
+                onClicked: root.closeRequested()
             }
         }
 
@@ -98,6 +95,7 @@ Rectangle {
 
         TextField {
             id: search
+            Accessible.name: "Search saved passwords"
             Layout.fillWidth: true
             placeholderText: "Search passwords"
             placeholderTextColor: theme.muted
@@ -127,6 +125,8 @@ Rectangle {
             clip: true
             model: root.logins
             spacing: 2
+            Accessible.role: Accessible.List
+            Accessible.name: "Saved logins"
 
             delegate: Rectangle {
                 id: row
@@ -181,6 +181,8 @@ Rectangle {
                         Text {
                             required property var modelData
                             text: modelData.label
+                            Accessible.role: Accessible.Button
+                            Accessible.name: modelData.label + " the password for " + row.modelData.origin.replace(/^https?:\/\//, "")
                             font.pixelSize: 11
                             font.bold: true
                             color: modelData.act === "delete" ? theme.red : theme.accent
@@ -237,6 +239,8 @@ Rectangle {
                 radius: Math.min(root.cornerRadius, 6)
                 color: sourceHover.containsMouse ? Qt.alpha(theme.accent, 0.18) : "transparent"
                 border.color: theme.line
+                Accessible.role: Accessible.Button
+                Accessible.name: "Import passwords from " + source.modelData.label
 
                 Text {
                     anchors.verticalCenter: parent.verticalCenter
@@ -270,6 +274,8 @@ Rectangle {
             radius: Math.min(root.cornerRadius, 6)
             color: csvHover.containsMouse ? Qt.alpha(theme.accent, 0.18) : "transparent"
             border.color: theme.line
+            Accessible.role: Accessible.Button
+            Accessible.name: "Import a passwords CSV file"
 
             Text {
                 anchors.centerIn: parent

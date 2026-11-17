@@ -235,6 +235,12 @@ ApplicationWindow {
         });
     }
 
+    function toggleCurrentBookmark() {
+        var v = activeView;
+        if (v)
+            backend.toggleBookmark(v.title, v.url.toString());
+    }
+
     function printPage() {
         var v = activeView;
         if (v) v.printToPdf(backend.pdfPath(v.title));
@@ -422,6 +428,8 @@ ApplicationWindow {
                     model: tabsModel
                     spacing: 4
                     clip: true
+                    Accessible.role: Accessible.PageTabList
+                    Accessible.name: "Open tabs"
 
                     delegate: Rectangle {
                         id: tabPill
@@ -430,7 +438,21 @@ ApplicationWindow {
                         anchors.verticalCenter: parent.verticalCenter
                         radius: appWindow.cornerRadius
                         color: index === currentTabIndex ? theme.surface : (pillHover.hovered ? Qt.alpha(theme.surface, 0.5) : "transparent")
-                        border.color: index === currentTabIndex ? theme.line : "transparent"
+                        border.color: activeFocus ? theme.accent : (index === currentTabIndex ? theme.line : "transparent")
+
+                        activeFocusOnTab: true
+                        Accessible.role: Accessible.PageTab
+                        Accessible.name: model.title && model.title.length > 0 ? model.title : "New tab"
+                        Accessible.onPressAction: currentTabIndex = index
+                        Keys.onPressed: function(event) {
+                            if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                                currentTabIndex = index;
+                                event.accepted = true;
+                            } else if (event.key === Qt.Key_Delete) {
+                                closeTab(index);
+                                event.accepted = true;
+                            }
+                        }
 
                         // Active accent indicator bar at bottom
                         Rectangle {
@@ -453,6 +475,7 @@ ApplicationWindow {
                                 if (mouse.button === Qt.MiddleButton) {
                                     closeTab(index);
                                 } else {
+                                    tabPill.forceActiveFocus();
                                     currentTabIndex = index;
                                 }
                             }
@@ -490,51 +513,24 @@ ApplicationWindow {
                             }
 
                             // Close Button
-                            Rectangle {
-                                width: 18
-                                height: 18
-                                radius: 9
-                                color: closeHover.containsMouse ? Qt.alpha(theme.text, 0.2) : "transparent"
-                                visible: pillHover.hovered || index === currentTabIndex
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "×"
-                                    font.pixelSize: 14
-                                    color: theme.muted
-                                }
-
-                                MouseArea {
-                                    id: closeHover
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: closeTab(index)
-                                }
+                            IconButton {
+                                icon: "close"
+                                buttonSize: 24
+                                cornerRadius: 12
+                                accessibleName: "Close tab"
+                                visible: pillHover.hovered || index === currentTabIndex || activeFocus
+                                onClicked: closeTab(index)
                             }
                         }
                     }
                 }
 
                 // New Tab Button (+)
-                Rectangle {
-                    width: 28
-                    height: 28
-                    radius: appWindow.cornerRadius
-                    color: newTabHover.containsMouse ? theme.surface : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "+"
-                        font.pixelSize: 16
-                        color: theme.textStrong
-                    }
-
-                    MouseArea {
-                        id: newTabHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: newTab(backend.homeUrl)
-                    }
+                IconButton {
+                    icon: "plus"
+                    accessibleName: "New tab"
+                    cornerRadius: appWindow.cornerRadius
+                    onClicked: newTab(backend.homeUrl)
                 }
             }
         }
@@ -554,6 +550,7 @@ ApplicationWindow {
 
                 IconButton {
                     icon: "back"
+                    accessibleName: "Back"
                     cornerRadius: appWindow.cornerRadius
                     opacity: (activeView && activeView.canGoBack) ? 1.0 : 0.4
                     onClicked: { var v = currentView(); if (v && v.canGoBack) v.goBack(); }
@@ -561,6 +558,7 @@ ApplicationWindow {
 
                 IconButton {
                     icon: "forward"
+                    accessibleName: "Forward"
                     cornerRadius: appWindow.cornerRadius
                     opacity: (activeView && activeView.canGoForward) ? 1.0 : 0.4
                     onClicked: { var v = currentView(); if (v && v.canGoForward) v.goForward(); }
@@ -568,6 +566,7 @@ ApplicationWindow {
 
                 IconButton {
                     icon: (activeView && activeView.loading) ? "stop" : "reload"
+                    accessibleName: (activeView && activeView.loading) ? "Stop loading" : "Reload"
                     cornerRadius: appWindow.cornerRadius
                     onClicked: {
                         var v = currentView();
@@ -580,6 +579,7 @@ ApplicationWindow {
 
                 IconButton {
                     icon: "home"
+                    accessibleName: "Home"
                     cornerRadius: appWindow.cornerRadius
                     onClicked: { var v = currentView(); if (v) v.url = backend.homeUrl; }
                 }
@@ -619,6 +619,7 @@ ApplicationWindow {
 
                         TextField {
                             id: urlInput
+                            Accessible.name: "Address and search bar"
                             Layout.fillWidth: true
                             placeholderText: "Search with DuckDuckGo or enter address..."
                             placeholderTextColor: theme.muted
@@ -714,6 +715,19 @@ ApplicationWindow {
                             height: 24
                             radius: appWindow.cornerRadius
                             color: starHover.containsMouse ? Qt.alpha(theme.text, 0.1) : "transparent"
+                            border.width: 1
+                            border.color: activeFocus ? theme.accent : "transparent"
+
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: (activeView && backend.isBookmarked(activeView.url.toString())) ? "Remove bookmark" : "Bookmark this page"
+                            Accessible.onPressAction: toggleCurrentBookmark()
+                            Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                                    toggleCurrentBookmark();
+                                    event.accepted = true;
+                                }
+                            }
 
                             Canvas {
                                 id: starCanvas
@@ -751,8 +765,8 @@ ApplicationWindow {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 onClicked: {
-                                    var v = currentView();
-                                    if (v) backend.toggleBookmark(v.title, v.url.toString());
+                                    parent.forceActiveFocus();
+                                    toggleCurrentBookmark();
                                 }
                             }
                         }
@@ -761,6 +775,7 @@ ApplicationWindow {
 
                 IconButton {
                     icon: "key"
+                    accessibleName: "Saved passwords"
                     active: passwordsVisible
                     cornerRadius: appWindow.cornerRadius
                     onClicked: togglePasswords()
@@ -769,6 +784,7 @@ ApplicationWindow {
                 // Scam check (TypeSafe) toggles the side panel
                 IconButton {
                     icon: "shield"
+                    accessibleName: "Scam check with TypeSafe"
                     active: scamVisible
                     cornerRadius: appWindow.cornerRadius
                     onClicked: scamVisible = !scamVisible
@@ -800,6 +816,8 @@ ApplicationWindow {
                     radius: appWindow.cornerRadius
                     color: bmHover.containsMouse ? theme.surface : "transparent"
                     border.color: bmHover.containsMouse ? theme.line : "transparent"
+                    Accessible.role: isFolder ? Accessible.Button : Accessible.Link
+                    Accessible.name: (isFolder ? "Bookmark folder " : "Bookmark ") + modelData.title
 
                     Text {
                         id: bmText
@@ -859,6 +877,8 @@ ApplicationWindow {
             height: 36
             visible: pendingPermission !== null && !pageFullScreen
             color: theme.surface
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: pendingPermission ? pendingPermission.origin.toString().replace(/\/$/, "") + " wants access to " + permissionLabel(pendingPermission.permissionType) : ""
 
             RowLayout {
                 anchors.fill: parent
@@ -877,27 +897,11 @@ ApplicationWindow {
                 Repeater {
                     model: [{ label: "Allow", allow: true }, { label: "Deny", allow: false }]
 
-                    Rectangle {
-                        width: 56
+                    IconButton {
                         height: 24
-                        radius: appWindow.cornerRadius
-                        color: permHover.containsMouse ? Qt.alpha(theme.accent, 0.25) : "transparent"
-                        border.color: modelData.allow ? theme.accent : theme.line
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData.label
-                            font.pixelSize: 12
-                            font.bold: true
-                            color: theme.textStrong
-                        }
-
-                        MouseArea {
-                            id: permHover
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: answerPermission(modelData.allow)
-                        }
+                        label: modelData.label
+                        accessibleName: modelData.allow ? "Allow this site the requested access" : "Deny this site the requested access"
+                        onClicked: answerPermission(modelData.allow)
                     }
                 }
             }
@@ -909,6 +913,8 @@ ApplicationWindow {
             height: 36
             visible: pendingLogin !== null && pendingLogin.ready && pendingLogin.view === activeView && !pageFullScreen
             color: theme.surface
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: pendingLogin && pendingLogin.ready ? (pendingLogin.state === "update" ? "Update the saved password?" : "Save this password?") : ""
 
             RowLayout {
                 anchors.fill: parent
@@ -934,27 +940,12 @@ ApplicationWindow {
                         { label: "Not now", action: "dismiss", primary: false }
                     ]
 
-                    Rectangle {
-                        width: modelData.action === "dismiss" ? 66 : 56
+                    IconButton {
                         height: 24
-                        radius: appWindow.cornerRadius
-                        color: loginHover.containsMouse ? Qt.alpha(theme.accent, 0.25) : "transparent"
-                        border.color: modelData.primary ? theme.accent : theme.line
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: modelData.label
-                            font.pixelSize: 12
-                            font.bold: true
-                            color: theme.textStrong
-                        }
-
-                        MouseArea {
-                            id: loginHover
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            onClicked: answerLogin(modelData.action)
-                        }
+                        label: modelData.label
+                        active: modelData.primary
+                        accessibleName: modelData.label + " this login"
+                        onClicked: answerLogin(modelData.action)
                     }
                 }
             }
@@ -975,6 +966,7 @@ ApplicationWindow {
 
                 TextField {
                     id: findInput
+                    Accessible.name: "Find in page"
                     Layout.preferredWidth: 260
                     placeholderText: "Find in page"
                     placeholderTextColor: theme.muted
@@ -1004,15 +996,11 @@ ApplicationWindow {
 
                 Item { Layout.fillWidth: true }
 
-                Text {
-                    text: "×"
-                    font.pixelSize: 18
-                    color: theme.muted
-                    MouseArea {
-                        anchors.fill: parent
-                        anchors.margins: -6
-                        onClicked: closeFind()
-                    }
+                IconButton {
+                    icon: "close"
+                    accessibleName: "Close find bar"
+                    cornerRadius: appWindow.cornerRadius
+                    onClicked: closeFind()
                 }
             }
         }
@@ -1225,10 +1213,22 @@ ApplicationWindow {
 
                             Text {
                                 text: "Clear all"
+                                Accessible.role: Accessible.Button
+                                Accessible.name: "Clear all history"
+                                Accessible.onPressAction: { backend.clearHistory(); refreshHistory(); }
+                                activeFocusOnTab: true
                                 font.pixelSize: 12
                                 font.bold: true
+                                font.underline: activeFocus
                                 color: theme.accent
                                 visible: historyItems.length > 0
+                                Keys.onPressed: function(event) {
+                                    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+                                        backend.clearHistory();
+                                        refreshHistory();
+                                        event.accepted = true;
+                                    }
+                                }
                                 MouseArea {
                                     anchors.fill: parent
                                     anchors.margins: -6
@@ -1236,20 +1236,18 @@ ApplicationWindow {
                                 }
                             }
 
-                            Text {
-                                text: "×"
-                                font.pixelSize: 18
-                                color: theme.muted
-                                MouseArea {
-                                    anchors.fill: parent
-                                    anchors.margins: -4
-                                    onClicked: historyVisible = false
-                                }
+                            IconButton {
+                                icon: "close"
+                                buttonSize: 24
+                                accessibleName: "Close history"
+                                cornerRadius: appWindow.cornerRadius
+                                onClicked: historyVisible = false
                             }
                         }
 
                         TextField {
                             id: historySearch
+                            Accessible.name: "Search history"
                             Layout.fillWidth: true
                             placeholderText: "Search history"
                             placeholderTextColor: theme.muted
@@ -1278,6 +1276,8 @@ ApplicationWindow {
                             clip: true
                             model: historyItems
                             spacing: 2
+                            Accessible.role: Accessible.List
+                            Accessible.name: "History entries"
 
                             delegate: Rectangle {
                                 width: ListView.view.width
@@ -1340,6 +1340,8 @@ ApplicationWindow {
                     color: theme.surface
                     border.color: theme.line
                     border.width: 1
+                    Accessible.role: Accessible.Pane
+                    Accessible.name: "Scam check"
 
                     Behavior on Layout.preferredWidth {
                         NumberAnimation { duration: 150; easing.type: Easing.OutQuad }
@@ -1362,14 +1364,12 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                             }
 
-                            Text {
-                                text: "×"
-                                font.pixelSize: 18
-                                color: theme.muted
-                                MouseArea {
-                                    anchors.fill: parent
-                                    onClicked: scamVisible = false
-                                }
+                            IconButton {
+                                icon: "close"
+                                buttonSize: 24
+                                accessibleName: "Close scam check"
+                                cornerRadius: appWindow.cornerRadius
+                                onClicked: scamVisible = false
                             }
                         }
 
@@ -1433,6 +1433,7 @@ ApplicationWindow {
 
                                 TextArea {
                                     id: scamOutput
+                                    Accessible.name: "Scam check result"
                                     readOnly: true
                                     wrapMode: TextArea.Wrap
                                     color: theme.textStrong

@@ -1,23 +1,43 @@
 import QtQuick
+import QtQuick.Controls
 
-// A toolbar button whose glyph is drawn on a fixed 16 px grid, so every icon sits on the same centre line.
+// The single button primitive: a 16 px glyph or a short label, a visible focus ring,
+// a screen-reader name, and Enter/Space activation. Every toolbar and bar button uses it,
+// so the keyboard reaches the same things the mouse does.
 Rectangle {
     id: root
     property string icon: "back"
+    property string label: ""
+    property string accessibleName: ""
     property bool active: false
     property int cornerRadius: 4
+    property int buttonSize: 28
     signal clicked()
 
-    width: 28
-    height: 28
+    width: label.length > 0 ? labelText.implicitWidth + 24 : buttonSize
+    height: buttonSize
     radius: cornerRadius
     color: active ? Qt.alpha(theme.accent, 0.25) : (area.containsMouse ? theme.surface : "transparent")
-    border.color: active ? theme.accent : "transparent"
+    border.width: 1
+    border.color: activeFocus || active ? theme.accent : "transparent"
+
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: root.accessibleName.length > 0 ? root.accessibleName : (root.label.length > 0 ? root.label : root.icon)
+    Accessible.onPressAction: root.clicked()
+
+    Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+            root.clicked();
+            event.accepted = true;
+        }
+    }
 
     Canvas {
         anchors.centerIn: parent
         width: 16
         height: 16
+        visible: root.label.length === 0
         property color ink: root.active ? theme.accent : theme.textStrong
         property string glyph: root.icon
         onInkChanged: requestPaint()
@@ -61,15 +81,38 @@ Rectangle {
                 c.lineTo(3, 4);
                 c.closePath();
                 break;
+            case "plus":
+                c.moveTo(8, 3); c.lineTo(8, 13); c.moveTo(3, 8); c.lineTo(13, 8);
+                break;
+            case "close":
+                c.moveTo(4.5, 4.5); c.lineTo(11.5, 11.5); c.moveTo(11.5, 4.5); c.lineTo(4.5, 11.5);
+                break;
             }
             c.stroke();
         }
+    }
+
+    Text {
+        id: labelText
+        anchors.centerIn: parent
+        visible: root.label.length > 0
+        text: root.label
+        font.pixelSize: 12
+        font.bold: true
+        color: root.active ? theme.accent : theme.textStrong
     }
 
     MouseArea {
         id: area
         anchors.fill: parent
         hoverEnabled: true
-        onClicked: root.clicked()
+        onClicked: {
+            root.forceActiveFocus();
+            root.clicked();
+        }
     }
+
+    ToolTip.visible: area.containsMouse && root.accessibleName.length > 0
+    ToolTip.delay: 600
+    ToolTip.text: root.accessibleName
 }
