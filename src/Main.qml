@@ -58,7 +58,12 @@ ApplicationWindow {
     }]
     // Reactive handle on the visible tab's view; toolbar bindings depend on it.
     property var activeView: null
-    onCurrentTabIndexChanged: { refreshActiveView(); sessionSaveTimer.restart(); }
+    onCurrentTabIndexChanged: {
+        refreshActiveView();
+        // Keep the active pill on screen when the strip is narrower than its contents.
+        tabsList.positionViewAtIndex(currentTabIndex, ListView.Contain);
+        sessionSaveTimer.restart();
+    }
     property bool bookmarksBarVisible: true
     property bool scamVisible: false
     property bool scamBusy: false
@@ -90,6 +95,9 @@ ApplicationWindow {
     property int suggestIndex: -1
     property string findStatus: ""
     property var closedTabs: []
+    // A window.open request waiting for its new tab's view to exist.
+    property var pendingOpenIn: null
+    property int pendingOpenInIndex: -1
     // A permission request belongs to the tab that asked, so the bar only shows the
     // current tab's; webView.permissionRequest holds each one.
     readonly property var currentPermission: activeView ? activeView.permissionRequest : null
@@ -138,7 +146,7 @@ ApplicationWindow {
 
     Connections {
         target: webViewRepeater
-        function onItemAdded() { refreshActiveView(); }
+        function onItemAdded() { refreshActiveView(); applyPendingOpenIn(); }
         function onItemRemoved() { Qt.callLater(refreshActiveView); }
     }
 
@@ -160,6 +168,35 @@ ApplicationWindow {
             urlInput.selectAll();
             urlInput.forceActiveFocus();
         }
+    }
+
+    // Opens a window.open request in a real tab. The request is answered once the new
+    // view exists, so window.opener, postMessage and POST bodies survive.
+    function openRequestInTab(request, inBackground) {
+        var previous = currentTabIndex;
+        tabsModel.append({
+            title: "New Tab",
+            url: "about:blank",
+            loading: false,
+            canGoBack: false,
+            canGoForward: false,
+            icon: ""
+        });
+        pendingOpenIn = request;
+        pendingOpenInIndex = tabsModel.count - 1;
+        currentTabIndex = inBackground ? previous : pendingOpenInIndex;
+        Qt.callLater(applyPendingOpenIn);
+    }
+
+    function applyPendingOpenIn() {
+        if (!pendingOpenIn || pendingOpenInIndex < 0)
+            return;
+        var view = webViewRepeater.itemAt(pendingOpenInIndex);
+        if (!view)
+            return;
+        pendingOpenIn.openIn(view);
+        pendingOpenIn = null;
+        pendingOpenInIndex = -1;
     }
 
     function closeTab(index) {
@@ -285,6 +322,22 @@ ApplicationWindow {
             vault.never(pendingLogin.url);
         }
         pendingLogin = null;
+    }
+
+    function openHistory(index, inNewTab) {
+        if (index < 0 || index >= historyItems.length)
+            return;
+        var url = historyItems[index].url;
+        if (inNewTab) {
+            newTab(url);
+            return;
+        }
+        var v = currentView();
+        if (v) {
+            v.url = url;
+            v.forceActiveFocus();
+        }
+        historyVisible = false;
     }
 
     function toggleHistory() {
@@ -547,7 +600,9 @@ ApplicationWindow {
 
                     delegate: Rectangle {
                         id: tabPill
-                        width: Math.max(120, Math.min(220, (tabsList.width - 40) / Math.max(1, tabsModel.count)))
+                        // Below ~90 px a pill shows only its icon and close button.
+                        readonly property bool compact: width < 90
+                        width: Math.max(48, Math.min(220, (tabsList.width - 40) / Math.max(1, tabsModel.count)))
                         height: 30
                         anchors.verticalCenter: parent.verticalCenter
                         radius: appWindow.cornerRadius
@@ -620,6 +675,7 @@ ApplicationWindow {
 
                             Text {
                                 Layout.fillWidth: true
+                                visible: !tabPill.compact
                                 text: model.title && model.title.length > 0 ? model.title : "Loading..."
                                 color: index === currentTabIndex ? theme.textStrong : theme.text
                                 font.pixelSize: 12
@@ -645,6 +701,21 @@ ApplicationWindow {
                     accessibleName: "New tab"
                     cornerRadius: appWindow.cornerRadius
                     onClicked: newTab(backend.homeUrl)
+                }
+            }
+
+            // Fade the end of the strip when the pills overflow it.
+            Rectangle {
+                anchors.right: tabsList.right
+                anchors.rightMargin: -4
+                anchors.verticalCenter: parent.verticalCenter
+                width: 20
+                height: parent.height
+                visible: tabsList.contentWidth > tabsList.width
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 1.0; color: theme.chrome }
                 }
             }
         }
@@ -1399,7 +1470,10 @@ ApplicationWindow {
                                         return;
                                     }
                                 }
-                                newTab(request.requestedUrl.toString());
+                                // Keep window.opener, postMessage and POST bodies: hand the
+                                // request to a real new view instead of re-navigating by URL.
+                                openRequestInTab(request,
+                                                 request.destination === WebEngineNewWindowRequest.InNewBackgroundTab);
                             }
 
                             // Custom Right-Click Context Menu for Native Wayland Link Handling
@@ -1516,7 +1590,7 @@ ApplicationWindow {
 
                 // History side panel (Ctrl+H)
                 Rectangle {
-                    Layout.preferredWidth: 360
+                    Layout.preferredWidth: Math.min(360, parent.width * 0.4)
                     Layout.fillHeight: true
                     visible: historyVisible && !pageFullScreen
                     color: theme.surface
@@ -1587,6 +1661,12 @@ ApplicationWindow {
                                 border.color: historySearch.activeFocus ? theme.accent : theme.inputBorder
                             }
                             onTextChanged: refreshHistory()
+                            Keys.onDownPressed: {
+                                if (historyItems.length > 0) {
+                                    historyList.currentIndex = 0;
+                                    historyList.forceActiveFocus();
+                                }
+                            }
                         }
 
                         Text {
@@ -1598,19 +1678,34 @@ ApplicationWindow {
                         }
 
                         ListView {
+                            id: historyList
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             clip: true
                             model: historyItems
                             spacing: 2
+                            currentIndex: -1
                             Accessible.role: Accessible.List
                             Accessible.name: "History entries"
+                            Keys.onUpPressed: if (currentIndex > 0) currentIndex--
+                            Keys.onDownPressed: if (currentIndex < historyItems.length - 1) currentIndex++
+                            Keys.onReturnPressed: openHistory(currentIndex, false)
+                            Keys.onEnterPressed: openHistory(currentIndex, false)
+                            Keys.onPressed: function(event) {
+                                if (event.key === Qt.Key_Return && (event.modifiers & Qt.ControlModifier)) {
+                                    openHistory(currentIndex, true);
+                                    event.accepted = true;
+                                } else if (event.key === Qt.Key_Escape) {
+                                    historyVisible = false;
+                                    event.accepted = true;
+                                }
+                            }
 
                             delegate: Rectangle {
                                 width: ListView.view.width
                                 height: 46
                                 radius: Math.min(appWindow.cornerRadius, 6)
-                                color: histHover.containsMouse ? Qt.alpha(theme.accent, 0.18) : "transparent"
+                                color: histHover.containsMouse || ListView.isCurrentItem ? Qt.alpha(theme.accent, 0.18) : "transparent"
 
                                 Column {
                                     anchors.verticalCenter: parent.verticalCenter
@@ -1650,7 +1745,7 @@ ApplicationWindow {
 
                 PasswordsPanel {
                     id: passwordsPanel
-                    Layout.preferredWidth: 360
+                    Layout.preferredWidth: Math.min(360, parent.width * 0.4)
                     Layout.fillHeight: true
                     visible: passwordsVisible && !pageFullScreen
                     cornerRadius: appWindow.cornerRadius
