@@ -10,6 +10,11 @@ options=('!debug')
 depends=('qt6-base' 'qt6-declarative' 'qt6-webengine' 'qt6-wayland' 'openssl' 'libsecret')
 
 # Builds from the working tree this file sits in, so bin/install packages what you see.
+#
+# This is deliberate and local-only: there is no source= or checksum, and $startdir is
+# how the recipe reaches ../ for the sources. namcap flags that on purpose ("File
+# referenced in $startdir"); the package is not AUR-ready and is not meant to be, so the
+# two namcap E: lines for $startdir are accepted rather than silenced.
 build() {
   local src="$startdir/.."
   mkdir -p "$srcdir/b"
