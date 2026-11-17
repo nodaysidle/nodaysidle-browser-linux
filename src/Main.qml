@@ -74,7 +74,10 @@ ApplicationWindow {
     property int suggestIndex: -1
     property string findStatus: ""
     property var closedTabs: []
-    property var pendingPermission: null
+    // A permission request belongs to the tab that asked, so the bar only shows the
+    // current tab's; webView.permissionRequest holds each one.
+    readonly property var currentPermission: activeView ? activeView.permissionRequest : null
+    onCurrentPermissionChanged: if (currentPermission) permAllow.forceActiveFocus()
     // Set when QtWebEngine rejected a certificate; the bar below says which host and why.
     property var certificateProblem: null
     // Downloads wait here until the person answers; see requestDownload().
@@ -146,6 +149,13 @@ ApplicationWindow {
     function closeTab(index) {
         if (index < 0 || index >= tabsModel.count)
             return;
+        // A tab that goes away must not leave a live permission request behind.
+        var closing = webViewRepeater.itemAt(index);
+        if (closing && closing.permissionRequest) {
+            closing.permissionRequest.deny();
+            closing.permissionRequest.reset();
+            closing.permissionRequest = null;
+        }
         const closedUrl = tabsModel.get(index).url;
         if (closedUrl !== backend.homeUrl)
             closedTabs = closedTabs.concat([closedUrl]).slice(-20);
@@ -376,14 +386,16 @@ ApplicationWindow {
     }
 
     function answerPermission(allow) {
-        if (!pendingPermission) return;
+        var permission = currentPermission;
+        if (!permission || !activeView)
+            return;
         if (allow) {
-            pendingPermission.grant();
+            permission.grant();
         } else {
-            pendingPermission.deny();
-            pendingPermission.reset();
+            permission.deny();
+            permission.reset();
         }
-        pendingPermission = null;
+        activeView.permissionRequest = null;
     }
 
     function cycleTab(step) {
@@ -1082,14 +1094,17 @@ ApplicationWindow {
             }
         }
 
-        // Permission prompt
+        // Permission prompt for the current tab only
         Rectangle {
             Layout.fillWidth: true
             height: 36
-            visible: pendingPermission !== null && !pageFullScreen
+            visible: currentPermission !== null && !pageFullScreen
             color: theme.surface
             Accessible.role: Accessible.AlertMessage
-            Accessible.name: pendingPermission ? pendingPermission.origin.toString().replace(/\/$/, "") + " wants access to " + permissionLabel(pendingPermission.permissionType) : ""
+            Accessible.name: currentPermission ? currentPermission.origin.toString().replace(/\/$/, "") + " wants access to " + permissionLabel(currentPermission.permissionType) : ""
+
+            // Escape answers No, from anywhere inside the bar.
+            Keys.onEscapePressed: answerPermission(false)
 
             RowLayout {
                 anchors.fill: parent
@@ -1102,18 +1117,22 @@ ApplicationWindow {
                     elide: Text.ElideRight
                     color: theme.textStrong
                     font.pixelSize: 12
-                    text: pendingPermission ? pendingPermission.origin.toString().replace(/\/$/, "") + " wants access to " + permissionLabel(pendingPermission.permissionType) : ""
+                    text: currentPermission ? currentPermission.origin.toString().replace(/\/$/, "") + " wants access to " + permissionLabel(currentPermission.permissionType) : ""
                 }
 
-                Repeater {
-                    model: [{ label: "Allow", allow: true }, { label: "Deny", allow: false }]
+                IconButton {
+                    id: permAllow
+                    height: 24
+                    label: "Allow"
+                    accessibleName: "Allow this site the requested access"
+                    onClicked: answerPermission(true)
+                }
 
-                    IconButton {
-                        height: 24
-                        label: modelData.label
-                        accessibleName: modelData.allow ? "Allow this site the requested access" : "Deny this site the requested access"
-                        onClicked: answerPermission(modelData.allow)
-                    }
+                IconButton {
+                    height: 24
+                    label: "Deny"
+                    accessibleName: "Deny this site the requested access"
+                    onClicked: answerPermission(false)
                 }
             }
         }
@@ -1238,6 +1257,8 @@ ApplicationWindow {
                             id: webView
                             anchors.fill: parent
                             visible: index === currentTabIndex
+                            // This tab's own permission request, if the page is asking.
+                            property var permissionRequest: null
                             // Load the first address once; a binding would re-fetch (as GET) every page the tab reaches.
                             Component.onCompleted: url = model.url
                             profile: appProfile
@@ -1313,11 +1334,12 @@ ApplicationWindow {
                                     permission.reset();
                                     return;
                                 }
-                                if (pendingPermission) {
-                                    pendingPermission.deny();
-                                    pendingPermission.reset();
+                                // One live request per tab: a newer one answers the older one No.
+                                if (webView.permissionRequest) {
+                                    webView.permissionRequest.deny();
+                                    webView.permissionRequest.reset();
                                 }
-                                pendingPermission = permission;
+                                webView.permissionRequest = permission;
                             }
 
                             onFullScreenRequested: function(request) {
