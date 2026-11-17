@@ -98,18 +98,8 @@ int main(int argc, char *argv[]) {
     profile->setPersistentPermissionsPolicy(QQuickWebEngineProfile::PersistentPermissionsPolicy::StoreInMemory);
     profile->setUrlRequestInterceptor(new AdBlocker(profile));
 
-    QObject::connect(profile, &QQuickWebEngineProfile::downloadRequested, &backend,
-                     [&backend](QQuickWebEngineDownloadRequest *download) {
-        download->setDownloadDirectory(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
-        download->accept();
-        QObject::connect(download, &QQuickWebEngineDownloadRequest::stateChanged, &backend,
-                         [&backend, download](QQuickWebEngineDownloadRequest::DownloadState state) {
-            if (state == QQuickWebEngineDownloadRequest::DownloadCompleted)
-                emit backend.notice("Saved " + download->downloadFileName() + " to Downloads");
-            else if (state == QQuickWebEngineDownloadRequest::DownloadInterrupted)
-                emit backend.notice("Download failed: " + download->downloadFileName());
-        });
-    });
+    // Downloads are handled in QML (WebEngineProfile.downloadRequested): nothing is written
+    // to disk until the person presses Save in the shelf.
 
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &backend, &Backend::flushHistory);
 

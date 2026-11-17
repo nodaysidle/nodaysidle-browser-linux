@@ -75,6 +75,8 @@ ApplicationWindow {
     property string findStatus: ""
     property var closedTabs: []
     property var pendingPermission: null
+    // Downloads wait here until the person answers; see requestDownload().
+    property var downloads: []
     // While the saved tabs are being rebuilt, do not write the half-built list back.
     property bool restoringSession: true
     property bool quitPromptVisible: false
@@ -193,6 +195,12 @@ ApplicationWindow {
         }
     }
 
+    // The profile reports every download; the shelf below asks before anything is saved.
+    Connections {
+        target: appProfile
+        function onDownloadRequested(download) { requestDownload(download); }
+    }
+
     function refreshHistory() {
         historyItems = backend.searchHistory(historySearch.text, 200);
     }
@@ -272,6 +280,32 @@ ApplicationWindow {
         var v = activeView;
         if (v)
             backend.toggleBookmark(v.title, v.url.toString());
+    }
+
+    function formatBytes(bytes) {
+        if (!bytes || bytes <= 0)
+            return "unknown size";
+        if (bytes < 1024)
+            return bytes + " B";
+        if (bytes < 1024 * 1024)
+            return (bytes / 1024).toFixed(1) + " KB";
+        if (bytes < 1024 * 1024 * 1024)
+            return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+        return (bytes / (1024 * 1024 * 1024)).toFixed(2) + " GB";
+    }
+
+    // Nothing is written to disk until Save: a page cannot drop files on its own.
+    function requestDownload(download) {
+        downloads = downloads.concat([{ req: download, origin: download.url.toString() }]);
+    }
+
+    function acceptDownload(item) {
+        item.req.downloadDirectory = backend.downloadDir();
+        item.req.accept();
+    }
+
+    function dismissDownload(item) {
+        downloads = downloads.filter(function (d) { return d !== item; });
     }
 
     function printPage() {
@@ -898,6 +932,90 @@ ApplicationWindow {
                                 text: "Delete Bookmark"
                                 onTriggered: backend.removeBookmark(modelData.url)
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Download shelf: one row per download, with the origin, the size, and an explicit Save.
+        Column {
+            Layout.fillWidth: true
+            visible: downloads.length > 0 && !pageFullScreen
+
+            Repeater {
+                model: downloads
+
+                Rectangle {
+                    id: dlRow
+                    required property var modelData
+                    width: parent.width
+                    height: 34
+                    color: theme.surface
+                    border.color: theme.line
+
+                    readonly property var req: modelData.req
+                    readonly property int state: req.downloadState
+                    readonly property bool pending: state === WebEngineDownloadRequest.DownloadRequested
+                    readonly property bool running: state === WebEngineDownloadRequest.DownloadInProgress
+                    readonly property bool done: state === WebEngineDownloadRequest.DownloadCompleted
+                    readonly property bool failed: state === WebEngineDownloadRequest.DownloadInterrupted
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 8
+                        spacing: 8
+
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            font.pixelSize: 12
+                            color: theme.textStrong
+                            text: {
+                                const name = dlRow.req.downloadFileName;
+                                if (dlRow.pending)
+                                    return name + "  ·  from " + dlRow.modelData.origin + "  ·  " + appWindow.formatBytes(dlRow.req.totalBytes);
+                                if (dlRow.running)
+                                    return "Downloading " + name + "  ·  " + appWindow.formatBytes(dlRow.req.receivedBytes) + " of " + appWindow.formatBytes(dlRow.req.totalBytes);
+                                if (dlRow.done)
+                                    return "Saved " + name + " to Downloads";
+                                if (dlRow.failed)
+                                    return "Download failed: " + name;
+                                return name;
+                            }
+                        }
+
+                        IconButton {
+                            visible: dlRow.pending
+                            label: "Save"
+                            accessibleName: "Save this file to Downloads"
+                            cornerRadius: appWindow.cornerRadius
+                            onClicked: acceptDownload(dlRow.modelData)
+                        }
+
+                        IconButton {
+                            visible: dlRow.running
+                            label: "Cancel"
+                            accessibleName: "Cancel this download"
+                            cornerRadius: appWindow.cornerRadius
+                            onClicked: dlRow.req.cancel()
+                        }
+
+                        IconButton {
+                            visible: dlRow.done
+                            label: "Show in folder"
+                            accessibleName: "Show the file in the Downloads folder"
+                            cornerRadius: appWindow.cornerRadius
+                            onClicked: backend.openPath(backend.downloadDir())
+                        }
+
+                        IconButton {
+                            icon: "close"
+                            buttonSize: 24
+                            accessibleName: "Dismiss this download"
+                            cornerRadius: appWindow.cornerRadius
+                            onClicked: dismissDownload(dlRow.modelData)
                         }
                     }
                 }

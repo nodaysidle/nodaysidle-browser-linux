@@ -50,6 +50,9 @@ public:
 
     Q_INVOKABLE QString pdfPath(const QString &title) const;
     Q_INVOKABLE QString readResource(const QString &path) const;
+    Q_INVOKABLE QString downloadDir() const;
+    // Opens a folder or file with the desktop's handler (xdg-open).
+    Q_INVOKABLE void openPath(const QString &path) const;
 
     // TypeSafe Jev scam check: the only AI integration.
     Q_INVOKABLE void checkScam(const QString &title, const QString &url, const QString &text);

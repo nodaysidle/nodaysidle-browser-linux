@@ -1,6 +1,7 @@
 #include "backend.h"
 
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QClipboard>
@@ -349,6 +350,14 @@ QString Backend::pdfPath(const QString &title) const {
     for (int n = 1; QFileInfo::exists(path); ++n)
         path = dir.filePath(QString("%1 (%2).pdf").arg(name).arg(n));
     return path;
+}
+
+QString Backend::downloadDir() const {
+    return QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+}
+
+void Backend::openPath(const QString &path) const {
+    QDesktopServices::openUrl(QUrl::fromLocalFile(path));
 }
 
 void Backend::copyText(const QString &text) {
