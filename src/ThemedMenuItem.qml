@@ -10,7 +10,7 @@ MenuItem {
     contentItem: Text {
         text: root.text
         font: root.font
-        color: root.enabled ? theme.textStrong : theme.muted
+        color: root.enabled ? theme.textStrong : theme.mutedText
         verticalAlignment: Text.AlignVCenter
         leftPadding: 6
     }

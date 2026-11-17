@@ -8,6 +8,7 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QStandardPaths>
+#include <QStyleHints>
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
 #include <QWebEngineProfile>
 #include <QWebEngineSettings>
@@ -52,6 +53,13 @@ int main(int argc, char *argv[]) {
 
     Theme theme;
     Backend backend;
+
+    // Follow the theme's mode so pages' prefers-color-scheme matches the desktop.
+    const auto applyColorScheme = [&app, &theme] {
+        app.styleHints()->setColorScheme(theme.dark() ? Qt::ColorScheme::Dark : Qt::ColorScheme::Light);
+    };
+    QObject::connect(&theme, &Theme::changed, &app, applyColorScheme);
+    applyColorScheme();
     QStringList urls;
     for (const auto &arg : args)
         urls << backend.normalizeUrl(arg);

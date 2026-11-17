@@ -17,9 +17,14 @@ class Theme : public QObject {
     Q_PROPERTY(QString textStrong READ textStrong NOTIFY changed)
     Q_PROPERTY(QString muted READ muted NOTIFY changed)
     Q_PROPERTY(QString line READ line NOTIFY changed)
+    // Ink derived from the theme so that text and input edges clear WCAG AA (F10).
+    Q_PROPERTY(QString mutedText READ mutedText NOTIFY changed)
+    Q_PROPERTY(QString linkText READ linkText NOTIFY changed)
+    Q_PROPERTY(QString inputBorder READ inputBorder NOTIFY changed)
     Q_PROPERTY(QString red READ red NOTIFY changed)
     Q_PROPERTY(QString green READ green NOTIFY changed)
     Q_PROPERTY(QString yellow READ yellow NOTIFY changed)
+    Q_PROPERTY(bool dark READ dark NOTIFY changed)
     Q_PROPERTY(int radius READ radius NOTIFY changed)
 
 public:
@@ -35,10 +40,16 @@ public:
     QString textStrong() const { return m_textStrong; }
     QString muted() const { return m_muted; }
     QString line() const { return m_line; }
+    QString mutedText() const { return m_mutedText; }
+    QString linkText() const { return m_linkText; }
+    QString inputBorder() const { return m_inputBorder; }
     QString red() const { return m_red; }
     QString green() const { return m_green; }
     QString yellow() const { return m_yellow; }
+    bool dark() const { return m_dark; }
     int radius() const { return m_radius; }
+    // The one colours.toml this theme was read from.
+    QString colorsPath() const;
 
 signals:
     void changed();
@@ -46,20 +57,25 @@ signals:
 private:
     void reload();
     void refreshRounding();
-    QString readColor(const QString &content, const QString &key, const QString &fallback);
+    // Aliases are tried in order; the first key present wins.
+    QString readColor(const QString &content, const QStringList &keys, const QString &fallback);
 
     QString m_directory;
-    QString m_accent = "#FFD60A";
-    QString m_background = "#090A0C";
-    QString m_surface = "#14171A";
-    QString m_chrome = "#0D0F12";
-    QString m_text = "#94A3B8";
-    QString m_textStrong = "#F8FAFC";
-    QString m_muted = "#64748B";
-    QString m_line = "#26292E";
-    QString m_red = "#F43F5E";
-    QString m_green = "#10B981";
-    QString m_yellow = "#FBBF24";
+    QString m_accent;
+    QString m_background;
+    QString m_surface;
+    QString m_chrome;
+    QString m_text;
+    QString m_textStrong;
+    QString m_muted;
+    QString m_line;
+    QString m_mutedText;
+    QString m_linkText;
+    QString m_inputBorder;
+    QString m_red;
+    QString m_green;
+    QString m_yellow;
+    bool m_dark = true;
 
     QFileSystemWatcher m_watcher;
     QTimer m_debounce;

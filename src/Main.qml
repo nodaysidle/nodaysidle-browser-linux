@@ -40,6 +40,22 @@ ApplicationWindow {
         sourceCode: "var __ndNonce = '" + vault.nonce + "';\n" + backend.readResource(":/login.js")
     }]
     readonly property var pageScripts: chromeAppScripts.concat(loginScripts)
+    // Injected before the start page's own scripts so it never flashes the default dark theme.
+    readonly property var homeThemeScript: [{
+        name: "home-theme",
+        injectionPoint: WebEngineScript.DocumentCreation,
+        worldId: WebEngineScript.MainWorld,
+        runsOnSubFrames: false,
+        sourceCode: "window.__ndTheme = {" +
+            "'--bg':'" + theme.background + "'," +
+            "'--surface':'" + theme.surface + "'," +
+            "'--line':'" + theme.line + "'," +
+            "'--text':'" + theme.text + "'," +
+            "'--strong':'" + theme.textStrong + "'," +
+            "'--muted':'" + theme.mutedText + "'," +
+            "'--accent':'" + theme.accent + "'," +
+            "'--radius':'" + Math.max(theme.radius, 4) + "px'};"
+    }]
     // Reactive handle on the visible tab's view; toolbar bindings depend on it.
     property var activeView: null
     onCurrentTabIndexChanged: { refreshActiveView(); sessionSaveTimer.restart(); }
@@ -199,7 +215,7 @@ ApplicationWindow {
             "s.setProperty('--line','" + theme.line + "');" +
             "s.setProperty('--text','" + theme.text + "');" +
             "s.setProperty('--strong','" + theme.textStrong + "');" +
-            "s.setProperty('--muted','" + theme.muted + "');" +
+            "s.setProperty('--muted','" + theme.mutedText + "');" +
             "s.setProperty('--accent','" + theme.accent + "');" +
             "s.setProperty('--radius','" + Math.max(theme.radius, 4) + "px');" +
             "})(document.documentElement.style)");
@@ -590,7 +606,7 @@ ApplicationWindow {
                                 Layout.preferredWidth: 6
                                 Layout.preferredHeight: 6
                                 radius: 3
-                                color: model.loading ? theme.accent : theme.muted
+                                color: model.loading ? theme.accent : theme.mutedText
                                 visible: !favicon.visible && (model.loading || index === currentTabIndex)
                             }
 
@@ -680,7 +696,7 @@ ApplicationWindow {
                     height: 32
                     radius: appWindow.cornerRadius
                     color: theme.surface
-                    border.color: urlInput.activeFocus ? theme.accent : theme.line
+                    border.color: urlInput.activeFocus ? theme.accent : theme.inputBorder
                     border.width: 1
 
                     RowLayout {
@@ -695,7 +711,7 @@ ApplicationWindow {
                             height: 14
                             radius: 3
                             color: "transparent"
-                            border.color: (activeView && activeView.url.toString().startsWith("https://")) ? theme.green : theme.muted
+                            border.color: (activeView && activeView.url.toString().startsWith("https://")) ? theme.green : theme.mutedText
                             border.width: 1
 
                             Rectangle {
@@ -703,7 +719,7 @@ ApplicationWindow {
                                 width: 6
                                 height: 6
                                 radius: 1
-                                color: (activeView && activeView.url.toString().startsWith("https://")) ? theme.green : theme.muted
+                                color: (activeView && activeView.url.toString().startsWith("https://")) ? theme.green : theme.mutedText
                             }
                         }
 
@@ -712,7 +728,7 @@ ApplicationWindow {
                             Accessible.name: "Address and search bar"
                             Layout.fillWidth: true
                             placeholderText: "Search with DuckDuckGo or enter address..."
-                            placeholderTextColor: theme.muted
+                            placeholderTextColor: theme.mutedText
                             color: theme.textStrong
                             selectionColor: theme.accent
                             selectedTextColor: theme.accentForeground
@@ -790,7 +806,7 @@ ApplicationWindow {
                                                 width: parent.width
                                                 text: modelData.url
                                                 elide: Text.ElideRight
-                                                color: theme.muted
+                                                color: theme.mutedText
                                                 font.pixelSize: 11
                                             }
                                         }
@@ -837,7 +853,7 @@ ApplicationWindow {
                                 anchors.centerIn: parent
                                 width: 14
                                 height: 14
-                                property color starColor: (activeView && backend.bookmarks && backend.isBookmarked(activeView.url.toString())) ? theme.accent : theme.muted
+                                property color starColor: (activeView && backend.bookmarks && backend.isBookmarked(activeView.url.toString())) ? theme.accent : theme.mutedText
                                 onStarColorChanged: requestPaint()
                                 onPaint: {
                                     var ctx = getContext("2d");
@@ -1199,14 +1215,14 @@ ApplicationWindow {
                     Accessible.name: "Find in page"
                     Layout.preferredWidth: 260
                     placeholderText: "Find in page"
-                    placeholderTextColor: theme.muted
+                    placeholderTextColor: theme.mutedText
                     color: theme.textStrong
                     font.pixelSize: 12
                     selectByMouse: true
                     background: Rectangle {
                         radius: appWindow.cornerRadius
                         color: theme.surface
-                        border.color: findInput.activeFocus ? theme.accent : theme.line
+                        border.color: findInput.activeFocus ? theme.accent : theme.inputBorder
                     }
                     onTextChanged: runFind(false)
                     onAccepted: runFind(false)
@@ -1262,7 +1278,7 @@ ApplicationWindow {
                             // Load the first address once; a binding would re-fetch (as GET) every page the tab reaches.
                             Component.onCompleted: url = model.url
                             profile: appProfile
-                            userScripts.collection: pageScripts
+                            userScripts.collection: pageScripts.concat(homeThemeScript)
 
                             // Popup blocker: windows open only from a click or key press.
                             settings.javascriptCanOpenWindows: false
@@ -1464,7 +1480,7 @@ ApplicationWindow {
                                 font.pixelSize: 12
                                 font.bold: true
                                 font.underline: activeFocus
-                                color: theme.accent
+                                color: theme.linkText
                                 visible: historyItems.length > 0
                                 Keys.onPressed: function(event) {
                                     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
@@ -1494,14 +1510,14 @@ ApplicationWindow {
                             Accessible.name: "Search history"
                             Layout.fillWidth: true
                             placeholderText: "Search history"
-                            placeholderTextColor: theme.muted
+                            placeholderTextColor: theme.mutedText
                             color: theme.textStrong
                             font.pixelSize: 12
                             selectByMouse: true
                             background: Rectangle {
                                 radius: appWindow.cornerRadius
                                 color: theme.chrome
-                                border.color: historySearch.activeFocus ? theme.accent : theme.line
+                                border.color: historySearch.activeFocus ? theme.accent : theme.inputBorder
                             }
                             onTextChanged: refreshHistory()
                         }
@@ -1510,7 +1526,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             visible: historyItems.length === 0
                             text: historySearch.text.length > 0 ? "Nothing matches." : "No history yet."
-                            color: theme.muted
+                            color: theme.mutedText
                             font.pixelSize: 12
                         }
 
@@ -1546,7 +1562,7 @@ ApplicationWindow {
                                         width: parent.width
                                         text: Qt.formatDateTime(new Date(modelData.time * 1000), "MMM d, HH:mm") + "  " + modelData.url
                                         elide: Text.ElideRight
-                                        color: theme.muted
+                                        color: theme.mutedText
                                         font.pixelSize: 11
                                     }
                                 }
@@ -1753,7 +1769,7 @@ ApplicationWindow {
                 Text {
                     Layout.fillWidth: true
                     text: "They reopen next time you start."
-                    color: theme.muted
+                    color: theme.mutedText
                     font.pixelSize: 12
                     wrapMode: Text.WordWrap
                 }

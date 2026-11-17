@@ -95,7 +95,7 @@ Rectangle {
             visible: vault.available
             wrapMode: Text.WordWrap
             text: "Logins are saved on this computer, encrypted, and filled in when you return to a site."
-            color: theme.muted
+            color: theme.mutedText
             font.pixelSize: 11
         }
 
@@ -104,14 +104,14 @@ Rectangle {
             Accessible.name: "Search saved passwords"
             Layout.fillWidth: true
             placeholderText: "Search passwords"
-            placeholderTextColor: theme.muted
+            placeholderTextColor: theme.mutedText
             color: theme.textStrong
             font.pixelSize: 12
             selectByMouse: true
             background: Rectangle {
                 radius: root.cornerRadius
                 color: theme.chrome
-                border.color: search.activeFocus ? theme.accent : theme.line
+                border.color: search.activeFocus ? theme.accent : theme.inputBorder
             }
             onTextChanged: root.refresh()
         }
@@ -121,7 +121,7 @@ Rectangle {
             visible: root.logins.length === 0 && vault.available
             text: search.text.length > 0 ? "Nothing matches." : "No saved passwords yet. Sign in to a site and choose Save, or import below."
             wrapMode: Text.WordWrap
-            color: theme.muted
+            color: theme.mutedText
             font.pixelSize: 12
         }
 
@@ -164,7 +164,7 @@ Rectangle {
                         text: row.shown ? row.modelData.username + "   " + root.revealed[row.modelData.id]
                                         : (row.modelData.username.length > 0 ? row.modelData.username : "no username")
                         elide: Text.ElideRight
-                        color: row.shown ? theme.accent : theme.muted
+                        color: row.shown ? theme.accent : theme.mutedText
                         font.pixelSize: 11
                     }
                 }
@@ -191,7 +191,7 @@ Rectangle {
                             Accessible.name: modelData.label + " the password for " + row.modelData.origin.replace(/^https?:\/\//, "")
                             font.pixelSize: 11
                             font.bold: true
-                            color: modelData.act === "delete" ? theme.red : theme.accent
+                            color: modelData.act === "delete" ? theme.red : theme.linkText
 
                             MouseArea {
                                 anchors.fill: parent
@@ -230,7 +230,7 @@ Rectangle {
             visible: root.sources.length === 0
             text: "No other browser was found on this computer."
             wrapMode: Text.WordWrap
-            color: theme.muted
+            color: theme.mutedText
             font.pixelSize: 11
         }
 
@@ -261,7 +261,7 @@ Rectangle {
                     anchors.right: parent.right
                     anchors.rightMargin: 10
                     text: importer.importing ? "Importing…" : "Import"
-                    color: importer.importing ? theme.muted : theme.accent
+                    color: importer.importing ? theme.mutedText : theme.linkText
                     font.pixelSize: 12
                     font.bold: true
                 }
@@ -289,7 +289,7 @@ Rectangle {
             Text {
                 anchors.centerIn: parent
                 text: importer.importing ? "Importing…" : "Import a passwords CSV file"
-                color: importer.importing ? theme.muted : theme.textStrong
+                color: importer.importing ? theme.mutedText : theme.textStrong
                 font.pixelSize: 12
             }
             MouseArea {

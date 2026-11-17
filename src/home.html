@@ -4,6 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>nodaysidle</title>
+  <script>
+    // The host injects window.__ndTheme at DocumentCreation, before this runs, so the very
+    // first paint already uses the Omarchy theme instead of flashing the dark defaults.
+    (function () {
+      var theme = window.__ndTheme || {};
+      var root = document.documentElement.style;
+      for (var key in theme) {
+        if (Object.prototype.hasOwnProperty.call(theme, key))
+          root.setProperty(key, theme[key]);
+      }
+    })();
+  </script>
   <style>
     :root {
       --bg: #090A0C; --surface: #14171A; --line: #1E293B; --text: #94A3B8;
