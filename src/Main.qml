@@ -14,6 +14,8 @@ ApplicationWindow {
         return t.length > 0 && t !== "nodaysidle" ? t + " | nodaysidle" : "nodaysidle";
     }
     color: theme.background
+    // The window close button must save the tabs too, not only Ctrl+Q.
+    onClosing: persistSession()
 
     // Tabs Model
     ListModel {
@@ -40,7 +42,7 @@ ApplicationWindow {
     readonly property var pageScripts: chromeAppScripts.concat(loginScripts)
     // Reactive handle on the visible tab's view; toolbar bindings depend on it.
     property var activeView: null
-    onCurrentTabIndexChanged: refreshActiveView()
+    onCurrentTabIndexChanged: { refreshActiveView(); sessionSaveTimer.restart(); }
     property bool bookmarksBarVisible: true
     property bool scamVisible: false
     property bool scamBusy: false
@@ -73,12 +75,42 @@ ApplicationWindow {
     property string findStatus: ""
     property var closedTabs: []
     property var pendingPermission: null
+    // While the saved tabs are being rebuilt, do not write the half-built list back.
+    property bool restoringSession: true
+    property bool quitPromptVisible: false
 
     Component.onCompleted: {
-        if (backend.initialUrls.length === 0)
+        if (backend.initialUrls.length > 0) {
+            for (var i = 0; i < backend.initialUrls.length; ++i)
+                newTab(backend.initialUrls[i]);
+        } else if (backend.sessionTabs.length > 0) {
+            var saved = backend.sessionTabs;
+            for (var j = 0; j < saved.length; ++j)
+                newTab(saved[j]);
+            currentTabIndex = Math.max(0, Math.min(saved.length - 1, backend.sessionIndex));
+        } else {
             newTab(backend.homeUrl);
-        for (var i = 0; i < backend.initialUrls.length; ++i)
-            newTab(backend.initialUrls[i]);
+        }
+        restoringSession = false;
+    }
+
+    function persistSession() {
+        if (restoringSession)
+            return;
+        var urls = [];
+        for (var i = 0; i < tabsModel.count; ++i)
+            urls.push(tabsModel.get(i).url);
+        backend.saveSession(urls, currentTabIndex);
+    }
+
+    function requestQuit() {
+        if (tabsModel.count > 3) {
+            quitPromptVisible = true;
+            quitCancel.forceActiveFocus();
+            return;
+        }
+        persistSession();
+        Qt.quit();
     }
 
     Connections {
@@ -118,6 +150,7 @@ ApplicationWindow {
         } else {
             Qt.callLater(refreshActiveView);
         }
+        sessionSaveTimer.restart();
     }
 
     function currentView() {
@@ -395,7 +428,7 @@ ApplicationWindow {
     Shortcut { sequence: "Alt+Right"; onActivated: { var v = currentView(); if (v && v.canGoForward) v.goForward(); } }
     Shortcut { sequence: "Ctrl+Tab"; onActivated: cycleTab(1) }
     Shortcut { sequence: "Ctrl+Shift+Tab"; onActivated: cycleTab(-1) }
-    Shortcut { sequence: "Ctrl+Q"; onActivated: Qt.quit() }
+    Shortcut { sequence: "Ctrl+Q"; onActivated: requestQuit() }
     Shortcut { sequence: "Escape"; enabled: pageFullScreen; onActivated: { var v = currentView(); if (v) v.fullScreenCancelled(); } }
     Shortcut { sequence: "Escape"; enabled: findVisible && !pageFullScreen; onActivated: closeFind() }
     Shortcut { sequence: "Escape"; enabled: passwordsVisible && !pageFullScreen && !findVisible; onActivated: passwordsVisible = false }
@@ -1043,6 +1076,7 @@ ApplicationWindow {
                                     tabsModel.setProperty(index, "url", url.toString());
                                 if (index === currentTabIndex)
                                     syncUrlField();
+                                sessionSaveTimer.restart();
                             }
 
                             onJavaScriptConsoleMessage: function(level, message, line, source) { loginMessage(webView, message); }
@@ -1449,6 +1483,13 @@ ApplicationWindow {
         }
     }
 
+    // Tabs are written to session.json shortly after they change, not only on quit.
+    Timer {
+        id: sessionSaveTimer
+        interval: 500
+        onTriggered: persistSession()
+    }
+
     // A TypeSafe answer that never arrives must not leave the panel stuck on "Checking…".
     Timer {
         id: scamWatchdog
@@ -1457,6 +1498,73 @@ ApplicationWindow {
             if (scamBusy) {
                 scamBusy = false;
                 scamOutput.text += "\nError: TypeSafe did not answer within 30 s.\n";
+            }
+        }
+    }
+
+    // Ctrl+Q is easy to hit next to Ctrl+W, so many tabs ask first. Cancel keeps the default.
+    FocusScope {
+        id: quitOverlay
+        anchors.fill: parent
+        visible: quitPromptVisible
+        focus: quitPromptVisible
+        Keys.onEscapePressed: quitPromptVisible = false
+
+        Rectangle {
+            anchors.fill: parent
+            color: Qt.rgba(0, 0, 0, 0.35)
+            MouseArea { anchors.fill: parent }
+        }
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: 340
+            height: 138
+            radius: appWindow.cornerRadius
+            color: theme.surface
+            border.color: theme.line
+            Accessible.role: Accessible.Dialog
+            Accessible.name: "Close " + tabsModel.count + " tabs?"
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 10
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "Close all " + tabsModel.count + " tabs?"
+                    color: theme.textStrong
+                    font.pixelSize: 14
+                    font.bold: true
+                    wrapMode: Text.WordWrap
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    text: "They reopen next time you start."
+                    color: theme.muted
+                    font.pixelSize: 12
+                    wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Item { Layout.fillWidth: true }
+                    IconButton {
+                        id: quitCancel
+                        label: "Cancel"
+                        accessibleName: "Keep the tabs open"
+                        cornerRadius: appWindow.cornerRadius
+                        onClicked: quitPromptVisible = false
+                    }
+                    IconButton {
+                        label: "Quit"
+                        accessibleName: "Close the window"
+                        cornerRadius: appWindow.cornerRadius
+                        onClicked: { persistSession(); Qt.quit(); }
+                    }
+                }
             }
         }
     }

@@ -15,6 +15,8 @@ class Backend : public QObject {
     Q_PROPERTY(bool hasJevKey READ hasJevKey CONSTANT)
     Q_PROPERTY(QString homeUrl READ homeUrl CONSTANT)
     Q_PROPERTY(QStringList initialUrls READ initialUrls CONSTANT)
+    Q_PROPERTY(QVariantList sessionTabs READ sessionTabs CONSTANT)
+    Q_PROPERTY(int sessionIndex READ sessionIndex CONSTANT)
 
 public:
     explicit Backend(QObject *parent = nullptr);
@@ -25,6 +27,11 @@ public:
     QString homeUrl() const;
     QStringList initialUrls() const { return m_initialUrls; }
     void setInitialUrls(const QStringList &urls) { m_initialUrls = urls; }
+    QVariantList sessionTabs() const { return m_sessionTabs; }
+    int sessionIndex() const { return m_sessionIndex; }
+
+    // The open tabs from the last run, so a quit does not throw them away.
+    Q_INVOKABLE void saveSession(const QVariantList &urls, int current);
 
     Q_INVOKABLE QString normalizeUrl(const QString &input);
     Q_INVOKABLE bool isBookmarked(const QString &url);
@@ -59,11 +66,14 @@ private:
     void loadKeys();
     void loadBookmarks();
     void loadHistory();
+    void loadSession();
     void saveBookmarks();
     QString findKeyInFish(const QString &target);
 
     QVariantList m_bookmarks;
     QVariantList m_history;
+    QVariantList m_sessionTabs;
+    int m_sessionIndex = 0;
     QTimer m_historySave;
     QStringList m_initialUrls;
     QString m_jevKey;

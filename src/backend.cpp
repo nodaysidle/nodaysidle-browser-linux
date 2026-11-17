@@ -22,6 +22,7 @@ Backend::Backend(QObject *parent) : QObject(parent) {
     loadKeys();
     loadBookmarks();
     loadHistory();
+    loadSession();
     m_historySave.setSingleShot(true);
     m_historySave.setInterval(2000);
     connect(&m_historySave, &QTimer::timeout, this, &Backend::flushHistory);
@@ -29,6 +30,36 @@ Backend::Backend(QObject *parent) : QObject(parent) {
 
 static QString historyPath() {
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/history.json";
+}
+
+static QString sessionPath() {
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/session.json";
+}
+
+void Backend::loadSession() {
+    QFile file(sessionPath());
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+    const QJsonObject root = QJsonDocument::fromJson(file.readAll()).object();
+    for (const auto &value : root.value("urls").toArray()) {
+        const QString url = value.toString();
+        if (!url.isEmpty())
+            m_sessionTabs.append(url);
+    }
+    m_sessionIndex = root.value("index").toInt(0);
+}
+
+void Backend::saveSession(const QVariantList &urls, int current) {
+    QDir().mkpath(QFileInfo(sessionPath()).absolutePath());
+    QSaveFile file(sessionPath());
+    if (!file.open(QIODevice::WriteOnly))
+        return;
+    QJsonObject root;
+    root["urls"] = QJsonArray::fromVariantList(urls);
+    root["index"] = current;
+    file.write(QJsonDocument(root).toJson(QJsonDocument::Compact));
+    if (file.commit())
+        QFile::setPermissions(sessionPath(), QFile::ReadOwner | QFile::WriteOwner);
 }
 
 void Backend::loadHistory() {
