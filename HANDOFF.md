@@ -7,7 +7,7 @@ Scope: read-only code + UI/UX audit of `master` @ `2d14e25` (in sync with `origi
 ## Implementation pass (2026-11-17, later the same day)
 The audit below was acted on: see **"Work done — 2026-11-17"** at the end of this file for
 what landed, the commit for each finding, the proofs, and what is still open. Branch
-`audit-fixes-2026-11-17`, 20 commits on top of `2d14e25`, not pushed. The findings table
+`audit-fixes-2026-11-17`, 21 commits on top of `2d14e25`, not pushed. The findings table
 below is the original read-only audit and still describes the pre-fix state.
 
 ## Summary
@@ -190,7 +190,10 @@ Manual runs: `HOME=$(mktemp -d) XDG_DATA_HOME=$HOME/.local/share "$B/nodaysidle-
 
 # Work done — 2026-11-17
 
-Branch `audit-fixes-2026-11-17`, based on `master` @ `2d14e25`, **20 commits, not pushed**.
+**Status: closed out on 2026-11-17.** Everything below is committed, built, package-installed
+and verified on the running app. The only open item is the clazy/`-Wconversion` half of F34.
+
+Branch `audit-fixes-2026-11-17`, based on `master` @ `2d14e25`, **21 commits, not pushed**.
 Owner instruction that overrode the audit's own recommendations: **remove the Anthropic
 integration completely** (no Anthropic usage on this machine); TypeSafe is the only AI/key
 integration left, read from `TYPESAFE_API_KEY`.
@@ -240,16 +243,27 @@ Proof: `rg -n -i 'anthropic|haiku|claude|x-api-key' src/` -> no match (exit 1).
 Not started: none of the audit's findings. The only open item is the clazy/conversion half
 of F34.
 
-## Install state
-`scripts/install-desktop.sh` (per-user, no sudo) built into `/tmp/nds-release` and installed:
-`~/.local/bin/nodaysidle-browser` (sha256 matches the build), the desktop entry at
-`~/.local/share/applications/com.nodaysidle.Browser.desktop`, the icon and the fish
-completion. `desktop-file-validate` clean; the menu id resolves and
-`gtk-launch com.nodaysidle.Browser` started `/home/arch/.local/bin/nodaysidle-browser`.
-The **system** package is still `nodaysidle-browser 0.3.0-1` from 2026-11-05; refreshing it
-needs `sudo`/`bin/install` (`makepkg -fsi`), which needs the owner's password. The per-user
-entry shadows the package one (same desktop id, user dir wins) and `~/.local/bin` is first
-in PATH, so the menu launches the new build.
+## Install state (final)
+The owner ran `bin/install`; the package was rebuilt from this branch and reinstalled:
+`nodaysidle-browser 0.3.0-1`, **Build/Install Date 2026-11-17 02:36**, owning
+`/usr/bin/nodaysidle-browser`, `/usr/share/applications/com.nodaysidle.Browser.desktop`,
+`/usr/share/icons/hicolor/scalable/apps/nodaysidle-browser.svg` and the fish completion
+under `/usr/share/fish/vendor_completions.d/`. The packaged binary was smoke-tested on its
+own: it loads a page, Ctrl+T opens a tab, Ctrl+Q quits, and `session.json` is written.
+
+The earlier per-user install (`~/.local/bin` + `~/.local/share/applications`) was
+**retired afterwards**, because it shadowed `/usr/bin` in `PATH` and the same desktop id, so
+a future `pacman -Syu` would never have been picked up. It was moved (not deleted) to
+`~/.hermes/cache/scratch/nds-local-install-backup-20261117/`; restore it by copying
+`{bin,applications,icons,fish}/*` back into `~/`. After the move:
+`command -v nodaysidle-browser` -> `/usr/bin/nodaysidle-browser`, and
+`gtk-launch com.nodaysidle.Browser` started `/usr/bin/nodaysidle-browser` with the real
+profile, rendering normally.
+
+Checked before the removal so nothing could break: the package owns every file the user copy
+provided; no `~/.config` file (hypr, omarchy, fish, autostart, systemd) referenced the
+`~/.local/bin` path; and the default browser is `helium`, not nodaysidle. `bin/install`
+leaves no `pkgbuild/src`, `pkg` or `.pkg.tar.zst` behind.
 
 ## Pitfalls found the hard way (for the next agent)
 - `WebEngineView` in Qt 6.12 has **no `audible`** property. Only `recentlyAudible`. Check
