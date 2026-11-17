@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QUrl>
 #include <algorithm>
@@ -18,6 +19,19 @@ namespace {
 const QByteArray magic = "NDV1";
 constexpr int ivSize = 12;
 constexpr int tagSize = 16;
+
+// A password filled into a plain-http page travels in clear text to anyone on the path,
+// so only loopback is allowed there. Everything else needs https.
+bool passwordFillAllowed(const QString &origin) {
+    const int separator = origin.indexOf("://");
+    const QString scheme = separator > 0 ? origin.left(separator) : QString();
+    if (scheme == "https")
+        return true;
+    if (scheme != "http")
+        return false;
+    static const QRegularExpression loopback(R"(^http://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$)");
+    return loopback.match(origin).hasMatch();
+}
 
 QByteArray randomBytes(int count) {
     QByteArray bytes(count, 0);
@@ -216,6 +230,9 @@ int Vault::nextId() const {
 QString Vault::fillScript(const QString &pageUrl, const QString &typedUsername, bool fillUsernameOnly) {
     const QString origin = originOf(pageUrl);
     if (!m_available || origin.isEmpty())
+        return QString();
+    // Nothing secret goes into a page QtWebEngine would not call secure.
+    if (!fillUsernameOnly && !passwordFillAllowed(origin))
         return QString();
     QList<int> matches;
     for (int i = 0; i < m_logins.size(); ++i)

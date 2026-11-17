@@ -70,14 +70,38 @@
     let lastHasPassword = null;
     let scanTimer = 0;
 
+    // A saved password is only offered after the person clicks or types into the field
+    // themselves. Page scripts can dispatch events, but they cannot make isTrusted true,
+    // so a third-party script or an XSS payload cannot pull the password into the DOM.
+    function requestFill(field) {
+        const isPassword = field.type === 'password';
+        if (field.value || asked.has(field))
+            return;
+        if (isPassword && field.autocomplete === 'new-password')
+            return;
+        asked.add(field);
+        const userField = isPassword ? usernameField(field) : field;
+        send({ t: 'need', pw: isPassword, user: (userField && userField.value) || rememberedUser() });
+    }
+
+    function onGesture(e) {
+        if (!e.isTrusted)
+            return;
+        const field = e.target;
+        if (!(field instanceof HTMLInputElement) || !visible(field))
+            return;
+        const type = (field.getAttribute('type') || '').toLowerCase();
+        if (type === 'password' || (textTypes.has(type) && looksLikeUser(field)))
+            requestFill(field);
+    }
+    document.addEventListener('click', onGesture, true);
+    document.addEventListener('keydown', onGesture, true);
+
     function scan() {
         const all = passwordFields();
-        const empty = all.find((f) => f.autocomplete !== 'new-password' && !f.value);
-        if (empty && !asked.has(empty)) {
-            asked.add(empty);
-            const userField = usernameField(empty);
-            send({ t: 'need', pw: true, user: (userField && userField.value) || rememberedUser() });
-        } else if (all.length === 0) {
+        // On load only the account name may be prefilled: identifier-first sign-ins need it,
+        // and a username is not a secret. The password always waits for a gesture.
+        if (all.length === 0) {
             const userField = usernameField(null);
             if (userField && !userField.value && !asked.has(userField)) {
                 asked.add(userField);
