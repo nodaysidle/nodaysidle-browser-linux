@@ -9,6 +9,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+BUILD_DIR="${BUILD_DIR:-${ROOT}/build}"
 BIN_DIR="${HOME}/.local/bin"
 DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}"
 APP_DIR="${DATA_DIR}/applications"
@@ -18,7 +19,7 @@ FISH_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/fish/completions"
 "${ROOT}/bin/build"
 
 install -d "${BIN_DIR}" "${APP_DIR}" "${ICON_DIR}/scalable/apps" "${FISH_DIR}"
-install -m 0755 "${ROOT}/build/nodaysidle-browser" "${BIN_DIR}/nodaysidle-browser"
+install -m 0755 "${BUILD_DIR}/nodaysidle-browser" "${BIN_DIR}/nodaysidle-browser"
 sed "s|^Exec=nodaysidle-browser|Exec=${BIN_DIR}/nodaysidle-browser|" \
   "${ROOT}/desktop/com.nodaysidle.Browser.desktop" > "${APP_DIR}/com.nodaysidle.Browser.desktop"
 install -m 0644 "${ROOT}/assets/icon.svg" "${ICON_DIR}/scalable/apps/nodaysidle-browser.svg"
