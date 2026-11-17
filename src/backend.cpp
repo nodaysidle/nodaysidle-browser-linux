@@ -233,35 +233,62 @@ void Backend::loadKeys() {
         m_jevKey = findKeyInFish("TYPESAFE_API_KEY");
 }
 
+namespace {
+
+// fish escapes bytes as \xNN inside fish_variables (and shells accept a quoted value).
+QString decodeFishValue(const QString &value) {
+    QString out;
+    out.reserve(value.size());
+    for (int i = 0; i < value.size(); ++i) {
+        const QChar character = value.at(i);
+        if (character == '\\' && i + 3 < value.size() && value.at(i + 1) == 'x') {
+            bool ok = false;
+            const ushort code = value.mid(i + 2, 2).toUShort(&ok, 16);
+            if (ok) {
+                out.append(QChar(code));
+                i += 3;
+                continue;
+            }
+        }
+        out.append(character);
+    }
+    return out;
+}
+
+}  // namespace
+
 QString Backend::findKeyInFish(const QString &target) {
     const QString home = QDir::homePath();
-    // 1. secrets.fish
+    // 1. secrets.fish: `set -gx NAME value`, also set -x and set -Ux.
     QFile secrets(home + "/.config/fish/secrets.fish");
     if (secrets.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        static const QRegularExpression assignment(R"(^\s*set\s+(?:-[A-Za-z]+\s+)*(\w+)\s+(.+?)\s*$)");
         while (!secrets.atEnd()) {
-            QString line = QString::fromUtf8(secrets.readLine()).trimmed();
-            QString prefix = QString("set -gx %1 ").arg(target);
-            if (line.startsWith(prefix)) {
-                QString val = line.mid(prefix.length()).trimmed();
-                if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith('\'') && val.endsWith('\'')))
-                    val = val.mid(1, val.length() - 2);
-                if (!val.isEmpty())
-                    return val;
-            }
+            const QString line = QString::fromUtf8(secrets.readLine()).trimmed();
+            const auto match = assignment.match(line);
+            if (!match.hasMatch() || match.captured(1) != target)
+                continue;
+            QString value = match.captured(2);
+            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith('\'') && value.endsWith('\'')))
+                value = value.mid(1, value.length() - 2);
+            value = decodeFishValue(value);
+            if (!value.isEmpty())
+                return value;
         }
     }
 
-    // 2. fish_variables
+    // 2. fish_variables: `SETUVAR --export NAME:value`, with \xNN escapes.
     QFile vars(home + "/.config/fish/fish_variables");
     if (vars.open(QIODevice::ReadOnly | QIODevice::Text)) {
         while (!vars.atEnd()) {
-            QString line = QString::fromUtf8(vars.readLine());
-            if (line.contains(" " + target + ":")) {
-                int idx = line.indexOf(" " + target + ":") + 1;
-                QString val = line.mid(idx + target.length() + 1).trimmed();
-                if (!val.isEmpty())
-                    return val;
-            }
+            const QString line = QString::fromUtf8(vars.readLine());
+            const QString marker = target + ":";
+            const int at = line.indexOf(marker);
+            if (at < 0 || (at > 0 && !line.at(at - 1).isSpace()))
+                continue;
+            const QString value = decodeFishValue(line.mid(at + marker.length()).trimmed());
+            if (!value.isEmpty())
+                return value;
         }
     }
 
