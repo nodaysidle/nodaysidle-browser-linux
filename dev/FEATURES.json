@@ -6,28 +6,35 @@
       "title": "Persistent Google Login and Auth Session Support",
       "status": "done",
       "contract": "artifacts/20261105_001702_5aee40a/CONTRACT_F01.md",
-      "code_revision": "5aee40aa7a73ed7ca79739a435ee2ce6948d64f0",
+      "code_revision": "b69a220f2ebfdc5ab01e065b323b1dd7de1bd1ee",
       "evidence": [
-        "artifacts/20261105_001702_5aee40a/eval_evidence.txt"
-      ]
+        "artifacts/20261105_001702_5aee40a/eval_evidence.txt",
+        "artifacts/2026-11-17-audit-fixes/eval_evidence.txt"
+      ],
+      "note": "Re-evaluated on the Qt app 2026-11-17: persistent profile, forced persistent cookies, Chrome UA and the chrome.app shim. A cookie set by a test page was found on disk with is_persistent=1 after a clean quit. The Google sign-in flow itself is not verified."
     },
     {
       "id": "F02",
       "title": "Deterministic UI Design and Navigation Polish",
       "status": "done",
       "contract": "CONTRACT.md",
-      "code_revision": "8514c0f0d7e3a973844a3541aadce3186d172912",
+      "code_revision": "b69a220f2ebfdc5ab01e065b323b1dd7de1bd1ee",
       "evidence": [
-        "artifacts/20261105_012650_8514c0f/eval_evidence.txt"
-      ]
+        "artifacts/20261105_012650_8514c0f/eval_evidence.txt",
+        "artifacts/2026-11-17-audit-fixes/eval_evidence.txt"
+      ],
+      "note": "Re-evaluated on the Qt app 2026-11-17: theme colours read through Omarchy's alias keys and derived WCAG AA ink, 0 text-pair failures across 24 themes, keyboard reach and focus return verified, qmllint clean."
     },
     {
       "id": "F03",
       "title": "Tab Session State Restore on Restart",
-      "status": "todo",
+      "status": "done",
       "contract": null,
-      "code_revision": null,
-      "evidence": []
+      "code_revision": "b69a220f2ebfdc5ab01e065b323b1dd7de1bd1ee",
+      "evidence": [
+        "artifacts/2026-11-17-audit-fixes/eval_evidence.txt"
+      ],
+      "note": "session.json written 500 ms after any tab change and on close (0600); restored on start when no URLs were passed. Ctrl+Q asks first when more than three tabs are open."
     }
   ]
 }
