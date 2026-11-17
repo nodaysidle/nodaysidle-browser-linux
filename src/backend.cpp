@@ -18,6 +18,7 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <algorithm>
+#include <utility>
 
 Backend::Backend(QObject *parent) : QObject(parent) {
     loadKeys();
@@ -302,6 +303,7 @@ void Backend::loadBookmarks() {
         return;
     for (const auto &val : QJsonDocument::fromJson(file.readAll()).array())
         m_bookmarks.append(val.toObject().toVariantMap());
+    reindexBookmarks();
 
     // Earlier versions seeded these four; the bar now holds only what the user adds or imports.
     static const QSet<QString> seeded{"Gemini|https://gemini.google.com", "Google|https://google.com",
@@ -316,6 +318,7 @@ void Backend::loadBookmarks() {
 }
 
 void Backend::saveBookmarks() {
+    reindexBookmarks();
     const QString dataPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir().mkpath(dataPath);
     QSaveFile file(dataPath + "/bookmarks.json");
@@ -331,12 +334,14 @@ void Backend::saveBookmarks() {
 }
 
 bool Backend::isBookmarked(const QString &url) {
-    const QString norm = url.trimmed().toLower();
-    for (const auto &b : m_bookmarks) {
-        if (b.toMap()["url"].toString().trimmed().toLower() == norm)
-            return true;
-    }
-    return false;
+    // Kept in a set: the star's binding asks this on every re-evaluation.
+    return m_bookmarkUrls.contains(url.trimmed().toLower());
+}
+
+void Backend::reindexBookmarks() {
+    m_bookmarkUrls.clear();
+    for (const auto &bookmark : std::as_const(m_bookmarks))
+        m_bookmarkUrls.insert(bookmark.toMap()["url"].toString().trimmed().toLower());
 }
 
 void Backend::toggleBookmark(const QString &title, const QString &url) {

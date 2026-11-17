@@ -1031,7 +1031,7 @@ ApplicationWindow {
 
                 delegate: Rectangle {
                     readonly property bool isFolder: modelData.children !== undefined
-                    height: 22
+                    height: 24
                     width: bmText.implicitWidth + 16
                     anchors.verticalCenter: parent.verticalCenter
                     radius: appWindow.cornerRadius

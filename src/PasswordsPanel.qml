@@ -40,6 +40,19 @@ Rectangle {
         refresh();
     }
 
+    // Enter on a focused row shows or hides its password, like the hover action.
+    function revealCurrent() {
+        if (loginsList.currentIndex < 0 || loginsList.currentIndex >= logins.length)
+            return;
+        const id = logins[loginsList.currentIndex].id;
+        const next = Object.assign({}, revealed);
+        if (next[id] !== undefined)
+            delete next[id];
+        else
+            next[id] = vault.reveal(id);
+        revealed = next;
+    }
+
     Connections {
         target: vault
         function onChanged() { root.refresh(); }
@@ -128,13 +141,19 @@ Rectangle {
         }
 
         ListView {
+            id: loginsList
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
             model: root.logins
             spacing: 2
+            currentIndex: -1
             Accessible.role: Accessible.List
             Accessible.name: "Saved logins"
+            Keys.onUpPressed: if (currentIndex > 0) currentIndex--
+            Keys.onDownPressed: if (currentIndex < root.logins.length - 1) currentIndex++
+            Keys.onReturnPressed: root.revealCurrent()
+            Keys.onEnterPressed: root.revealCurrent()
 
             delegate: Rectangle {
                 id: row
@@ -143,7 +162,7 @@ Rectangle {
                 width: ListView.view.width
                 height: 48
                 radius: Math.min(root.cornerRadius, 6)
-                color: rowHover.hovered ? Qt.alpha(theme.accent, 0.12) : "transparent"
+                color: rowHover.hovered || ListView.isCurrentItem ? Qt.alpha(theme.accent, 0.12) : "transparent"
 
                 HoverHandler { id: rowHover }
 
@@ -177,7 +196,7 @@ Rectangle {
                     anchors.rightMargin: 8
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 10
-                    visible: rowHover.hovered
+                    visible: rowHover.hovered || ListView.isCurrentItem
 
                     Repeater {
                         model: [
@@ -221,7 +240,7 @@ Rectangle {
             }
         }
 
-        Rectangle { Layout.fillWidth: true; height: 1; color: theme.line }
+        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: theme.line }
 
         Text {
             text: "Import from another browser"
@@ -284,7 +303,7 @@ Rectangle {
 
         Rectangle {
             Layout.fillWidth: true
-            height: 30
+            Layout.preferredHeight: 30
             radius: Math.min(root.cornerRadius, 6)
             color: csvHover.containsMouse ? Qt.alpha(theme.accent, 0.18) : "transparent"
             border.color: theme.line

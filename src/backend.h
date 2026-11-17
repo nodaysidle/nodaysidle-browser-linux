@@ -73,6 +73,7 @@ private:
     void loadBookmarks();
     void loadHistory();
     void loadSession();
+    void reindexBookmarks();
     void saveBookmarks();
     QString findKeyInFish(const QString &target);
 
@@ -86,5 +87,7 @@ private:
     QTimer m_historySave;
     QStringList m_initialUrls;
     QString m_jevKey;
+    // Lower-cased bookmark URLs, so isBookmarked() is O(1).
+    QSet<QString> m_bookmarkUrls;
     QNetworkAccessManager m_nam;
 };
