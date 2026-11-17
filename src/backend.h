@@ -43,6 +43,9 @@ public:
     Q_INVOKABLE QVariantList searchHistory(const QString &query, int limit);
     Q_INVOKABLE QVariantList suggest(const QString &query, int limit);
     Q_INVOKABLE void clearHistory();
+    // Puts the last cleared history or deleted bookmark back (F18).
+    Q_INVOKABLE void undoClearHistory();
+    Q_INVOKABLE void undoRemoveBookmark();
     void flushHistory();
     // Used by the importer; both skip what is already stored and return how many were added.
     int addImportedBookmarks(const QString &folder, const QVariantList &items);
@@ -75,6 +78,9 @@ private:
 
     QVariantList m_bookmarks;
     QVariantList m_history;
+    QVariantList m_historyBackup;
+    QVariantMap m_bookmarkBackup;
+    bool m_bookmarkBackupValid = false;
     QVariantList m_sessionTabs;
     int m_sessionIndex = 0;
     QTimer m_historySave;

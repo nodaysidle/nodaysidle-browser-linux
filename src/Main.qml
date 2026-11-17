@@ -109,6 +109,29 @@ ApplicationWindow {
     // While the saved tabs are being rebuilt, do not write the half-built list back.
     property bool restoringSession: true
     property bool quitPromptVisible: false
+    // Set by showUndo(); the toast then carries an Undo button.
+    property var undoAction: null
+
+    function showUndo(message, action) {
+        undoAction = action;
+        toastText.text = message;
+        toast.visible = true;
+        toastTimer.restart();
+    }
+
+    function runUndo() {
+        var action = undoAction;
+        undoAction = null;
+        toast.visible = false;
+        if (action)
+            action();
+    }
+
+    function clearHistoryWithUndo() {
+        backend.clearHistory();
+        refreshHistory();
+        showUndo("History cleared", function () { backend.undoClearHistory(); refreshHistory(); });
+    }
 
     Component.onCompleted: {
         if (backend.initialUrls.length > 0) {
@@ -1061,7 +1084,10 @@ ApplicationWindow {
                             }
                             ThemedMenuItem {
                                 text: "Delete Bookmark"
-                                onTriggered: backend.removeBookmark(modelData.url)
+                                onTriggered: {
+                                    backend.removeBookmark(modelData.url);
+                                    appWindow.showUndo("Bookmark deleted", function () { backend.undoRemoveBookmark(); });
+                                }
                             }
                         }
                     }
@@ -1616,7 +1642,7 @@ ApplicationWindow {
                                 text: "Clear all"
                                 Accessible.role: Accessible.Button
                                 Accessible.name: "Clear all history"
-                                Accessible.onPressAction: { backend.clearHistory(); refreshHistory(); }
+                                Accessible.onPressAction: appWindow.clearHistoryWithUndo()
                                 activeFocusOnTab: true
                                 font.pixelSize: 12
                                 font.bold: true
@@ -1625,15 +1651,14 @@ ApplicationWindow {
                                 visible: historyItems.length > 0
                                 Keys.onPressed: function(event) {
                                     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
-                                        backend.clearHistory();
-                                        refreshHistory();
+                                        appWindow.clearHistoryWithUndo();
                                         event.accepted = true;
                                     }
                                 }
                                 MouseArea {
                                     anchors.fill: parent
                                     anchors.margins: -6
-                                    onClicked: { backend.clearHistory(); refreshHistory(); }
+                                    onClicked: appWindow.clearHistoryWithUndo()
                                 }
                             }
 
@@ -1957,30 +1982,46 @@ ApplicationWindow {
         }
     }
 
-    // Transient message such as a finished download
+    // Transient message such as a finished download, with Undo when the action can be undone.
     Rectangle {
         id: toast
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 24
-        width: toastText.implicitWidth + 28
+        width: toastRow.implicitWidth + 24
         height: 34
         radius: appWindow.cornerRadius
         color: theme.surface
         border.color: theme.line
         visible: false
 
-        Text {
-            id: toastText
+        RowLayout {
+            id: toastRow
             anchors.centerIn: parent
-            color: theme.textStrong
-            font.pixelSize: 12
+            spacing: 12
+
+            Text {
+                id: toastText
+                color: theme.textStrong
+                font.pixelSize: 12
+            }
+
+            IconButton {
+                visible: appWindow.undoAction !== null
+                label: "Undo"
+                accessibleName: "Undo the last action"
+                cornerRadius: appWindow.cornerRadius
+                onClicked: appWindow.runUndo()
+            }
         }
 
         Timer {
             id: toastTimer
-            interval: 3500
-            onTriggered: toast.visible = false
+            interval: 6000
+            onTriggered: {
+                toast.visible = false;
+                appWindow.undoAction = null;
+            }
         }
     }
 
@@ -1995,6 +2036,7 @@ ApplicationWindow {
         }
 
         function onNotice(text) {
+            appWindow.undoAction = null;
             toastText.text = text;
             toast.visible = true;
             toastTimer.restart();

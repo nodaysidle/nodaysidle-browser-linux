@@ -12,6 +12,8 @@ Rectangle {
     property var revealed: ({})
     property string importResult: ""
     property bool importFailed: false
+    // Deleting a login needs a second click on the same row (F18).
+    property int confirmDelete: -1
 
     signal closeRequested()
 
@@ -186,7 +188,7 @@ Rectangle {
 
                         Text {
                             required property var modelData
-                            text: modelData.label
+                            text: modelData.act === "delete" && root.confirmDelete === row.modelData.id ? "Sure?" : modelData.label
                             Accessible.role: Accessible.Button
                             Accessible.name: modelData.label + " the password for " + row.modelData.origin.replace(/^https?:\/\//, "")
                             font.pixelSize: 11
@@ -205,7 +207,10 @@ Rectangle {
                                     } else if (modelData.act === "copy") {
                                         backend.copyText(vault.reveal(id));
                                         backend.notice("Password copied");
+                                    } else if (root.confirmDelete !== id) {
+                                        root.confirmDelete = id;
                                     } else {
+                                        root.confirmDelete = -1;
                                         vault.remove(id);
                                     }
                                 }

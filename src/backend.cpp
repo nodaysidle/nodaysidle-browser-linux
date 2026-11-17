@@ -206,7 +206,18 @@ QVariantList Backend::suggest(const QString &query, int limit) {
 }
 
 void Backend::clearHistory() {
+    // Keep the list in memory so the toast's Undo can put it back.
+    m_historyBackup = m_history;
     m_history.clear();
+    flushHistory();
+    emit historyChanged();
+}
+
+void Backend::undoClearHistory() {
+    if (m_historyBackup.isEmpty())
+        return;
+    m_history = m_historyBackup;
+    m_historyBackup.clear();
     flushHistory();
     emit historyChanged();
 }
@@ -327,12 +338,24 @@ void Backend::removeBookmark(const QString &url) {
     const QString norm = url.trimmed().toLower();
     for (int i = 0; i < m_bookmarks.size(); ++i) {
         if (m_bookmarks[i].toMap()["url"].toString().trimmed().toLower() == norm) {
+            m_bookmarkBackup = m_bookmarks[i].toMap();
+            m_bookmarkBackupValid = true;
             m_bookmarks.removeAt(i);
             saveBookmarks();
             emit bookmarksChanged();
             return;
         }
     }
+}
+
+void Backend::undoRemoveBookmark() {
+    if (!m_bookmarkBackupValid)
+        return;
+    m_bookmarks.append(m_bookmarkBackup);
+    m_bookmarkBackupValid = false;
+    m_bookmarkBackup.clear();
+    saveBookmarks();
+    emit bookmarksChanged();
 }
 
 QString Backend::readResource(const QString &path) const {
