@@ -66,5 +66,5 @@ private:
     QString m_hyprctl;
     int m_radius = 0;
     QProcess m_roundingProcess;
-    QTimer m_roundingPoll, m_roundingTimeout;
+    QTimer m_roundingTimeout;
 };

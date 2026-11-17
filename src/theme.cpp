@@ -36,10 +36,8 @@ Theme::Theme(const QString &directory, QObject *parent, const QString &hyprctl)
             emit changed();
         }
     });
-    m_roundingPoll.setInterval(1000);
-    connect(&m_roundingPoll, &QTimer::timeout, this, &Theme::refreshRounding);
-    if (!m_hyprctl.isEmpty())
-        m_roundingPoll.start();
+    // The corner radius is read once here and again in reload(), which the theme watcher
+    // fires on a theme switch. Polling hyprctl every second cost ~86k processes a day.
     reload();
 }
 

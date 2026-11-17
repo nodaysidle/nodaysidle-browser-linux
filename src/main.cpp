@@ -22,10 +22,11 @@
 #include "vault.h"
 
 int main(int argc, char *argv[]) {
-    // 1. Force native Wayland platform (Zero XWayland / X11 overhead)
-    qputenv("QT_QPA_PLATFORM", "wayland");
+    // 1. Prefer native Wayland (zero XWayland overhead), but never override a platform the
+    //    caller chose: offscreen and xcb are how this is driven in tests.
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
+        qputenv("QT_QPA_PLATFORM", "wayland");
     qputenv("QT_WAYLAND_DISABLE_WINDOWDECORATION", "1");
-    qputenv("NO_AT_BRIDGE", "1");
 
     // Let QtWebEngine use native Wayland hardware acceleration; the renderer sandbox stays on.
     qputenv("QTWEBENGINE_CHROMIUM_FLAGS",
