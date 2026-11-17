@@ -75,6 +75,8 @@ ApplicationWindow {
     property string findStatus: ""
     property var closedTabs: []
     property var pendingPermission: null
+    // Set when QtWebEngine rejected a certificate; the bar below says which host and why.
+    property var certificateProblem: null
     // Downloads wait here until the person answers; see requestDownload().
     property var downloads: []
     // While the saved tabs are being rebuilt, do not write the half-built list back.
@@ -392,6 +394,8 @@ ApplicationWindow {
             visible: true
             color: theme.background
             title: popupView.title && popupView.title.length > 0 ? popupView.title + " | nodaysidle" : "nodaysidle"
+            // A popup closed by the window manager must be destroyed, not just hidden.
+            onClosing: destroy()
 
             property alias webView: popupView
 
@@ -418,6 +422,7 @@ ApplicationWindow {
                 userScripts.collection: pageScripts
                 // Popup blocker: windows open only from a click or key press.
                 settings.javascriptCanOpenWindows: false
+                settings.localContentCanAccessFileUrls: false
                 settings.webGLEnabled: true
                 settings.accelerated2dCanvasEnabled: true
 
@@ -1022,6 +1027,42 @@ ApplicationWindow {
             }
         }
 
+        // Certificate failure: the connection stays rejected, and this says which host and why.
+        Rectangle {
+            Layout.fillWidth: true
+            height: 34
+            visible: certificateProblem !== null && !pageFullScreen
+            color: theme.surface
+            Accessible.role: Accessible.AlertMessage
+            Accessible.name: certificateProblem ? "Certificate problem on " + certificateProblem.host : ""
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: 12
+                anchors.rightMargin: 8
+                spacing: 8
+
+                Text {
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    font.pixelSize: 12
+                    color: theme.textStrong
+                    text: certificateProblem
+                          ? "Not secure: " + certificateProblem.host + " has a certificate problem ("
+                            + (certificateProblem.description.length > 0 ? certificateProblem.description : "rejected") + ")."
+                          : ""
+                }
+
+                IconButton {
+                    icon: "close"
+                    buttonSize: 24
+                    accessibleName: "Dismiss the certificate warning"
+                    cornerRadius: appWindow.cornerRadius
+                    onClicked: certificateProblem = null
+                }
+            }
+        }
+
         // Permission prompt
         Rectangle {
             Layout.fillWidth: true
@@ -1185,6 +1226,7 @@ ApplicationWindow {
 
                             // Popup blocker: windows open only from a click or key press.
                             settings.javascriptCanOpenWindows: false
+                            settings.localContentCanAccessFileUrls: false
                             settings.webGLEnabled: true
                             settings.accelerated2dCanvasEnabled: true
                             settings.dnsPrefetchEnabled: true
@@ -1212,8 +1254,11 @@ ApplicationWindow {
                             }
 
                             onLoadingChanged: function(loadRequest) {
-                                if (loadRequest.status === WebEngineView.LoadStartedStatus && pendingLogin && pendingLogin.view === webView)
-                                    pendingLogin = Object.assign({}, pendingLogin, { navigated: true });
+                                if (loadRequest.status === WebEngineView.LoadStartedStatus) {
+                                    certificateProblem = null;
+                                    if (pendingLogin && pendingLogin.view === webView)
+                                        pendingLogin = Object.assign({}, pendingLogin, { navigated: true });
+                                }
                                 if (loadRequest.status === WebEngineView.LoadSucceededStatus) {
                                     applyHomeTheme(webView);
                                     backend.recordVisit(url.toString(), title);
@@ -1234,6 +1279,12 @@ ApplicationWindow {
                                     findStatus = result.numberOfMatches > 0
                                         ? result.activeMatch + " of " + result.numberOfMatches
                                         : "No matches";
+                            }
+
+                            // Keep rejecting a bad certificate, but say so instead of failing silently.
+                            onCertificateError: function(error) {
+                                error.rejectCertificate();
+                                certificateProblem = { host: error.url.toString(), description: error.description };
                             }
 
                             onPermissionRequested: function(permission) {

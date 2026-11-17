@@ -287,7 +287,8 @@ void Backend::saveBookmarks() {
             arr.append(QJsonObject::fromVariantMap(v.toMap()));
         }
         file.write(QJsonDocument(arr).toJson(QJsonDocument::Indented));
-        file.commit();
+        if (file.commit())
+            QFile::setPermissions(dataPath + "/bookmarks.json", QFile::ReadOwner | QFile::WriteOwner);
     }
 }
 
@@ -335,6 +336,9 @@ void Backend::removeBookmark(const QString &url) {
 }
 
 QString Backend::readResource(const QString &path) const {
+    // Only the app's own resources: nothing may turn this into a file reader.
+    if (!path.startsWith(":/"))
+        return QString();
     QFile file(path);
     return file.open(QIODevice::ReadOnly) ? QString::fromUtf8(file.readAll()) : QString();
 }

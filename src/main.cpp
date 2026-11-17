@@ -1,6 +1,7 @@
 #include <QGuiApplication>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <memory>
 #include <unistd.h>
 #include <QIcon>
 #include <QQmlApplicationEngine>
@@ -66,16 +67,36 @@ int main(int argc, char *argv[]) {
     QLocalServer::removeServer(serverName);
     QLocalServer server;
     server.setSocketOptions(QLocalServer::UserAccessOption);
-    server.listen(serverName);
+    if (!server.listen(serverName))
+        qWarning("nodaysidle: could not listen on %s (%s); links from other apps will start a new window",
+                 qPrintable(serverName), qPrintable(server.errorString()));
     QObject::connect(&server, &QLocalServer::newConnection, &backend, [&server, &backend] {
         auto *socket = server.nextPendingConnection();
-        QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
-        QObject::connect(socket, &QLocalSocket::readyRead, &backend, [socket, &backend] {
-            const auto lines = QString::fromUtf8(socket->readAll()).split('\n', Qt::SkipEmptyParts);
-            if (lines.isEmpty())
+        // A URL can arrive split across reads, so only complete lines are handed over.
+        auto buffer = std::make_shared<QByteArray>();
+        auto openedSomething = std::make_shared<bool>(false);
+        QObject::connect(socket, &QLocalSocket::disconnected, &backend,
+                         [socket, buffer, openedSomething, &backend] {
+            const QByteArray rest = buffer->trimmed();
+            if (!rest.isEmpty()) {
+                emit backend.openRequested(QString::fromUtf8(rest));
+                *openedSomething = true;
+            } else if (!*openedSomething) {
                 emit backend.openRequested(backend.homeUrl());
-            for (const auto &line : lines)
-                emit backend.openRequested(line);
+            }
+            socket->deleteLater();
+        });
+        QObject::connect(socket, &QLocalSocket::readyRead, &backend, [socket, buffer, openedSomething, &backend] {
+            buffer->append(socket->readAll());
+            qsizetype newline;
+            while ((newline = buffer->indexOf('\n')) >= 0) {
+                const QByteArray line = buffer->left(newline).trimmed();
+                buffer->remove(0, newline + 1);
+                if (line.isEmpty())
+                    continue;
+                emit backend.openRequested(QString::fromUtf8(line));
+                *openedSomething = true;
+            }
         });
     });
     backend.setInitialUrls(urls);

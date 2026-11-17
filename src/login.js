@@ -3,7 +3,8 @@
 // browser as console lines that start with the per-run nonce (__ndNonce, set by the host).
 (function () {
     const send = (message) => console.log(__ndNonce + JSON.stringify(message));
-    const USER_KEY = '__nd_user';
+    // Kept in this isolated world only: page scripts cannot read or write it.
+    let rememberedUser = '';
     const textTypes = new Set(['text', 'email', 'tel', '']);
 
     function visible(el) {
@@ -39,14 +40,14 @@
     }
 
     // Multi-step sign-ins ask for the account first and the password on the next screen.
-    function rememberedUser() {
-        try { return sessionStorage.getItem(USER_KEY) || ''; } catch (e) { return ''; }
+    function lastTypedUser() {
+        return rememberedUser;
     }
     document.addEventListener('input', (e) => {
         const field = e.target;
         if (field instanceof HTMLInputElement && textTypes.has((field.getAttribute('type') || '').toLowerCase()) &&
             field.value && looksLikeUser(field)) {
-            try { sessionStorage.setItem(USER_KEY, field.value); } catch (err) { /* storage can be blocked */ }
+            rememberedUser = field.value;
         }
     }, true);
 
@@ -81,7 +82,7 @@
             return;
         asked.add(field);
         const userField = isPassword ? usernameField(field) : field;
-        send({ t: 'need', pw: isPassword, user: (userField && userField.value) || rememberedUser() });
+        send({ t: 'need', pw: isPassword, user: (userField && userField.value) || lastTypedUser() });
     }
 
     function onGesture(e) {
@@ -122,7 +123,7 @@
         if (!pw.value)
             return;
         const userField = usernameField(pw);
-        const user = (userField && userField.value) || rememberedUser();
+        const user = (userField && userField.value) || lastTypedUser();
         const key = user + '\n' + pw.value;
         if (key === lastKey && Date.now() - lastAt < 1500)
             return;
