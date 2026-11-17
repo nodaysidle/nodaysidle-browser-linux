@@ -9,6 +9,7 @@
 #include <QProcess>
 #include <QRegularExpression>
 #include <QSaveFile>
+#include <QTimer>
 #include <QUrl>
 #include <algorithm>
 #include <openssl/evp.h>
@@ -79,44 +80,89 @@ bool unseal(const QByteArray &key, const QByteArray &blob, QByteArray *plain) {
     return ok;
 }
 
-struct ToolResult {
-    bool started = false;
-    bool finished = false;
-    int code = -1;
-    QByteArray out;
-    QString err;
-};
-
-ToolResult runSecretTool(const QStringList &args, const QByteArray &input) {
-    ToolResult result;
-    QProcess process;
-    process.start("secret-tool", args);
-    result.started = process.waitForStarted(2000);
-    if (!result.started)
-        return result;
-    if (!input.isEmpty())
-        process.write(input);
-    process.closeWriteChannel();
-    // A locked keyring shows its own unlock prompt, so give a person time to answer it.
-    result.finished = process.waitForFinished(30000);
-    if (!result.finished) {
-        process.kill();
-        return result;
-    }
-    result.code = process.exitCode();
-    result.out = process.readAllStandardOutput();
-    result.err = QString::fromUtf8(process.readAllStandardError()).trimmed();
-    return result;
-}
-
 }  // namespace
 
 Vault::Vault(const QString &path, const QString &keyKind, QObject *parent)
     : QObject(parent), m_path(path), m_keyKind(keyKind), m_nonce(QString::fromLatin1(randomBytes(16).toHex())) {
-    const bool fileExists = QFileInfo::exists(m_path);
-    if (!openKey(!fileExists))
-        return;
+    // The keyring can sit locked behind its own prompt for up to 30 s, so it is opened
+    // from the event loop: the window is on screen before secret-tool is even started.
+    m_problem = "Unlocking the keyring…";
+    QTimer::singleShot(0, this, &Vault::unlock);
+}
+
+void Vault::unlock() {
+    const QStringList attributes{"service", "nodaysidle-browser", "kind", m_keyKind};
+    auto *lookup = new QProcess(this);
+    connect(lookup, &QProcess::errorOccurred, this, [this, lookup](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart)
+            return;
+        lookup->deleteLater();
+        m_problem = "Saved passwords need the secret-tool command (package libsecret) and a keyring such as gnome-keyring.";
+        emit changed();
+    });
+    connect(lookup, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, lookup, attributes](int code, QProcess::ExitStatus status) {
+        const QByteArray out = lookup->readAllStandardOutput();
+        const QString err = QString::fromUtf8(lookup->readAllStandardError()).trimmed();
+        lookup->deleteLater();
+        if (status != QProcess::NormalExit) {
+            m_problem = "The keyring did not answer, so saved passwords are off. Unlock it and restart.";
+            emit changed();
+            return;
+        }
+        const QByteArray stored = QByteArray::fromHex(out.trimmed());
+        if (code == 0 && stored.size() == 32) {
+            m_key = stored;
+            finishUnlock();
+            return;
+        }
+        if (code != 0 && !err.isEmpty()) {
+            m_problem = "The keyring is not reachable (" + err + "), so saved passwords are off.";
+            emit changed();
+            return;
+        }
+        if (QFileInfo::exists(m_path)) {
+            m_problem = "The vault key is missing from the keyring, so the saved passwords cannot be opened.";
+            emit changed();
+            return;
+        }
+        createKey(attributes);
+    });
+    lookup->start("secret-tool", QStringList{"lookup"} + attributes);
+}
+
+void Vault::createKey(const QStringList &attributes) {
+    const QByteArray fresh = randomBytes(32);
+    auto *store = new QProcess(this);
+    connect(store, &QProcess::errorOccurred, this, [this, store](QProcess::ProcessError error) {
+        if (error != QProcess::FailedToStart)
+            return;
+        store->deleteLater();
+        m_problem = "Saved passwords need the secret-tool command (package libsecret) and a keyring such as gnome-keyring.";
+        emit changed();
+    });
+    connect(store, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [this, store, fresh](int code, QProcess::ExitStatus status) {
+        const QString err = QString::fromUtf8(store->readAllStandardError()).trimmed();
+        store->deleteLater();
+        if (status != QProcess::NormalExit || code != 0) {
+            m_problem = "The keyring refused to store the vault key" + (err.isEmpty() ? QString() : " (" + err + ")") + ".";
+            emit changed();
+            return;
+        }
+        m_key = fresh;
+        finishUnlock();
+    });
+    store->start("secret-tool", QStringList{"store", "--label", "nodaysidle vault key"} + attributes);
+    store->write(fresh.toHex());
+    store->closeWriteChannel();
+}
+
+void Vault::finishUnlock() {
     m_available = load();
+    if (m_available)
+        m_problem.clear();
+    emit changed();
 }
 
 QString Vault::originOf(const QString &url) {
@@ -129,40 +175,6 @@ QString Vault::originOf(const QString &url) {
     if (port > 0 && !(scheme == "http" && port == 80) && !(scheme == "https" && port == 443))
         origin += ":" + QString::number(port);
     return origin;
-}
-
-bool Vault::openKey(bool create) {
-    const QStringList attributes{"service", "nodaysidle-browser", "kind", m_keyKind};
-    const ToolResult found = runSecretTool(QStringList{"lookup"} + attributes, {});
-    if (!found.started) {
-        m_problem = "Saved passwords need the secret-tool command (package libsecret) and a keyring such as gnome-keyring.";
-        return false;
-    }
-    if (!found.finished) {
-        m_problem = "The keyring did not answer, so saved passwords are off. Unlock it and restart.";
-        return false;
-    }
-    if (found.code != 0 && !found.err.isEmpty()) {
-        m_problem = "The keyring is not reachable (" + found.err + "), so saved passwords are off.";
-        return false;
-    }
-    const QByteArray stored = QByteArray::fromHex(found.out.trimmed());
-    if (found.code == 0 && stored.size() == 32) {
-        m_key = stored;
-        return true;
-    }
-    if (!create) {
-        m_problem = "The vault key is missing from the keyring, so the saved passwords cannot be opened.";
-        return false;
-    }
-    const QByteArray fresh = randomBytes(32);
-    const ToolResult saved = runSecretTool(QStringList{"store", "--label", "nodaysidle vault key"} + attributes, fresh.toHex());
-    if (!saved.finished || saved.code != 0) {
-        m_problem = "The keyring refused to store the vault key" + (saved.err.isEmpty() ? QString() : " (" + saved.err + ")") + ".";
-        return false;
-    }
-    m_key = fresh;
-    return true;
 }
 
 bool Vault::load() {

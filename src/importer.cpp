@@ -6,6 +6,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -16,7 +17,9 @@
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QTemporaryDir>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QUrl>
+#include <memory>
 #include <openssl/evp.h>
 
 namespace {
@@ -225,6 +228,116 @@ QString count(int n, const QString &singular, const QString &plural) {
     return QLocale(QLocale::English).toString(n) + " " + (n == 1 ? singular : plural);
 }
 
+// Everything the worker produces. Nothing here touches Backend or Vault: those are
+// GUI-thread objects, so the results are applied after the future finishes.
+struct Gathered {
+    bool ok = true;
+    QString error;
+    QString name;
+    QVariantList bookmarks;
+    QVariantList history;
+    QList<Vault::Login> logins;
+    int undecryptable = 0;
+    bool firefox = false;
+};
+
+Gathered gatherSource(const BrowserKind &kind, const QString &dir) {
+    Gathered g;
+    g.name = kind.name;
+    g.firefox = kind.firefox;
+
+    if (kind.firefox) {
+        for (const auto &row : readRows(dir + "/places.sqlite",
+                 "SELECT p.url, b.title FROM moz_bookmarks b JOIN moz_places p ON p.id = b.fk "
+                 "WHERE b.type = 1 AND p.url LIKE 'http%'", 2))
+            g.bookmarks.append(QVariantMap{{"url", row[0].toString()}, {"title", row[1].toString()}});
+        for (const auto &row : readRows(dir + "/places.sqlite",
+                 QString("SELECT url, title, last_visit_date FROM moz_places WHERE last_visit_date IS NOT NULL "
+                         "AND url LIKE 'http%' ORDER BY last_visit_date DESC LIMIT %1").arg(maxHistory), 3))
+            g.history.append(QVariantMap{{"url", row[0].toString()}, {"title", row[1].toString()},
+                                         {"time", row[2].toLongLong() / 1000000}});
+        return g;
+    }
+
+    QFile file(dir + "/Bookmarks");
+    if (file.open(QIODevice::ReadOnly)) {
+        const QJsonObject roots = QJsonDocument::fromJson(file.readAll()).object().value("roots").toObject();
+        for (const auto &root : roots)
+            if (root.isObject())
+                collectChromiumBookmarks(root.toObject(), &g.bookmarks);
+    }
+    // Chromium counts microseconds from 1601-01-01.
+    for (const auto &row : readRows(dir + "/History",
+             QString("SELECT url, title, last_visit_time FROM urls WHERE last_visit_time > 0 "
+                     "AND (url LIKE 'http://%' OR url LIKE 'https://%') ORDER BY last_visit_time DESC LIMIT %1").arg(maxHistory), 3))
+        g.history.append(QVariantMap{{"url", row[0].toString()}, {"title", row[1].toString()},
+                                     {"time", row[2].toLongLong() / 1000000 - 11644473600LL}});
+
+    const auto rows = readRows(dir + "/Login Data",
+        "SELECT origin_url, username_value, password_value FROM logins "
+        "WHERE blacklisted_by_user = 0 AND length(password_value) > 0", 3);
+    QByteArray keyringKey;
+    bool keyringTried = false;
+    for (const auto &row : rows) {
+        const QByteArray blob = row[2].toByteArray();
+        const bool v11 = blob.startsWith("v11");
+        if (!blob.startsWith("v10") && !v11) {
+            ++g.undecryptable;
+            continue;
+        }
+        if (v11 && !keyringTried) {
+            keyringKey = keyringPassword(kind.keyringApp);
+            keyringTried = true;
+        }
+        if (v11 && keyringKey.isEmpty()) {
+            ++g.undecryptable;
+            continue;
+        }
+        QString password;
+        if (decryptChromium(pbkdf2(v11 ? keyringKey : QByteArray("peanuts")), blob.mid(3), &password))
+            g.logins.append({row[0].toString(), row[1].toString(), password});
+        else
+            ++g.undecryptable;
+    }
+    return g;
+}
+
+Gathered gatherCsv(const QString &path) {
+    Gathered g;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        g.ok = false;
+        g.error = "That file could not be opened.";
+        return g;
+    }
+    const QList<QStringList> rows = parseCsv(QString::fromUtf8(file.readAll()));
+    if (rows.size() < 2) {
+        g.ok = false;
+        g.error = "That file has no passwords in it.";
+        return g;
+    }
+
+    QStringList header;
+    for (const QString &name : rows.first())
+        header.append(name.trimmed().toLower());
+    const int url = columnOf(header, {"url", "login_uri", "origin", "website", "web site", "site"});
+    const int user = columnOf(header, {"username", "login_username", "user", "login", "email"});
+    const int pass = columnOf(header, {"password", "login_password"});
+    if (url < 0 || pass < 0) {
+        g.ok = false;
+        g.error = "That does not look like a passwords export. It needs url and password columns.";
+        return g;
+    }
+
+    for (int i = 1; i < rows.size(); ++i) {
+        const QStringList &row = rows[i];
+        if (row.size() <= std::max(url, pass))
+            continue;
+        g.logins.append({row[url].trimmed(), user >= 0 && user < row.size() ? row[user] : QString(), row[pass]});
+    }
+    return g;
+}
+
 }  // namespace
 
 Importer::Importer(Backend *backend, Vault *vault, QObject *parent) : QObject(parent), m_backend(backend), m_vault(vault) {}
@@ -244,7 +357,21 @@ QVariantList Importer::sources() const {
     return result;
 }
 
-QVariantMap Importer::importSource(const QString &id) {
+void Importer::setImporting(bool importing) {
+    if (m_importing == importing)
+        return;
+    m_importing = importing;
+    emit importingChanged();
+}
+
+void Importer::finish(const QVariantMap &result) {
+    setImporting(false);
+    emit importFinished(result);
+}
+
+void Importer::importSource(const QString &id) {
+    if (m_importing)
+        return;
     const int bar = id.indexOf('|');
     const QString key = id.left(bar);
     const QString dir = id.mid(bar + 1);
@@ -252,112 +379,62 @@ QVariantMap Importer::importSource(const QString &id) {
     for (const BrowserKind &candidate : kinds())
         if (candidate.key == key)
             kind = &candidate;
-    if (!kind || bar < 0 || !QFileInfo(dir).isDir())
-        return {{"ok", false}, {"message", "That browser profile is no longer there."}};
-
-    QVariantList bookmarks;
-    QVariantList history;
-    QList<Vault::Login> logins;
-    int undecryptable = 0;
-
-    if (kind->firefox) {
-        for (const auto &row : readRows(dir + "/places.sqlite",
-                 "SELECT p.url, b.title FROM moz_bookmarks b JOIN moz_places p ON p.id = b.fk "
-                 "WHERE b.type = 1 AND p.url LIKE 'http%'", 2))
-            bookmarks.append(QVariantMap{{"url", row[0].toString()}, {"title", row[1].toString()}});
-        for (const auto &row : readRows(dir + "/places.sqlite",
-                 QString("SELECT url, title, last_visit_date FROM moz_places WHERE last_visit_date IS NOT NULL "
-                         "AND url LIKE 'http%' ORDER BY last_visit_date DESC LIMIT %1").arg(maxHistory), 3))
-            history.append(QVariantMap{{"url", row[0].toString()}, {"title", row[1].toString()},
-                                       {"time", row[2].toLongLong() / 1000000}});
-    } else {
-        QFile file(dir + "/Bookmarks");
-        if (file.open(QIODevice::ReadOnly)) {
-            const QJsonObject roots = QJsonDocument::fromJson(file.readAll()).object().value("roots").toObject();
-            for (const auto &root : roots)
-                if (root.isObject())
-                    collectChromiumBookmarks(root.toObject(), &bookmarks);
-        }
-        // Chromium counts microseconds from 1601-01-01.
-        for (const auto &row : readRows(dir + "/History",
-                 QString("SELECT url, title, last_visit_time FROM urls WHERE last_visit_time > 0 "
-                         "AND (url LIKE 'http://%' OR url LIKE 'https://%') ORDER BY last_visit_time DESC LIMIT %1").arg(maxHistory), 3))
-            history.append(QVariantMap{{"url", row[0].toString()}, {"title", row[1].toString()},
-                                       {"time", row[2].toLongLong() / 1000000 - 11644473600LL}});
-
-        const auto rows = readRows(dir + "/Login Data",
-            "SELECT origin_url, username_value, password_value FROM logins "
-            "WHERE blacklisted_by_user = 0 AND length(password_value) > 0", 3);
-        QByteArray keyringKey;
-        bool keyringTried = false;
-        for (const auto &row : rows) {
-            const QByteArray blob = row[2].toByteArray();
-            const bool v11 = blob.startsWith("v11");
-            if (!blob.startsWith("v10") && !v11) {
-                ++undecryptable;
-                continue;
-            }
-            if (v11 && !keyringTried) {
-                keyringKey = keyringPassword(kind->keyringApp);
-                keyringTried = true;
-            }
-            if (v11 && keyringKey.isEmpty()) {
-                ++undecryptable;
-                continue;
-            }
-            QString password;
-            if (decryptChromium(pbkdf2(v11 ? keyringKey : QByteArray("peanuts")), blob.mid(3), &password))
-                logins.append({row[0].toString(), row[1].toString(), password});
-            else
-                ++undecryptable;
-        }
+    if (!kind || bar < 0 || !QFileInfo(dir).isDir()) {
+        finish({{"ok", false}, {"message", "That browser profile is no longer there."}});
+        return;
     }
 
-    const QString from = kind->name;
-    const int bookmarkCount = m_backend->addImportedBookmarks("Imported from " + from, bookmarks);
-    const int historyCount = m_backend->addImportedHistory(history);
-    const int passwordCount = m_vault->addImported(logins);
+    const BrowserKind chosen = *kind;
+    auto gathered = std::make_shared<Gathered>();
+    setImporting(true);
+    auto *watcher = new QFutureWatcher<void>(this);
+    connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher, gathered]() {
+        watcher->deleteLater();
+        const Gathered &g = *gathered;
+        if (!g.ok) {
+            finish({{"ok", false}, {"message", g.error}});
+            return;
+        }
+        const int bookmarkCount = m_backend->addImportedBookmarks("Imported from " + g.name, g.bookmarks);
+        const int historyCount = m_backend->addImportedHistory(g.history);
+        const int passwordCount = m_vault->addImported(g.logins);
 
-    QStringList parts{count(bookmarkCount, "bookmark", "bookmarks"), count(historyCount, "history entry", "history entries")};
-    if (!logins.isEmpty() || undecryptable > 0)
-        parts.append(count(passwordCount, "password", "passwords"));
-    QString message = "Imported from " + from + ": " + parts.join(", ") + ".";
-    if (!logins.isEmpty() && !m_vault->available())
-        message += " Passwords were skipped: " + m_vault->problem();
-    if (undecryptable > 0)
-        message += " " + count(undecryptable, "password", "passwords") + " could not be decrypted.";
-    if (kind->firefox)
-        message += " For passwords, export them from " + from + " as CSV and use Import CSV.";
-    return {{"ok", true}, {"message", message}};
+        QStringList parts{count(bookmarkCount, "bookmark", "bookmarks"), count(historyCount, "history entry", "history entries")};
+        if (!g.logins.isEmpty() || g.undecryptable > 0)
+            parts.append(count(passwordCount, "password", "passwords"));
+        QString message = "Imported from " + g.name + ": " + parts.join(", ") + ".";
+        if (!g.logins.isEmpty() && !m_vault->available())
+            message += " Passwords were skipped: " + m_vault->problem();
+        if (g.undecryptable > 0)
+            message += " " + count(g.undecryptable, "password", "passwords") + " could not be decrypted.";
+        if (g.firefox)
+            message += " For passwords, export them from " + g.name + " as CSV and use Import CSV.";
+        finish({{"ok", true}, {"message", message}});
+    });
+    watcher->setFuture(QtConcurrent::run([gathered, chosen, dir]() { *gathered = gatherSource(chosen, dir); }));
 }
 
-QVariantMap Importer::importPasswordsCsv(const QString &fileOrUrl) {
-    const QString path = fileOrUrl.startsWith("file:") ? QUrl(fileOrUrl).toLocalFile() : fileOrUrl;
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly))
-        return {{"ok", false}, {"message", "That file could not be opened."}};
-    const QList<QStringList> rows = parseCsv(QString::fromUtf8(file.readAll()));
-    if (rows.size() < 2)
-        return {{"ok", false}, {"message", "That file has no passwords in it."}};
-
-    QStringList header;
-    for (const QString &name : rows.first())
-        header.append(name.trimmed().toLower());
-    const int url = columnOf(header, {"url", "login_uri", "origin", "website", "web site", "site"});
-    const int user = columnOf(header, {"username", "login_username", "user", "login", "email"});
-    const int pass = columnOf(header, {"password", "login_password"});
-    if (url < 0 || pass < 0)
-        return {{"ok", false}, {"message", "That does not look like a passwords export. It needs url and password columns."}};
-    if (!m_vault->available())
-        return {{"ok", false}, {"message", m_vault->problem()}};
-
-    QList<Vault::Login> logins;
-    for (int i = 1; i < rows.size(); ++i) {
-        const QStringList &row = rows[i];
-        if (row.size() <= std::max(url, pass))
-            continue;
-        logins.append({row[url].trimmed(), user >= 0 && user < row.size() ? row[user] : QString(), row[pass]});
+void Importer::importPasswordsCsv(const QString &fileOrUrl) {
+    if (m_importing)
+        return;
+    if (!m_vault->available()) {
+        finish({{"ok", false}, {"message", m_vault->problem()}});
+        return;
     }
-    const int added = m_vault->addImported(logins);
-    return {{"ok", true}, {"message", "Imported " + count(added, "password", "passwords") + " (" + QString::number(logins.size() - added) + " already saved or skipped)."}};
+    const QString path = fileOrUrl.startsWith("file:") ? QUrl(fileOrUrl).toLocalFile() : fileOrUrl;
+    auto gathered = std::make_shared<Gathered>();
+    setImporting(true);
+    auto *watcher = new QFutureWatcher<void>(this);
+    connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher, gathered]() {
+        watcher->deleteLater();
+        if (!gathered->ok) {
+            finish({{"ok", false}, {"message", gathered->error}});
+            return;
+        }
+        const int added = m_vault->addImported(gathered->logins);
+        finish({{"ok", true}, {"message", "Imported " + count(added, "password", "passwords") + " (" +
+                                                 QString::number(gathered->logins.size() - added) +
+                                                 " already saved or skipped)."}});
+    });
+    watcher->setFuture(QtConcurrent::run([gathered, path]() { *gathered = gatherCsv(path); }));
 }

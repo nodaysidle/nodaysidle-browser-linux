@@ -1,4 +1,4 @@
-QT += core gui qml quick quickcontrols2 webenginequick network sql
+QT += core gui qml quick quickcontrols2 webenginequick network sql concurrent
 
 LIBS += -lcrypto
 

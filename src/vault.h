@@ -60,7 +60,9 @@ private:
         qint64 used = 0;
     };
 
-    bool openKey(bool create);
+    void unlock();
+    void createKey(const QStringList &attributes);
+    void finishUnlock();
     bool load();
     bool persist();
     int find(const QString &origin, const QString &username) const;

@@ -43,11 +43,17 @@ Rectangle {
         function onChanged() { root.refresh(); }
     }
 
+    // The import runs on a worker thread and reports back here, on the GUI thread.
+    Connections {
+        target: importer
+        function onImportFinished(result) { root.showResult(result); }
+    }
+
     FileDialog {
         id: csvDialog
         title: "Import passwords from CSV"
         nameFilters: ["Passwords export (*.csv)", "All files (*)"]
-        onAccepted: root.showResult(importer.importPasswordsCsv(selectedFile.toString()))
+        onAccepted: importer.importPasswordsCsv(selectedFile.toString())
     }
 
     ColumnLayout {
@@ -254,8 +260,8 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.right: parent.right
                     anchors.rightMargin: 10
-                    text: "Import"
-                    color: theme.accent
+                    text: importer.importing ? "Importing…" : "Import"
+                    color: importer.importing ? theme.muted : theme.accent
                     font.pixelSize: 12
                     font.bold: true
                 }
@@ -263,7 +269,10 @@ Rectangle {
                     id: sourceHover
                     anchors.fill: parent
                     hoverEnabled: true
-                    onClicked: root.showResult(importer.importSource(source.modelData.id))
+                    onClicked: {
+                        if (!importer.importing)
+                            importer.importSource(source.modelData.id);
+                    }
                 }
             }
         }
@@ -279,15 +288,18 @@ Rectangle {
 
             Text {
                 anchors.centerIn: parent
-                text: "Import a passwords CSV file"
-                color: theme.textStrong
+                text: importer.importing ? "Importing…" : "Import a passwords CSV file"
+                color: importer.importing ? theme.muted : theme.textStrong
                 font.pixelSize: 12
             }
             MouseArea {
                 id: csvHover
                 anchors.fill: parent
                 hoverEnabled: true
-                onClicked: csvDialog.open()
+                onClicked: {
+                    if (!importer.importing)
+                        csvDialog.open();
+                }
             }
         }
 
