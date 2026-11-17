@@ -17,7 +17,6 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <algorithm>
-#include <memory>
 
 Backend::Backend(QObject *parent) : QObject(parent) {
     loadKeys();
@@ -185,14 +184,7 @@ QString Backend::homeUrl() const {
 }
 
 void Backend::loadKeys() {
-    m_anthropicKey = qEnvironmentVariable("ANTHROPIC_API_KEY");
-    if (m_anthropicKey.isEmpty())
-        m_anthropicKey = qEnvironmentVariable("HAIKU_API_KEY");
-    if (m_anthropicKey.isEmpty())
-        m_anthropicKey = findKeyInFish("HAIKU_API_KEY");
-    if (m_anthropicKey.isEmpty())
-        m_anthropicKey = findKeyInFish("ANTHROPIC_API_KEY");
-
+    // TypeSafe is the only AI integration left, and its key comes from the environment.
     m_jevKey = qEnvironmentVariable("TYPESAFE_API_KEY");
     if (m_jevKey.isEmpty())
         m_jevKey = findKeyInFish("TYPESAFE_API_KEY");
@@ -366,79 +358,43 @@ QString Backend::normalizeUrl(const QString &input) {
     return searchUrl.toString();
 }
 
-void Backend::cancelAssistant() {
-    if (m_activeReply) {
-        auto *reply = m_activeReply;
-        m_activeReply = nullptr;
-        reply->abort();
+namespace {
+
+// TypeSafe reports failures in the response body, so Qt's errorString() alone hides the reason.
+QString typesafeError(int status, const QByteArray &body, const QString &networkError) {
+    QString detail;
+    const QJsonObject root = QJsonDocument::fromJson(body).object();
+    const QJsonValue error = root.value("error");
+    if (error.isObject()) {
+        detail = error.toObject().value("message").toString();
+        if (detail.isEmpty())
+            detail = error.toObject().value("type").toString();
+    } else if (error.isString()) {
+        detail = error.toString();
     }
+    if (detail.isEmpty())
+        detail = root.value("message").toString();
+    if (detail.isEmpty())
+        detail = QString::fromUtf8(body).trimmed().left(300);
+
+    QString summary;
+    if (status == 401 || status == 403)
+        summary = QString("TypeSafe API key rejected (%1): check TYPESAFE_API_KEY").arg(status);
+    else if (status == 402)
+        summary = "TypeSafe is out of credits or has a billing problem (402): top up or unset TYPESAFE_API_KEY";
+    else if (status == 429)
+        summary = "TypeSafe rate or spend limit reached (429): wait and retry";
+    else if (status >= 500)
+        summary = QString("TypeSafe server error (%1): retry in a moment").arg(status);
+    else if (status >= 400)
+        summary = QString("TypeSafe rejected the request (%1)").arg(status);
+    else
+        summary = "TypeSafe request failed: " + (networkError.isEmpty() ? QStringLiteral("no response") : networkError);
+
+    return detail.isEmpty() ? summary : summary + "\n" + detail.left(300);
 }
 
-void Backend::askAssistant(const QString &title, const QString &url, const QString &text, const QString &prompt) {
-    cancelAssistant();
-
-    if (m_anthropicKey.isEmpty()) {
-        emit assistantError("Set ANTHROPIC_API_KEY or HAIKU_API_KEY in your shell.");
-        return;
-    }
-
-    QNetworkRequest request(QUrl("https://api.anthropic.com/v1/messages"));
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    request.setRawHeader("x-api-key", m_anthropicKey.toUtf8());
-    request.setRawHeader("anthropic-version", "2023-06-01");
-
-    QJsonObject body;
-    body["model"] = "claude-haiku-5-5";
-    body["max_tokens"] = 4000;
-    body["stream"] = true;
-
-    QString truncatedText = text.left(12000);
-    QString system = QString("You answer questions about the web page below for the person reading it. Be concise, direct and helpful.\n\nTitle: %1\nURL: %2\n<page>\n%3\n</page>")
-                         .arg(title, url, truncatedText);
-    body["system"] = system;
-
-    QJsonArray messages;
-    QJsonObject msg;
-    msg["role"] = "user";
-    msg["content"] = prompt;
-    messages.append(msg);
-    body["messages"] = messages;
-
-    QNetworkReply *reply = m_nam.post(request, QJsonDocument(body).toJson());
-    m_activeReply = reply;
-
-    auto pending = std::make_shared<QByteArray>();
-    connect(reply, &QNetworkReply::readyRead, this, [this, reply, pending]() {
-        pending->append(reply->readAll());
-        qsizetype newline;
-        while ((newline = pending->indexOf('\n')) >= 0) {
-            const QByteArray line = pending->left(newline).trimmed();
-            pending->remove(0, newline + 1);
-            if (!line.startsWith("data: "))
-                continue;
-            const auto obj = QJsonDocument::fromJson(line.mid(6)).object();
-            if (obj["type"].toString() == "content_block_delta") {
-                const QString chunk = obj["delta"].toObject()["text"].toString();
-                if (!chunk.isEmpty())
-                    emit assistantChunk(chunk);
-            }
-        }
-    });
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        if (reply == m_activeReply)
-            m_activeReply = nullptr;
-        if (reply->error() == QNetworkReply::OperationCanceledError) {
-            emit assistantDone();
-        } else if (reply->error() != QNetworkReply::NoError) {
-            const QString detail = QJsonDocument::fromJson(reply->readAll()).object()["error"].toObject()["message"].toString();
-            emit assistantError(detail.isEmpty() ? reply->errorString() : detail);
-        } else {
-            emit assistantDone();
-        }
-        reply->deleteLater();
-    });
-}
+}  // namespace
 
 void Backend::checkScam(const QString &title, const QString &url, const QString &text) {
     if (m_jevKey.isEmpty()) {
@@ -477,24 +433,36 @@ void Backend::checkScam(const QString &title, const QString &url, const QString 
 
     auto *reply = m_nam.post(request, QJsonDocument(body).toJson());
     connect(reply, &QNetworkReply::finished, this, [this, reply, host]() {
-        if (reply->error() == QNetworkReply::NoError) {
-            auto doc = QJsonDocument::fromJson(reply->readAll());
-            auto answers = doc.object()["answers"].toObject();
-            double imp = answers["impersonation"].toObject()["noul"].toDouble(0.0);
-            double cred = answers["credentials"].toObject()["noul"].toDouble(0.0);
-            double press = answers["pressure"].toObject()["noul"].toDouble(0.0);
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        // Read the body once: the error payload is the only place TypeSafe names the cause.
+        const QByteArray payload = reply->readAll();
+        const QJsonObject root = QJsonDocument::fromJson(payload).object();
 
-            QString verdict = "No strong scam signals.";
-            if (imp >= 0.7 && (cred >= 0.5 || press >= 0.7)) {
-                verdict = "High risk: looks like a scam!";
-            } else if (imp >= 0.7 || press >= 0.7) {
-                verdict = "Be careful: some scam signals detected.";
-            }
-
-            emit scamResult(verdict, qRound(imp * 100), qRound(cred * 100), qRound(press * 100), host);
-        } else {
-            emit assistantError("TypeSafe Jev request failed: " + reply->errorString());
+        // A 2xx carrying an error object, or a body without answers, is a failure as well.
+        if (reply->error() != QNetworkReply::NoError || status >= 400 || root.contains("error")) {
+            emit assistantError(typesafeError(status, payload, reply->errorString()));
+            reply->deleteLater();
+            return;
         }
+        const QJsonObject answers = root.value("answers").toObject();
+        if (!answers.contains("impersonation") || !answers.contains("credentials") || !answers.contains("pressure")) {
+            emit assistantError(typesafeError(status, payload, "the response carried no answers"));
+            reply->deleteLater();
+            return;
+        }
+
+        const double imp = answers.value("impersonation").toObject().value("noul").toDouble(0.0);
+        const double cred = answers.value("credentials").toObject().value("noul").toDouble(0.0);
+        const double press = answers.value("pressure").toObject().value("noul").toDouble(0.0);
+
+        QString verdict = "No strong scam signals.";
+        if (imp >= 0.7 && (cred >= 0.5 || press >= 0.7)) {
+            verdict = "High risk: looks like a scam!";
+        } else if (imp >= 0.7 || press >= 0.7) {
+            verdict = "Be careful: some scam signals detected.";
+        }
+
+        emit scamResult(verdict, qRound(imp * 100), qRound(cred * 100), qRound(press * 100), host);
         reply->deleteLater();
     });
 }

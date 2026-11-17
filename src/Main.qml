@@ -42,8 +42,8 @@ ApplicationWindow {
     property var activeView: null
     onCurrentTabIndexChanged: refreshActiveView()
     property bool bookmarksBarVisible: true
-    property bool assistantVisible: false
-    property bool assistantBusy: false
+    property bool scamVisible: false
+    property bool scamBusy: false
     property bool pageFullScreen: false
     property bool findVisible: false
     property bool historyVisible: false
@@ -167,7 +167,7 @@ ApplicationWindow {
     function togglePasswords() {
         passwordsVisible = !passwordsVisible;
         if (passwordsVisible) {
-            assistantVisible = false;
+            scamVisible = false;
             historyVisible = false;
             passwordsPanel.open();
         }
@@ -215,12 +215,24 @@ ApplicationWindow {
     function toggleHistory() {
         historyVisible = !historyVisible;
         if (historyVisible) {
-            assistantVisible = false;
+            scamVisible = false;
             passwordsVisible = false;
             historySearch.text = "";
             refreshHistory();
             historySearch.forceActiveFocus();
         }
+    }
+
+    function runScamCheck() {
+        var v = activeView;
+        if (scamBusy || !backend.hasJevKey || !v)
+            return;
+        scamBusy = true;
+        scamOutput.text = "Sending this page's text to TypeSafe…\n";
+        scamWatchdog.restart();
+        v.runJavaScript("document.body.innerText", function(res) {
+            backend.checkScam(v.title, v.url.toString(), res);
+        });
     }
 
     function printPage() {
@@ -372,7 +384,7 @@ ApplicationWindow {
         if (v) backend.toggleBookmark(v.title, v.url.toString());
     }}
     Shortcut { sequence: "Ctrl+B"; onActivated: bookmarksBarVisible = !bookmarksBarVisible }
-    Shortcut { sequence: "Ctrl+Shift+A"; onActivated: { assistantVisible = !assistantVisible; if (assistantVisible) { historyVisible = false; passwordsVisible = false; } } }
+    Shortcut { sequence: "Ctrl+Shift+A"; onActivated: { scamVisible = !scamVisible; if (scamVisible) { historyVisible = false; passwordsVisible = false; } } }
     Shortcut { sequence: "Alt+Left"; onActivated: { var v = currentView(); if (v && v.canGoBack) v.goBack(); } }
     Shortcut { sequence: "Alt+Right"; onActivated: { var v = currentView(); if (v && v.canGoForward) v.goForward(); } }
     Shortcut { sequence: "Ctrl+Tab"; onActivated: cycleTab(1) }
@@ -382,7 +394,7 @@ ApplicationWindow {
     Shortcut { sequence: "Escape"; enabled: findVisible && !pageFullScreen; onActivated: closeFind() }
     Shortcut { sequence: "Escape"; enabled: passwordsVisible && !pageFullScreen && !findVisible; onActivated: passwordsVisible = false }
     Shortcut { sequence: "Escape"; enabled: historyVisible && !pageFullScreen && !findVisible; onActivated: historyVisible = false }
-    Shortcut { sequence: "Escape"; enabled: assistantVisible && !pageFullScreen && !findVisible; onActivated: assistantVisible = false }
+    Shortcut { sequence: "Escape"; enabled: scamVisible && !pageFullScreen && !findVisible; onActivated: scamVisible = false }
 
     ColumnLayout {
         anchors.fill: parent
@@ -754,28 +766,12 @@ ApplicationWindow {
                     onClicked: togglePasswords()
                 }
 
-                // AI Assistant Toggle Button
-                Rectangle {
-                    width: 32
-                    height: 28
-                    radius: appWindow.cornerRadius
-                    color: assistantVisible ? Qt.alpha(theme.accent, 0.25) : (aiHover.containsMouse ? theme.surface : "transparent")
-                    border.color: assistantVisible ? theme.accent : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "AI"
-                        font.pixelSize: 11
-                        font.bold: true
-                        color: assistantVisible ? theme.accent : theme.textStrong
-                    }
-
-                    MouseArea {
-                        id: aiHover
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onClicked: { assistantVisible = !assistantVisible; if (assistantVisible) { historyVisible = false; passwordsVisible = false; } }
-                    }
+                // Scam check (TypeSafe) toggles the side panel
+                IconButton {
+                    icon: "shield"
+                    active: scamVisible
+                    cornerRadius: appWindow.cornerRadius
+                    onClicked: scamVisible = !scamVisible
                 }
             }
         }
@@ -1334,12 +1330,13 @@ ApplicationWindow {
                     onCloseRequested: passwordsVisible = false
                 }
 
-                // AI Assistant Side Panel (Claude Haiku 5.5 + TypeSafe Jev)
+                // Scam check side panel: TypeSafe Jev is the only AI integration left.
+                // The badge names the destination, because page text leaves the machine.
                 Rectangle {
-                    id: assistantPanel
-                    Layout.preferredWidth: assistantVisible ? 360 : 0
+                    id: scamPanel
+                    Layout.preferredWidth: scamVisible ? 360 : 0
                     Layout.fillHeight: true
-                    visible: assistantVisible
+                    visible: scamVisible
                     color: theme.surface
                     border.color: theme.line
                     border.width: 1
@@ -1353,29 +1350,16 @@ ApplicationWindow {
                         anchors.margins: 14
                         spacing: 12
 
-                        // Assistant Header
+                        // Header
                         RowLayout {
                             Layout.fillWidth: true
 
                             Text {
-                                text: "Ask about this page"
+                                text: "Scam check"
                                 font.pixelSize: 15
                                 font.bold: true
                                 color: theme.textStrong
                                 Layout.fillWidth: true
-                            }
-
-                            Text {
-                                text: "Stop"
-                                visible: assistantBusy
-                                font.pixelSize: 12
-                                font.bold: true
-                                color: theme.accent
-                                MouseArea {
-                                    anchors.fill: parent
-                                    anchors.margins: -6
-                                    onClicked: backend.cancelAssistant()
-                                }
                             }
 
                             Text {
@@ -1384,98 +1368,57 @@ ApplicationWindow {
                                 color: theme.muted
                                 MouseArea {
                                     anchors.fill: parent
-                                    onClicked: assistantVisible = false
+                                    onClicked: scamVisible = false
                                 }
                             }
                         }
 
-                        // Status Badge
+                        // What leaves the machine, and where it goes.
                         Rectangle {
                             Layout.fillWidth: true
-                            height: 24
+                            height: 28
                             radius: appWindow.cornerRadius
                             color: Qt.alpha(theme.chrome, 0.7)
 
                             Text {
                                 anchors.centerIn: parent
-                                text: "Claude Haiku 5.5 + TypeSafe Jev [Private]"
+                                width: parent.width - 16
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                                text: backend.hasJevKey
+                                      ? "Sends this page's text to TypeSafe (api.typesafe.ai, jev-latest)"
+                                      : "TYPESAFE_API_KEY is not set, so the check is off"
                                 font.pixelSize: 11
                                 color: theme.text
                             }
                         }
 
-                        // Action Buttons
-                        RowLayout {
+                        // Check button
+                        Rectangle {
                             Layout.fillWidth: true
-                            spacing: 8
+                            height: 32
+                            visible: backend.hasJevKey
+                            radius: appWindow.cornerRadius
+                            color: checkHover.containsMouse && !scamBusy ? theme.chrome : Qt.alpha(theme.chrome, 0.6)
+                            border.color: theme.line
 
-                            // Summarize Button
-                            Rectangle {
-                                Layout.fillWidth: true
-                                height: 32
-                                radius: appWindow.cornerRadius
-                                color: sumHover.containsMouse ? theme.chrome : Qt.alpha(theme.chrome, 0.6)
-                                border.color: theme.line
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "Summarize"
-                                    font.pixelSize: 12
-                                    font.bold: true
-                                    color: theme.textStrong
-                                }
-
-                                MouseArea {
-                                    id: sumHover
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: {
-                                        var v = currentView();
-                                        if (v) {
-                                            aiOutput.text += "\nSummarizing page...\n\n";
-                                            v.runJavaScript("document.body.innerText", function(res) {
-                                                assistantBusy = true;
-                                                backend.askAssistant(v.title, v.url.toString(), res, "Summarize this page in a few short paragraphs and key points.");
-                                            });
-                                        }
-                                    }
-                                }
+                            Text {
+                                anchors.centerIn: parent
+                                text: scamBusy ? "Checking…" : "Check this page"
+                                font.pixelSize: 12
+                                font.bold: true
+                                color: theme.textStrong
                             }
 
-                            // Scam Check Button
-                            Rectangle {
-                                Layout.fillWidth: true
-                                height: 32
-                                radius: appWindow.cornerRadius
-                                color: scamHover.containsMouse ? theme.chrome : Qt.alpha(theme.chrome, 0.6)
-                                border.color: theme.line
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "Scam check"
-                                    font.pixelSize: 12
-                                    font.bold: true
-                                    color: theme.textStrong
-                                }
-
-                                MouseArea {
-                                    id: scamHover
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: {
-                                        var v = currentView();
-                                        if (v) {
-                                            aiOutput.text += "\nChecking security with TypeSafe Jev...\n";
-                                            v.runJavaScript("document.body.innerText", function(res) {
-                                                backend.checkScam(v.title, v.url.toString(), res);
-                                            });
-                                        }
-                                    }
-                                }
+                            MouseArea {
+                                id: checkHover
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onClicked: runScamCheck()
                             }
                         }
 
-                        // Assistant Chat / Output Log
+                        // Verdict log
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
@@ -1489,53 +1432,30 @@ ApplicationWindow {
                                 anchors.margins: 8
 
                                 TextArea {
-                                    id: aiOutput
+                                    id: scamOutput
                                     readOnly: true
                                     wrapMode: TextArea.Wrap
                                     color: theme.textStrong
                                     font.pixelSize: 12
-                                    text: "Ready to assist.\n"
+                                    text: ""
                                     onTextChanged: cursorPosition = length
-                                }
-                            }
-                        }
-
-                        // Question Input
-                        Rectangle {
-                            Layout.fillWidth: true
-                            height: 36
-                            radius: appWindow.cornerRadius
-                            color: theme.chrome
-                            border.color: theme.line
-
-                            TextField {
-                                id: promptInput
-                                anchors.fill: parent
-                                anchors.margins: 4
-                                color: theme.textStrong
-                                placeholderText: "Ask Claude about this page... (Enter)"
-                                placeholderTextColor: theme.muted
-                                font.pixelSize: 12
-                                selectByMouse: true
-                                background: null
-                                onAccepted: {
-                                    var q = text.trim();
-                                    if (q.length > 0) {
-                                        aiOutput.text += "\nUser: " + q + "\n\n";
-                                        text = "";
-                                        var v = currentView();
-                                        if (v) {
-                                            v.runJavaScript("document.body.innerText", function(res) {
-                                                assistantBusy = true;
-                                                backend.askAssistant(v.title, v.url.toString(), res, q);
-                                            });
-                                        }
-                                    }
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    // A TypeSafe answer that never arrives must not leave the panel stuck on "Checking…".
+    Timer {
+        id: scamWatchdog
+        interval: 30000
+        onTriggered: {
+            if (scamBusy) {
+                scamBusy = false;
+                scamOutput.text += "\nError: TypeSafe did not answer within 30 s.\n";
             }
         }
     }
@@ -1583,26 +1503,23 @@ ApplicationWindow {
             toastTimer.restart();
         }
 
-        function onAssistantChunk(chunk) {
-            aiOutput.text += chunk;
-        }
-
-        function onAssistantDone() {
-            assistantBusy = false;
-            aiOutput.text += "\n";
-        }
-
         function onAssistantError(err) {
-            assistantBusy = false;
-            aiOutput.text += "\nError: " + err + "\n";
+            scamBusy = false;
+            scamWatchdog.stop();
+            scamOutput.text += "\nError: " + err + "\n";
+            toastText.text = err.split("\n")[0];
+            toast.visible = true;
+            toastTimer.restart();
         }
 
         function onScamResult(verdict, imp, cred, press, host) {
-            aiOutput.text += "\nScam Verdict: " + verdict + "\n";
-            aiOutput.text += "  • Impersonation risk: " + imp + "%\n";
-            aiOutput.text += "  • Credential harvest: " + cred + "%\n";
-            aiOutput.text += "  • Pressure / urgency: " + press + "%\n";
-            aiOutput.text += "  (Jev estimate for " + host + ")\n\n";
+            scamBusy = false;
+            scamWatchdog.stop();
+            scamOutput.text += "\nScam Verdict: " + verdict + "\n";
+            scamOutput.text += "  • Impersonation risk: " + imp + "%\n";
+            scamOutput.text += "  • Credential harvest: " + cred + "%\n";
+            scamOutput.text += "  • Pressure / urgency: " + press + "%\n";
+            scamOutput.text += "  (Jev estimate for " + host + ")\n\n";
         }
     }
 }

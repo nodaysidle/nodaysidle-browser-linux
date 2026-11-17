@@ -12,7 +12,6 @@
 class Backend : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList bookmarks READ bookmarks NOTIFY bookmarksChanged)
-    Q_PROPERTY(bool hasAnthropicKey READ hasAnthropicKey CONSTANT)
     Q_PROPERTY(bool hasJevKey READ hasJevKey CONSTANT)
     Q_PROPERTY(QString homeUrl READ homeUrl CONSTANT)
     Q_PROPERTY(QStringList initialUrls READ initialUrls CONSTANT)
@@ -22,7 +21,6 @@ public:
     ~Backend() override = default;
 
     QVariantList bookmarks() const { return m_bookmarks; }
-    bool hasAnthropicKey() const { return !m_anthropicKey.isEmpty(); }
     bool hasJevKey() const { return !m_jevKey.isEmpty(); }
     QString homeUrl() const;
     QStringList initialUrls() const { return m_initialUrls; }
@@ -46,18 +44,14 @@ public:
     Q_INVOKABLE QString pdfPath(const QString &title) const;
     Q_INVOKABLE QString readResource(const QString &path) const;
 
-    // AI Assistant
-    Q_INVOKABLE void askAssistant(const QString &title, const QString &url, const QString &text, const QString &prompt);
+    // TypeSafe Jev scam check: the only AI integration.
     Q_INVOKABLE void checkScam(const QString &title, const QString &url, const QString &text);
-    Q_INVOKABLE void cancelAssistant();
 
 signals:
     void historyChanged();
     void openRequested(const QString &url);
     void notice(const QString &text);
     void bookmarksChanged();
-    void assistantChunk(const QString &text);
-    void assistantDone();
     void assistantError(const QString &error);
     void scamResult(const QString &verdict, int impersonation, int credentials, int pressure, const QString &host);
 
@@ -72,8 +66,6 @@ private:
     QVariantList m_history;
     QTimer m_historySave;
     QStringList m_initialUrls;
-    QString m_anthropicKey;
     QString m_jevKey;
     QNetworkAccessManager m_nam;
-    QNetworkReply *m_activeReply = nullptr;
 };

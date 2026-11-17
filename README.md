@@ -69,7 +69,7 @@ It is built to be a daily browser, not a demo: Google sign-in works and survives
 - Installs as an Arch package, so it shows up in the Omarchy launcher (`Super + Space`)
 - A second launch hands its URLs to the running window, so links from other apps open as tabs
 
-**Page assistant** (`Ctrl+Shift+A`): Summarize and free-form questions through Claude Haiku 5.5, and a scam check through TypeSafe Jev. Nothing is sent until you click or press Enter, and a Stop button cancels a stream.
+**Scam check** (`Ctrl+Shift+A`): the page's text goes to TypeSafe Jev (`api.typesafe.ai`, model `jev-latest`), which answers three risk questions. Nothing is sent until you click Check, and the panel says where the text goes. TypeSafe is the only AI integration; `TYPESAFE_API_KEY` is the only key.
 
 ## Measured performance
 
@@ -156,7 +156,7 @@ Set it as your default browser with `xdg-settings set default-web-browser com.no
 - **Import.** `Importer` reads other browsers' profile folders directly. Their databases are copied first because they are locked while those browsers run. Chromium passwords are decrypted with the Safe Storage key from the keyring; Firefox-family passwords come in through the CSV export, since Firefox keeps them under its own key store.
 - **Theme.** `Theme` watches Omarchy's `colors.toml` (re-arming the watcher when a theme switch replaces files) and polls `hyprctl` for the corner radius.
 - **Ad blocker.** A `QWebEngineUrlRequestInterceptor` drops sub-resource requests whose host, or a parent domain, is on the list, off the UI thread.
-- **Assistant.** The backend streams Anthropic Messages over SSE for Claude Haiku 5.5 and posts to TypeSafe Jev for the scam verdict. Keys come from the environment, then `~/.config/fish/secrets.fish`, then `~/.config/fish/fish_variables`: `ANTHROPIC_API_KEY` or `HAIKU_API_KEY`, and `TYPESAFE_API_KEY`. The app never writes them to disk.
+- **Scam check.** The backend posts the page's title, host and up to 12,000 characters of text to TypeSafe Jev and reads the three `noul` answers back. The key comes from the environment, then `~/.config/fish/secrets.fish`, then `~/.config/fish/fish_variables`: `TYPESAFE_API_KEY`. The app never writes it to disk. HTTP and JSON failures are mapped to plain wording (key rejected, out of credits, rate limited, server error) instead of Qt's generic message.
 
 ## Languages and size
 
@@ -173,7 +173,7 @@ Set it as your default browser with `xdg-settings set default-web-browser com.no
 |---|---|
 | `nodaysidle-browser.pro` | qmake project: Qt modules, sources, `-lcrypto` |
 | `src/main.cpp` | Wayland setup, persistent profile, Chrome user agent, downloads, single instance, QML engine |
-| `src/backend.{h,cpp}` | Bookmarks, history, URL resolution, clipboard, Anthropic and Jev calls |
+| `src/backend.{h,cpp}` | Bookmarks, history, URL resolution, clipboard, TypeSafe Jev call |
 | `src/vault.{h,cpp}` | Encrypted saved logins and the keyring-held key |
 | `src/importer.{h,cpp}` | Imports from Chromium and Firefox family profiles and passwords CSV |
 | `src/theme.{h,cpp}` | Omarchy `colors.toml` watcher and Hyprland rounding |

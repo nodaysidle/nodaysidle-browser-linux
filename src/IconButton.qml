@@ -52,6 +52,15 @@ Rectangle {
                 c.arc(4.5, 11.5, 3.2, 0, Math.PI * 2);
                 c.moveTo(7, 9); c.lineTo(14, 2); c.moveTo(11.5, 4.5); c.lineTo(13.5, 6.5);
                 break;
+            case "shield":
+                c.moveTo(8, 2.2);
+                c.lineTo(13, 4);
+                c.lineTo(13, 8);
+                c.bezierCurveTo(13, 11.2, 10.9, 13.2, 8, 14);
+                c.bezierCurveTo(5.1, 13.2, 3, 11.2, 3, 8);
+                c.lineTo(3, 4);
+                c.closePath();
+                break;
             }
             c.stroke();
         }

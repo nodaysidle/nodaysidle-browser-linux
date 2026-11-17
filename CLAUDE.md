@@ -22,9 +22,9 @@
 - **Stack**: C++17, Qt 6 (Quick, QuickControls2, WebEngineQuick; 6.11 on the dev machine), qmake6. There is no Rust in this repo any more: the old Rust + GTK app ended at v0.2.2 and the cargo launcher wrapper was removed.
 - **Key files (`src/`)**:
   - `main.cpp` - Wayland env, persistent profile, Chrome UA, downloads, single instance
-  - `backend.{h,cpp}` - bookmarks, history, URL resolution, clipboard, Anthropic and Jev calls
+  - `backend.{h,cpp}` - bookmarks, history, URL resolution, clipboard, TypeSafe Jev call
   - `theme.{h,cpp}` - Omarchy `colors.toml` watcher and Hyprland rounding
-  - `Main.qml` - window, tabs, toolbar, find bar, permission bar, assistant panel
+  - `Main.qml` - window, tabs, toolbar, find bar, permission bar, scam-check panel
   - `vault.{h,cpp}` - encrypted saved logins, AES-256-GCM, key in the Secret Service keyring
   - `importer.{h,cpp}` - imports from Chromium and Firefox family profiles and passwords CSV
   - `login.js` - login capture and fill, isolated world, console lines carry a per-run nonce
