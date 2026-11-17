@@ -316,6 +316,14 @@ ApplicationWindow {
             backend.toggleBookmark(v.title, v.url.toString());
     }
 
+    function reloadCrashedTab() {
+        var v = activeView;
+        if (!v)
+            return;
+        v.crashed = false;
+        v.reload();
+    }
+
     function formatBytes(bytes) {
         if (!bytes || bytes <= 0)
             return "unknown size";
@@ -1275,6 +1283,14 @@ ApplicationWindow {
                             visible: index === currentTabIndex
                             // This tab's own permission request, if the page is asking.
                             property var permissionRequest: null
+                            // Set when the renderer died; the overlay below explains it.
+                            property bool crashed: false
+                            property int crashStatus: 0
+                            property int crashExitCode: 0
+                            // Hidden tabs freeze so memory and CPU do not grow with tab count,
+                            // but a tab that has been making sound keeps running.
+                            lifecycleState: visible || recentlyAudible ? WebEngineView.LifecycleState.Active
+                                                                      : WebEngineView.LifecycleState.Frozen
                             // Load the first address once; a binding would re-fetch (as GET) every page the tab reaches.
                             Component.onCompleted: url = model.url
                             profile: appProfile
@@ -1341,6 +1357,12 @@ ApplicationWindow {
                             onCertificateError: function(error) {
                                 error.rejectCertificate();
                                 certificateProblem = { host: error.url.toString(), description: error.description };
+                            }
+
+                            onRenderProcessTerminated: function(status, exitCode) {
+                                webView.crashed = status !== WebEngineView.NormalTerminationStatus;
+                                webView.crashStatus = status;
+                                webView.crashExitCode = exitCode;
                             }
 
                             onPermissionRequested: function(permission) {
@@ -1442,6 +1464,51 @@ ApplicationWindow {
                                     text: "Reload"
                                     onTriggered: webView.reload()
                                 }
+                            }
+                        }
+                    }
+
+                    // A dead renderer used to leave a blank tab with no explanation.
+                    Rectangle {
+                        anchors.fill: parent
+                        visible: activeView !== null && activeView.crashed
+                        color: theme.background
+                        focus: visible
+                        Keys.onReturnPressed: appWindow.reloadCrashedTab()
+
+                        ColumnLayout {
+                            anchors.centerIn: parent
+                            width: Math.min(420, parent.width - 40)
+                            spacing: 12
+
+                            Text {
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                color: theme.textStrong
+                                font.pixelSize: 14
+                                font.bold: true
+                                text: "This page stopped"
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                color: theme.text
+                                font.pixelSize: 12
+                                text: activeView
+                                      ? "The renderer behind this tab ended (status " + activeView.crashStatus
+                                        + ", exit code " + activeView.crashExitCode + "). Reload to try again."
+                                      : ""
+                            }
+
+                            IconButton {
+                                Layout.alignment: Qt.AlignHCenter
+                                label: "Reload"
+                                accessibleName: "Reload this page"
+                                cornerRadius: appWindow.cornerRadius
+                                onClicked: appWindow.reloadCrashedTab()
                             }
                         }
                     }
