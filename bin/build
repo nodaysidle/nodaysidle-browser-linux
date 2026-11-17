@@ -1,9 +1,11 @@
 #!/bin/sh
 set -eu
 
-ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-mkdir -p "$ROOT/build"
-cd "$ROOT/build"
+ROOT="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+# Out of tree by default: BUILD_DIR can point anywhere, nothing is written into the repo.
+BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
+mkdir -p "$BUILD_DIR"
+cd "$BUILD_DIR"
 
 echo "Configuring with qmake6..."
 qmake6 "$ROOT/nodaysidle-browser.pro"
@@ -11,4 +13,4 @@ qmake6 "$ROOT/nodaysidle-browser.pro"
 echo "Building with make..."
 make -j"$(nproc)"
 
-echo "Successfully built $ROOT/build/nodaysidle-browser"
+echo "Successfully built $BUILD_DIR/nodaysidle-browser"
