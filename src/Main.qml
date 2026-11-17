@@ -135,6 +135,12 @@ ApplicationWindow {
             icon: ""
         });
         currentTabIndex = tabsModel.count - 1;
+        // Ctrl+T and the + button land on the start page; the keyboard should be able to
+        // type an address straight away instead of being trapped in the page.
+        if (url === backend.homeUrl) {
+            urlInput.selectAll();
+            urlInput.forceActiveFocus();
+        }
     }
 
     function closeTab(index) {
@@ -704,7 +710,13 @@ ApplicationWindow {
                             background: null
 
                             onActiveFocusChanged: if (!activeFocus) { suggestions = []; syncUrlField(); }
-                            Keys.onEscapePressed: { suggestions = []; focus = false; syncUrlField(); }
+                            Keys.onEscapePressed: {
+                                suggestions = [];
+                                focus = false;
+                                syncUrlField();
+                                var ve = currentView();
+                                if (ve) ve.forceActiveFocus();
+                            }
                             Keys.onDownPressed: if (suggestions.length > 0) suggestIndex = Math.min(suggestions.length - 1, suggestIndex + 1)
                             Keys.onUpPressed: if (suggestions.length > 0) suggestIndex = Math.max(-1, suggestIndex - 1)
                             onTextEdited: {
@@ -716,7 +728,11 @@ ApplicationWindow {
                                 var target = suggestIndex >= 0 ? suggestions[suggestIndex].url : backend.normalizeUrl(text);
                                 suggestions = [];
                                 var v = currentView();
-                                if (v) v.url = target;
+                                if (v) {
+                                    v.url = target;
+                                    // Hand the keyboard back to the page: Space and arrows should scroll.
+                                    v.forceActiveFocus();
+                                }
                                 focus = false;
                             }
 
@@ -771,7 +787,10 @@ ApplicationWindow {
                                             anchors.fill: parent
                                             onClicked: {
                                                 var v = currentView();
-                                                if (v) v.url = modelData.url;
+                                                if (v) {
+                                                    v.url = modelData.url;
+                                                    v.forceActiveFocus();
+                                                }
                                                 suggestions = [];
                                                 urlInput.focus = false;
                                             }
