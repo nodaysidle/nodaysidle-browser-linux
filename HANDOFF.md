@@ -7,7 +7,7 @@ Scope: read-only code + UI/UX audit of `master` @ `2d14e25` (in sync with `origi
 ## Implementation pass (2026-11-17, later the same day)
 The audit below was acted on: see **"Work done — 2026-11-17"** at the end of this file for
 what landed, the commit for each finding, the proofs, and what is still open. Branch
-`audit-fixes-2026-11-17`, 21 commits on top of `2d14e25`, not pushed. The findings table
+`audit-fixes-2026-11-17`, 21 commits on top of `2d14e25`; merged into `master` by fast-forward on 2026-11-21, not pushed. The findings table
 below is the original read-only audit and still describes the pre-fix state.
 
 ## Summary
@@ -193,7 +193,7 @@ Manual runs: `HOME=$(mktemp -d) XDG_DATA_HOME=$HOME/.local/share "$B/nodaysidle-
 **Status: closed out on 2026-11-17.** Everything below is committed, built, package-installed
 and verified on the running app. The only open item is the clazy/`-Wconversion` half of F34.
 
-Branch `audit-fixes-2026-11-17`, based on `master` @ `2d14e25`, **21 commits, not pushed**.
+Branch `audit-fixes-2026-11-17`, based on `master` @ `2d14e25`, **21 commits**; merged into `master` by fast-forward on 2026-11-21 (branch deleted), **not pushed**.
 Owner instruction that overrode the audit's own recommendations: **remove the Anthropic
 integration completely** (no Anthropic usage on this machine); TypeSafe is the only AI/key
 integration left, read from `TYPESAFE_API_KEY`.
