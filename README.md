@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <img alt="Release v0.3.0" src="https://img.shields.io/badge/release-v0.3.0-FFD60A?style=flat-square&labelColor=1f2328">
+  <img alt="Release v0.4.0" src="https://img.shields.io/badge/release-v0.4.0-FFD60A?style=flat-square&labelColor=1f2328">
   <img alt="Arch, Wayland, Hyprland" src="https://img.shields.io/badge/Arch%20%2F%20Wayland%20%2F%20Hyprland-native-1f2328?style=flat-square&logo=archlinux&logoColor=1793d1">
   <img alt="C++17, QML, Qt 6" src="https://img.shields.io/badge/C%2B%2B17%20%2F%20QML%20%2F%20Qt%206-engine-41CD52?style=flat-square&logo=qt&logoColor=white">
   <img alt="Zero telemetry" src="https://img.shields.io/badge/telemetry-none-4c8c6b?style=flat-square">
@@ -20,9 +20,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.3.0/nodaysidle-browser-0.3.0-1-x86_64.pkg.tar.zst"><strong>Download Arch package (151 KiB)</strong></a>
+  <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.4.0/nodaysidle-browser-0.4.0-1-x86_64.pkg.tar.zst"><strong>Download Arch package (181 KiB)</strong></a>
   ·
-  <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.3.0/nodaysidle-browser-0.3.0-linux-x86_64.tar.gz"><strong>Download tarball (154 KiB)</strong></a>
+  <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases/download/v0.4.0/nodaysidle-browser-0.4.0-linux-x86_64.tar.gz"><strong>Download tarball (162 KiB)</strong></a>
   ·
   <a href="https://github.com/nodaysidle/nodaysidle-browser-linux/releases">All Releases</a>
 </p>
@@ -37,7 +37,7 @@
   <a href="#privacy-model">Privacy</a>
 </p>
 
-> **Release vs. `master`.** The downloads above are `v0.3.0`. `master` is ahead of it: the **Ask this page** assistant (DeepSeek), click-to-fill passwords that never fill over plain `http`, tab session restore with a quit prompt, a download shelf that asks before saving, keyboard and screen-reader access to the toolbar, and other fixes. To get those now, [build from source](#build-from-source).
+> **New in v0.4.0:** the **Ask this page** assistant (DeepSeek), click-to-fill passwords that never fill over plain `http`, your tabs restored after a restart, a download shelf that asks before saving, keyboard and screen-reader access to every control, and the Chromium renderer sandbox back on. [Release notes](docs/releases/v0.4.0.md).
 
 ---
 
@@ -104,7 +104,7 @@ or once, as universal variables: `set -Ux DEEPSEEK_API_KEY sk-...`. Restart the 
 
 ## Measured performance
 
-Measured on `v0.3.0`. Reference machine: Intel Core Ultra 7 155H, Intel Arc iGPU, Mesa 26.2.5, 2560x1440 at 165 Hz, Hyprland 0.56.2, QtWebEngine 6.11.2 (Chromium 140). Release build, fresh profile, start page.
+Start time, CPU, memory and frame rate were measured on `v0.3.0` and not re-measured for `v0.4.0`; the sizes are `v0.4.0`. Reference machine: Intel Core Ultra 7 155H, Intel Arc iGPU, Mesa 26.2.5, 2560x1440 at 165 Hz, Hyprland 0.56.2, QtWebEngine 6.11.2 (Chromium 140). Release build, fresh profile, start page.
 
 | Metric | Result |
 |---|---|
@@ -112,10 +112,10 @@ Measured on `v0.3.0`. Reference machine: Intel Core Ultra 7 155H, Intel Arc iGPU
 | CPU at idle (10 s, all four processes) | 0.00 % |
 | Memory, one tab (proportional, all processes) | 273 MB |
 | Page animation, 300 moving sprites | steady 60 fps, no dropped frames |
-| Arch package (download) | 151 KiB (154,526 bytes) |
-| Tarball (download) | 154 KiB (157,529 bytes) |
-| Installed size of the package | 294 KiB |
-| Stripped binary | 338 KiB |
+| Arch package (download) | 181 KiB (185,164 bytes) |
+| Tarball (download) | 162 KiB (166,155 bytes) |
+| Installed size of the package | 350 KiB |
+| Stripped binary | 347 KiB |
 
 The release is small because the engine is not bundled: it uses the Qt and QtWebEngine you already have (`qt6-webengine` is about 283 MiB, shared with other Qt apps). QtWebEngine paces pages at 60 fps even on a faster display; disabling its frame limit removes vsync entirely, so it is left as is.
 
@@ -145,11 +145,11 @@ The release is small because the engine is not bundled: it uses the Qt and QtWeb
 
 ### Arch package
 
-Download `nodaysidle-browser-0.3.0-1-x86_64.pkg.tar.zst` and `SHA256SUMS` from the [releases page](https://github.com/nodaysidle/nodaysidle-browser-linux/releases), check it, and install:
+Download `nodaysidle-browser-0.4.0-1-x86_64.pkg.tar.zst` and `SHA256SUMS` from the [releases page](https://github.com/nodaysidle/nodaysidle-browser-linux/releases), check it, and install:
 
 ```sh
 sha256sum -c --ignore-missing SHA256SUMS
-sudo pacman -U nodaysidle-browser-0.3.0-1-x86_64.pkg.tar.zst
+sudo pacman -U nodaysidle-browser-0.4.0-1-x86_64.pkg.tar.zst
 ```
 
 It depends on `qt6-base`, `qt6-declarative`, `qt6-webengine`, `qt6-wayland`, `openssl` and `libsecret`. For saved passwords you also need a Secret Service keyring such as `gnome-keyring`. Without one the Passwords panel tells you so and nothing is saved.
@@ -159,8 +159,8 @@ It depends on `qt6-base`, `qt6-declarative`, `qt6-webengine`, `qt6-wayland`, `op
 The tarball holds the binary, the launcher entry, the icon and fish completions. It needs the same Qt packages as above.
 
 ```sh
-tar xzf nodaysidle-browser-0.3.0-linux-x86_64.tar.gz
-cd nodaysidle-browser-0.3.0-linux-x86_64
+tar xzf nodaysidle-browser-0.4.0-linux-x86_64.tar.gz
+cd nodaysidle-browser-0.4.0-linux-x86_64
 install -Dm755 nodaysidle-browser ~/.local/bin/nodaysidle-browser
 install -Dm644 com.nodaysidle.Browser.desktop ~/.local/share/applications/com.nodaysidle.Browser.desktop
 install -Dm644 nodaysidle-browser.svg ~/.local/share/icons/hicolor/scalable/apps/nodaysidle-browser.svg
@@ -168,7 +168,7 @@ install -Dm644 nodaysidle-browser.svg ~/.local/share/icons/hicolor/scalable/apps
 
 ### Build from source
 
-This is the way to get what is on `master`. Needs Qt 6 (`qt6-base`, `qt6-declarative`, `qt6-webengine`, `qt6-wayland`), `openssl` and `libsecret`.
+Needs Qt 6 (`qt6-base`, `qt6-declarative`, `qt6-webengine`, `qt6-wayland`), `openssl` and `libsecret`.
 
 ```sh
 git clone https://github.com/nodaysidle/nodaysidle-browser-linux.git

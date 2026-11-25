@@ -1,6 +1,6 @@
 # Maintainer: nodaysidle
 pkgname=nodaysidle-browser
-pkgver=0.3.0
+pkgver=0.4.0
 pkgrel=1
 pkgdesc='Quiet Qt 6 browser for Omarchy, built on QtWebEngine'
 arch=('x86_64')
