@@ -56,6 +56,11 @@ ApplicationWindow {
     }]
     // Reactive handle on the visible tab's view; toolbar bindings depend on it.
     property var activeView: null
+    onActiveViewChanged: {
+        var nextUrl = activeView ? activeView.url.toString() : "";
+        if (askUrl.length > 0 && nextUrl !== askUrl)
+            resetAskConversation();
+    }
     onCurrentTabIndexChanged: {
         refreshActiveView();
         // Keep the active pill on screen when the strip is narrower than its contents.
@@ -65,6 +70,11 @@ ApplicationWindow {
     property bool bookmarksBarVisible: true
     property bool scamVisible: false
     property bool scamBusy: false
+    property bool askVisible: false
+    property bool askBusy: false
+    property var askMessages: []
+    property string askUrl: ""
+    property string askPending: ""
     property bool pageFullScreen: false
     property bool findVisible: false
     property bool historyVisible: false
@@ -295,6 +305,7 @@ ApplicationWindow {
         passwordsVisible = !passwordsVisible;
         if (passwordsVisible) {
             scamVisible = false;
+            askVisible = false;
             historyVisible = false;
             passwordsPanel.open();
         }
@@ -359,6 +370,7 @@ ApplicationWindow {
         historyVisible = !historyVisible;
         if (historyVisible) {
             scamVisible = false;
+            askVisible = false;
             passwordsVisible = false;
             historySearch.text = "";
             refreshHistory();
@@ -376,6 +388,53 @@ ApplicationWindow {
         v.runJavaScript("document.body.innerText", function(res) {
             backend.checkScam(v.title, v.url.toString(), res);
         });
+    }
+
+    function toggleAsk() {
+        askVisible = !askVisible;
+        if (askVisible) {
+            scamVisible = false;
+            historyVisible = false;
+            passwordsVisible = false;
+            if (backend.hasDeepSeekKey)
+                askInput.forceActiveFocus();
+        }
+    }
+
+    function resetAskConversation() {
+        var wasBusy = askBusy;
+        askBusy = false;
+        askPending = "";
+        askMessages = [];
+        askUrl = "";
+        askOutput.text = "";
+        if (wasBusy)
+            backend.cancelAsk();
+    }
+
+    function askAboutPage(question) {
+        var q = (question || "").trim();
+        var v = activeView;
+        if (q.length === 0 || askBusy || !backend.hasDeepSeekKey || !v)
+            return false;
+        var currentUrl = v.url.toString();
+        if (currentUrl !== askUrl) {
+            resetAskConversation();
+            askUrl = currentUrl;
+        }
+        var next = askMessages.slice();
+        next.push({ role: "user", content: q });
+        askMessages = next;
+        askPending = "";
+        askOutput.text += "You: " + q + "\n\nDeepSeek: ";
+        askBusy = true;
+        var title = v.title;
+        v.runJavaScript("document.body ? document.body.innerText : ''", function(res) {
+            if (!askBusy || askUrl !== currentUrl)
+                return;
+            backend.askPage(title, currentUrl, res || "", askMessages);
+        });
+        return true;
     }
 
     function toggleCurrentBookmark() {
@@ -572,7 +631,8 @@ ApplicationWindow {
         if (v) backend.toggleBookmark(v.title, v.url.toString());
     }}
     Shortcut { sequence: "Ctrl+B"; onActivated: bookmarksBarVisible = !bookmarksBarVisible }
-    Shortcut { sequence: "Ctrl+Shift+A"; onActivated: { scamVisible = !scamVisible; if (scamVisible) { historyVisible = false; passwordsVisible = false; } } }
+    Shortcut { sequence: "Ctrl+Shift+A"; onActivated: { scamVisible = !scamVisible; if (scamVisible) { askVisible = false; historyVisible = false; passwordsVisible = false; } } }
+    Shortcut { sequence: "Ctrl+Shift+E"; onActivated: toggleAsk() }
     Shortcut { sequence: "Alt+Left"; onActivated: { var v = currentView(); if (v && v.canGoBack) v.goBack(); } }
     Shortcut { sequence: "Alt+Right"; onActivated: { var v = currentView(); if (v && v.canGoForward) v.goForward(); } }
     Shortcut { sequence: "Ctrl+Tab"; onActivated: cycleTab(1) }
@@ -583,6 +643,7 @@ ApplicationWindow {
     Shortcut { sequence: "Escape"; enabled: passwordsVisible && !pageFullScreen && !findVisible; onActivated: passwordsVisible = false }
     Shortcut { sequence: "Escape"; enabled: historyVisible && !pageFullScreen && !findVisible; onActivated: historyVisible = false }
     Shortcut { sequence: "Escape"; enabled: scamVisible && !pageFullScreen && !findVisible; onActivated: scamVisible = false }
+    Shortcut { sequence: "Escape"; enabled: askVisible && !pageFullScreen && !findVisible; onActivated: askVisible = false }
 
     ColumnLayout {
         anchors.fill: parent
@@ -998,7 +1059,16 @@ ApplicationWindow {
                     accessibleName: "Scam check with TypeSafe"
                     active: scamVisible
                     cornerRadius: appWindow.cornerRadius
-                    onClicked: scamVisible = !scamVisible
+                    onClicked: { scamVisible = !scamVisible; if (scamVisible) { askVisible = false; historyVisible = false; passwordsVisible = false; } }
+                }
+
+                // Ask this page (DeepSeek) toggles the side panel
+                IconButton {
+                    icon: "chat"
+                    accessibleName: "Ask DeepSeek about this page"
+                    active: askVisible
+                    cornerRadius: appWindow.cornerRadius
+                    onClicked: toggleAsk()
                 }
             }
         }
@@ -1879,6 +1949,220 @@ ApplicationWindow {
                         }
                     }
                 }
+
+                // Ask this page side panel (DeepSeek)
+                Rectangle {
+                    Layout.preferredWidth: askVisible && !pageFullScreen ? 360 : 0
+                    Layout.fillHeight: true
+                    visible: askVisible && !pageFullScreen
+                    color: theme.surface
+                    border.color: theme.line
+                    border.width: 1
+                    Accessible.role: Accessible.Pane
+                    Accessible.name: "Ask this page"
+
+                    Behavior on Layout.preferredWidth {
+                        NumberAnimation { duration: 150; easing.type: Easing.OutQuad }
+                    }
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 14
+                        spacing: 12
+
+                        // Header
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Text {
+                                text: "Ask this page"
+                                font.pixelSize: 15
+                                font.bold: true
+                                color: theme.textStrong
+                                Layout.fillWidth: true
+                            }
+
+                            IconButton {
+                                label: "New chat"
+                                buttonSize: 24
+                                accessibleName: "New chat"
+                                cornerRadius: appWindow.cornerRadius
+                                enabled: askMessages.length > 0 || askOutput.text.length > 0 || askBusy
+                                opacity: enabled ? 1.0 : 0.4
+                                onClicked: resetAskConversation()
+                            }
+
+                            IconButton {
+                                icon: "close"
+                                buttonSize: 24
+                                accessibleName: "Close ask panel"
+                                cornerRadius: appWindow.cornerRadius
+                                onClicked: askVisible = false
+                            }
+                        }
+
+                        // What leaves the machine, and where it goes.
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: Math.max(28, askBadgeText.implicitHeight + 12)
+                            radius: appWindow.cornerRadius
+                            color: Qt.alpha(theme.chrome, 0.7)
+
+                            Text {
+                                id: askBadgeText
+                                anchors.centerIn: parent
+                                width: parent.width - 16
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                                text: backend.hasDeepSeekKey
+                                      ? "Sends this page's text and your question to DeepSeek (api.deepseek.com, deepseek-flash)."
+                                      : "Set DEEPSEEK_API_KEY in your shell to use this."
+                                font.pixelSize: 11
+                                color: theme.text
+                            }
+                        }
+
+                        // Quick prompts
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            Repeater {
+                                model: [
+                                    {
+                                        label: "Summarize",
+                                        name: "Summarize this page",
+                                        prompt: "Summarize this page in a few short paragraphs, then list the key points."
+                                    },
+                                    {
+                                        label: "Key points",
+                                        name: "List key points of this page",
+                                        prompt: "List the key points of this page as short bullet lines starting with -."
+                                    }
+                                ]
+
+                                Rectangle {
+                                    id: quickBtn
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    height: 30
+                                    enabled: backend.hasDeepSeekKey && !askBusy
+                                    opacity: enabled ? 1.0 : 0.4
+                                    radius: appWindow.cornerRadius
+                                    color: quickHover.containsMouse && enabled ? theme.chrome : Qt.alpha(theme.chrome, 0.6)
+                                    border.color: activeFocus ? theme.accent : theme.line
+
+                                    activeFocusOnTab: enabled
+                                    Accessible.role: Accessible.Button
+                                    Accessible.name: quickBtn.modelData.name
+                                    Accessible.onPressAction: if (quickBtn.enabled) askAboutPage(quickBtn.modelData.prompt)
+                                    Keys.onPressed: function(event) {
+                                        if (quickBtn.enabled && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)) {
+                                            askAboutPage(quickBtn.modelData.prompt);
+                                            event.accepted = true;
+                                        }
+                                    }
+
+                                    Text {
+                                        anchors.centerIn: parent
+                                        text: quickBtn.modelData.label
+                                        font.pixelSize: 12
+                                        font.bold: true
+                                        color: theme.textStrong
+                                    }
+
+                                    MouseArea {
+                                        id: quickHover
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        onClicked: {
+                                            quickBtn.forceActiveFocus();
+                                            askAboutPage(quickBtn.modelData.prompt);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Conversation log
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            radius: appWindow.cornerRadius
+                            color: theme.chrome
+                            border.color: theme.line
+                            clip: true
+
+                            ScrollView {
+                                anchors.fill: parent
+                                anchors.margins: 8
+
+                                TextArea {
+                                    id: askOutput
+                                    Accessible.name: "Conversation"
+                                    readOnly: true
+                                    wrapMode: Text.Wrap
+                                    textFormat: TextEdit.PlainText
+                                    selectByMouse: true
+                                    color: theme.textStrong
+                                    selectionColor: theme.accent
+                                    selectedTextColor: theme.accentForeground
+                                    font.pixelSize: 12
+                                    text: ""
+                                    onTextChanged: cursorPosition = length
+                                }
+                            }
+                        }
+
+                        // Question input and Send/Stop button
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            TextField {
+                                id: askInput
+                                Layout.fillWidth: true
+                                implicitHeight: 32
+                                Accessible.name: "Question"
+                                enabled: backend.hasDeepSeekKey
+                                opacity: enabled ? 1.0 : 0.4
+                                placeholderText: "Ask about this page…"
+                                placeholderTextColor: theme.mutedText
+                                color: theme.textStrong
+                                selectionColor: theme.accent
+                                selectedTextColor: theme.accentForeground
+                                font.pixelSize: 12
+                                selectByMouse: true
+                                background: Rectangle {
+                                    radius: appWindow.cornerRadius
+                                    color: theme.chrome
+                                    border.color: askInput.activeFocus ? theme.accent : theme.inputBorder
+                                }
+                                onAccepted: {
+                                    if (askAboutPage(text))
+                                        text = "";
+                                }
+                            }
+
+                            IconButton {
+                                label: askBusy ? "Stop" : "Send"
+                                accessibleName: askBusy ? "Stop answer" : "Send question"
+                                active: enabled
+                                enabled: askBusy || (backend.hasDeepSeekKey && askInput.text.trim().length > 0)
+                                opacity: enabled ? 1.0 : 0.4
+                                buttonSize: 32
+                                cornerRadius: appWindow.cornerRadius
+                                onClicked: {
+                                    if (askBusy)
+                                        backend.cancelAsk();
+                                    else if (askAboutPage(askInput.text))
+                                        askInput.text = "";
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2045,6 +2329,42 @@ ApplicationWindow {
             scamOutput.text += "  • Credential harvest: " + cred + "%\n";
             scamOutput.text += "  • Pressure / urgency: " + press + "%\n";
             scamOutput.text += "  (Jev estimate for " + host + ")\n\n";
+        }
+
+        function onAskChunk(text) {
+            if (!askBusy)
+                return;
+            askPending += text;
+            askOutput.text += text;
+        }
+
+        function onAskDone() {
+            if (!askBusy)
+                return;
+            if (askPending.length > 0) {
+                var next = askMessages.slice();
+                next.push({ role: "assistant", content: askPending });
+                askMessages = next;
+            } else if (askMessages.length > 0 && askMessages[askMessages.length - 1].role === "user") {
+                askMessages = askMessages.slice(0, -1);
+            }
+            askPending = "";
+            askBusy = false;
+            askOutput.text += "\n\n";
+        }
+
+        function onAskError(err) {
+            if (!askBusy)
+                return;
+            askBusy = false;
+            askPending = "";
+            if (askMessages.length > 0 && askMessages[askMessages.length - 1].role === "user")
+                askMessages = askMessages.slice(0, -1);
+            askOutput.text += "\nError: " + err + "\n\n";
+            appWindow.undoAction = null;
+            toastText.text = err.split("\n")[0];
+            toast.visible = true;
+            toastTimer.restart();
         }
     }
 }

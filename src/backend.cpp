@@ -18,6 +18,7 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <algorithm>
+#include <memory>
 #include <utility>
 
 Backend::Backend(QObject *parent) : QObject(parent) {
@@ -224,10 +225,14 @@ QString Backend::homeUrl() const {
 }
 
 void Backend::loadKeys() {
-    // TypeSafe is the only AI integration left, and its key comes from the environment.
+    // AI keys come from the environment, falling back to fish config when launched outside a shell.
     m_jevKey = qEnvironmentVariable("TYPESAFE_API_KEY");
     if (m_jevKey.isEmpty())
         m_jevKey = findKeyInFish("TYPESAFE_API_KEY");
+
+    m_deepseekKey = qEnvironmentVariable("DEEPSEEK_API_KEY");
+    if (m_deepseekKey.isEmpty())
+        m_deepseekKey = findKeyInFish("DEEPSEEK_API_KEY");
 }
 
 namespace {
@@ -489,6 +494,39 @@ QString typesafeError(int status, const QByteArray &body, const QString &network
     return detail.isEmpty() ? summary : summary + "\n" + detail.left(300);
 }
 
+QString deepseekError(int status, const QByteArray &body, const QString &networkError) {
+    QString detail;
+    const QJsonObject root = QJsonDocument::fromJson(body).object();
+    const QJsonValue error = root.value("error");
+    if (error.isObject()) {
+        detail = error.toObject().value("message").toString();
+        if (detail.isEmpty())
+            detail = error.toObject().value("type").toString();
+    } else if (error.isString()) {
+        detail = error.toString();
+    }
+    if (detail.isEmpty())
+        detail = root.value("message").toString();
+    if (detail.isEmpty())
+        detail = QString::fromUtf8(body).trimmed().left(300);
+
+    QString summary;
+    if (status == 401)
+        summary = "DeepSeek API key rejected (401): check DEEPSEEK_API_KEY";
+    else if (status == 402)
+        summary = "DeepSeek balance is used up (402): top up at platform.deepseek.com";
+    else if (status == 429)
+        summary = "DeepSeek rate limit reached (429): wait and retry";
+    else if (status >= 500)
+        summary = QString("DeepSeek server busy or failing (%1): retry in a moment").arg(status);
+    else if (status >= 400)
+        summary = QString("DeepSeek rejected the request (%1)").arg(status);
+    else
+        summary = "DeepSeek request failed: " + (networkError.isEmpty() ? QStringLiteral("no response") : networkError);
+
+    return detail.isEmpty() ? summary : summary + "\n" + detail.left(300);
+}
+
 }  // namespace
 
 void Backend::checkScam(const QString &title, const QString &url, const QString &text) {
@@ -558,6 +596,122 @@ void Backend::checkScam(const QString &title, const QString &url, const QString 
         }
 
         emit scamResult(verdict, qRound(imp * 100), qRound(cred * 100), qRound(press * 100), host);
+        reply->deleteLater();
+    });
+}
+
+void Backend::cancelAsk() {
+    if (m_askReply) {
+        QNetworkReply *reply = m_askReply;
+        m_askReply = nullptr;
+        reply->abort();
+    }
+}
+
+void Backend::askPage(const QString &title, const QString &url, const QString &text, const QVariantList &messages) {
+    cancelAsk();
+
+    if (m_deepseekKey.isEmpty()) {
+        emit askError("Set DEEPSEEK_API_KEY in your shell.");
+        return;
+    }
+
+    QNetworkRequest request(QUrl("https://api.deepseek.com/chat/completions"));
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    request.setRawHeader("Authorization", ("Bearer " + m_deepseekKey).toUtf8());
+    request.setRawHeader("Accept", "text/event-stream");
+    request.setTransferTimeout(60000);
+
+    QJsonArray msgArray;
+    QJsonObject sysMsg;
+    sysMsg["role"] = "system";
+    sysMsg["content"] = QString(
+        "You help the person reading the web page below: answer their questions about it, summarize it, "
+        "or explain parts of it. Use the page as your main source and say so when the page does not "
+        "contain the answer. Be concise and direct. Reply in plain text, without Markdown formatting.\n\n"
+        "Title: %1\nURL: %2\n<page>\n%3\n</page>")
+        .arg(title, url, text.left(50000));
+    msgArray.append(sysMsg);
+
+    for (const auto &entry : messages) {
+        const QVariantMap map = entry.toMap();
+        const QString role = map.value("role").toString();
+        const QString content = map.value("content").toString();
+        if ((role != "user" && role != "assistant") || content.isEmpty())
+            continue;
+        QJsonObject msg;
+        msg["role"] = role;
+        msg["content"] = content;
+        msgArray.append(msg);
+    }
+
+    QJsonObject thinking;
+    thinking["type"] = "disabled";
+
+    QJsonObject body;
+    body["model"] = "deepseek-flash";
+    body["stream"] = true;
+    body["max_tokens"] = 4000;
+    body["thinking"] = thinking;
+    body["messages"] = msgArray;
+
+    QNetworkReply *reply = m_nam.post(request, QJsonDocument(body).toJson(QJsonDocument::Compact));
+    m_askReply = reply;
+
+    auto pending = std::make_shared<QByteArray>();
+    auto processLine = [this](const QByteArray &rawLine) {
+        const QByteArray line = rawLine.trimmed();
+        if (!line.startsWith("data:"))
+            return;
+        const QByteArray payload = line.mid(5).trimmed();
+        if (payload.isEmpty() || payload == "[DONE]")
+            return;
+        const QJsonObject obj = QJsonDocument::fromJson(payload).object();
+        const QJsonArray choices = obj.value("choices").toArray();
+        for (const auto &choice : choices) {
+            const QJsonValue content = choice.toObject().value("delta").toObject().value("content");
+            if (content.isString()) {
+                const QString chunk = content.toString();
+                if (!chunk.isEmpty())
+                    emit askChunk(chunk);
+            }
+        }
+    };
+
+    connect(reply, &QNetworkReply::readyRead, this, [reply, pending, processLine]() {
+        pending->append(reply->readAll());
+        if (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() >= 400)
+            return;
+        qsizetype newline;
+        while ((newline = pending->indexOf('\n')) >= 0) {
+            processLine(pending->left(newline));
+            pending->remove(0, newline + 1);
+        }
+    });
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, pending, processLine]() {
+        const bool wasActive = (reply == m_askReply);
+        if (wasActive)
+            m_askReply = nullptr;
+        if (reply->error() == QNetworkReply::OperationCanceledError && !wasActive) {
+            emit askDone();
+        } else {
+            const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+            const QByteArray remaining = *pending + reply->readAll();
+            if (reply->error() != QNetworkReply::NoError || status >= 400) {
+                const QString netErr = reply->error() == QNetworkReply::OperationCanceledError
+                                           ? QStringLiteral("transfer timed out")
+                                           : reply->errorString();
+                emit askError(deepseekError(status, remaining, netErr));
+            } else {
+                if (!remaining.isEmpty()) {
+                    const QList<QByteArray> lines = remaining.split('\n');
+                    for (const QByteArray &rawLine : lines)
+                        processLine(rawLine);
+                }
+                emit askDone();
+            }
+        }
         reply->deleteLater();
     });
 }

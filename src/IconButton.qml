@@ -81,6 +81,19 @@ Rectangle {
                 c.lineTo(3, 4);
                 c.closePath();
                 break;
+            case "chat":
+                c.moveTo(2.5, 4.5);
+                c.quadraticCurveTo(2.5, 2.5, 4.5, 2.5);
+                c.lineTo(11.5, 2.5);
+                c.quadraticCurveTo(13.5, 2.5, 13.5, 4.5);
+                c.lineTo(13.5, 9);
+                c.quadraticCurveTo(13.5, 11, 11.5, 11);
+                c.lineTo(7, 11);
+                c.lineTo(4, 13.5);
+                c.lineTo(4.5, 11);
+                c.quadraticCurveTo(2.5, 11, 2.5, 9);
+                c.closePath();
+                break;
             case "plus":
                 c.moveTo(8, 3); c.lineTo(8, 13); c.moveTo(3, 8); c.lineTo(13, 8);
                 break;

@@ -7,12 +7,14 @@
 #include <QVariantMap>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QPointer>
 #include <QTimer>
 
 class Backend : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList bookmarks READ bookmarks NOTIFY bookmarksChanged)
     Q_PROPERTY(bool hasJevKey READ hasJevKey CONSTANT)
+    Q_PROPERTY(bool hasDeepSeekKey READ hasDeepSeekKey CONSTANT)
     Q_PROPERTY(QString homeUrl READ homeUrl CONSTANT)
     Q_PROPERTY(QStringList initialUrls READ initialUrls CONSTANT)
     Q_PROPERTY(QVariantList sessionTabs READ sessionTabs CONSTANT)
@@ -24,6 +26,7 @@ public:
 
     QVariantList bookmarks() const { return m_bookmarks; }
     bool hasJevKey() const { return !m_jevKey.isEmpty(); }
+    bool hasDeepSeekKey() const { return !m_deepseekKey.isEmpty(); }
     QString homeUrl() const;
     QStringList initialUrls() const { return m_initialUrls; }
     void setInitialUrls(const QStringList &urls) { m_initialUrls = urls; }
@@ -57,8 +60,10 @@ public:
     // Opens a folder or file with the desktop's handler (xdg-open).
     Q_INVOKABLE void openPath(const QString &path) const;
 
-    // TypeSafe Jev scam check: the only AI integration.
+    // TypeSafe Jev scam check and DeepSeek page assistant.
     Q_INVOKABLE void checkScam(const QString &title, const QString &url, const QString &text);
+    Q_INVOKABLE void askPage(const QString &title, const QString &url, const QString &text, const QVariantList &messages);
+    Q_INVOKABLE void cancelAsk();
 
 signals:
     void openRequested(const QString &url);
@@ -66,6 +71,9 @@ signals:
     void bookmarksChanged();
     void assistantError(const QString &error);
     void scamResult(const QString &verdict, int impersonation, int credentials, int pressure, const QString &host);
+    void askChunk(const QString &text);
+    void askDone();
+    void askError(const QString &error);
 
 private:
     void loadKeys();
@@ -86,7 +94,9 @@ private:
     QTimer m_historySave;
     QStringList m_initialUrls;
     QString m_jevKey;
+    QString m_deepseekKey;
     // Lower-cased bookmark URLs, so isBookmarked() is O(1).
     QSet<QString> m_bookmarkUrls;
     QNetworkAccessManager m_nam;
+    QPointer<QNetworkReply> m_askReply;
 };
