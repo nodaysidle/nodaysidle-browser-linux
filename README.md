@@ -8,7 +8,7 @@
 
 <p align="center">
   <strong>A quiet, native browser for Omarchy (Arch + Wayland + Hyprland).</strong><br>
-  Qt 6 Quick on QtWebEngine (Chromium). Minimal chrome, saved passwords that stay on your machine, no telemetry.
+  Qt 6 Quick on QtWebEngine (Chromium). Minimal chrome, saved passwords that stay on your machine, an assistant that reads the page only when you ask, no telemetry.
 </p>
 
 <p align="center">
@@ -30,12 +30,14 @@
 <p align="center">
   <a href="#what-it-is">What it is</a> ·
   <a href="#core-capabilities">Features</a> ·
-  <a href="#measured-performance">Performance</a> ·
+  <a href="#ai-only-when-you-ask">AI</a> ·
   <a href="#keyboard-shortcuts">Shortcuts</a> ·
   <a href="#installation">Install</a> ·
   <a href="#how-it-works">How it works</a> ·
-  <a href="#repository-architecture">Architecture</a>
+  <a href="#privacy-model">Privacy</a>
 </p>
+
+> **Release vs. `master`.** The downloads above are `v0.3.0`. `master` is ahead of it: the **Ask this page** assistant (DeepSeek), click-to-fill passwords that never fill over plain `http`, tab session restore with a quit prompt, a download shelf that asks before saving, keyboard and screen-reader access to the toolbar, and other fixes. To get those now, [build from source](#build-from-source).
 
 ---
 
@@ -43,22 +45,23 @@
 
 `nodaysidle` is a small browser written for Omarchy. The page is Chromium (through QtWebEngine); everything around it, the tab bar, omnibox, side panels and bars, is Qt Quick drawn with the colors of your current Omarchy theme. It runs as a pure Wayland client and keeps every piece of user data in `~/.local/share/nodaysidle-browser/`.
 
-It is built to be a daily browser, not a demo: Google sign-in works and survives a restart, saved logins fill themselves in, and your bookmarks, history and passwords can be brought over from the browser you used before.
+It is built to be a daily browser, not a demo: Google sign-in works and survives a restart, saved logins fill in with one click, and your bookmarks, history and passwords can be brought over from the browser you used before.
 
 ![The Passwords panel: saved logins, and import from other browsers](docs/assets/passwords.png)
 
 ## Core capabilities
 
 **Browsing**
-- Tabs with site icons, middle-click close, `Ctrl+Tab` cycling and reopen closed tab
+- Tabs with site icons, middle-click close, `Ctrl+Tab` cycling, reopen closed tab, and your tabs restored after a restart
 - Omnibox: URL or DuckDuckGo search, local hosts over http, suggestions from bookmarks and history, https indicator, star bookmark
-- Find in page with match count, zoom, full screen, print to PDF, downloads to the XDG Downloads folder without overwriting
+- Find in page with match count, zoom, full screen, print to PDF
+- Downloads ask first in a shelf that shows where the file comes from and its size, then land in the XDG Downloads folder without overwriting
 - Popups for sign-in flows open in their own window and close themselves
 - Permission requests (camera, microphone, notifications, clipboard, screen) ask first through a bar; Allow lasts for the session and Deny is never stored. Location requests are refused because QtWebEngine has no location service
 - Ad and tracker blocker built in (`src/adblock.h`): requests to a fixed list of ad and analytics hosts are dropped before they leave the machine; your own navigations and a site's own requests are never blocked
 
 **Your data**
-- **Passwords:** after a sign-in the browser offers to save, update or never save the login; returning to the site fills it in, including two-step sign-ins that ask for the account first. `Ctrl+Shift+K` lists, shows, copies and deletes logins
+- **Passwords:** after a sign-in the browser offers to save, update or never save the login. Back on the site, one click fills it in, including two-step sign-ins that ask for the account first; nothing is filled over plain `http` except on your own machine. `Ctrl+Shift+K` lists, shows, copies and deletes logins
 - **Import:** bookmarks and history from Chrome, Chromium, Brave, Edge, Vivaldi, Opera, Firefox, Zen, LibreWolf, Floorp and Waterfox profiles; passwords straight from the Chromium family; any browser's passwords CSV export
 - **Bookmarks bar** starts empty and shows only what you add or import; each import becomes its own folder
 - **History** in a searchable panel (`Ctrl+H`), the last 5,000 visits, stored with mode 0600
@@ -69,13 +72,39 @@ It is built to be a daily browser, not a demo: Google sign-in works and survives
 - Installs as an Arch package, so it shows up in the Omarchy launcher (`Super + Space`)
 - A second launch hands its URLs to the running window, so links from other apps open as tabs
 
-**Ask this page** (`Ctrl+Shift+E`, toolbar button "Ask DeepSeek about this page"): ask questions about the open page, or use **Summarize** and **Key points**. Answers stream from DeepSeek (`api.deepseek.com`, model `deepseek-flash`, thinking disabled); **Send** turns into **Stop** while answering, **New chat** clears the thread, `Esc` closes the panel, and the conversation resets when the active page changes. Needs `DEEPSEEK_API_KEY` (without it the panel says how to set it). Nothing is sent until you ask: only the page title, URL, the first 50,000 characters of visible text and the conversation go to DeepSeek.
+## AI, only when you ask
 
-**Scam check** (`Ctrl+Shift+A`): the page's text goes to TypeSafe Jev (`api.typesafe.ai`, model `jev-latest`), which answers three risk questions. Nothing is sent until you click Check, and the panel says where the text goes. Needs `TYPESAFE_API_KEY`. The side panels (Ask, Scam check, History, Passwords) are mutually exclusive.
+Two optional side panels use a remote model. Each needs its own API key, sends nothing until you press a button, and says in the panel exactly where the text goes. Without a key the panel tells you how to set one, and the rest of the browser is unaffected. Only one side panel is open at a time.
+
+### Ask this page (DeepSeek)
+
+`Ctrl+Shift+E` or the chat button in the toolbar. Ask anything about the page you are reading, or press **Summarize** or **Key points**.
+
+- Answers stream in from DeepSeek `deepseek-flash` (`api.deepseek.com`), with its thinking mode off so the first words arrive quickly
+- Follow-up questions keep the conversation; **New chat** starts over, and switching to another page or tab starts a fresh conversation, so answers never mix two pages
+- **Send** turns into **Stop** while an answer is coming; `Esc` closes the panel
+- Answers are shown as plain text, so a reply can never load a remote image
+- Sent per question: the page title, its URL, the first 50,000 characters of its visible text, and the conversation so far
+
+### Scam check (TypeSafe)
+
+`Ctrl+Shift+A` or the shield button. **Check this page** sends the page title, host and up to 12,000 characters of its text to TypeSafe Jev (`api.typesafe.ai`, model `jev-latest`), which scores three risks: brand impersonation, requests for passwords or payment details, and pressure tactics.
+
+### Setting the keys
+
+The browser reads `DEEPSEEK_API_KEY` and `TYPESAFE_API_KEY` from its environment. Because a launcher-started app does not see your shell's environment, it also looks in your fish config: first `~/.config/fish/secrets.fish`, then fish universal variables. It never writes a key to disk.
+
+```fish
+# ~/.config/fish/secrets.fish
+set -gx DEEPSEEK_API_KEY sk-...
+set -gx TYPESAFE_API_KEY ...
+```
+
+or once, as universal variables: `set -Ux DEEPSEEK_API_KEY sk-...`. Restart the browser after adding a key.
 
 ## Measured performance
 
-Reference machine: Intel Core Ultra 7 155H, Intel Arc iGPU, Mesa 26.2.5, 2560x1440 at 165 Hz, Hyprland 0.56.2, QtWebEngine 6.11.2 (Chromium 140). Release build, fresh profile, start page.
+Measured on `v0.3.0`. Reference machine: Intel Core Ultra 7 155H, Intel Arc iGPU, Mesa 26.2.5, 2560x1440 at 165 Hz, Hyprland 0.56.2, QtWebEngine 6.11.2 (Chromium 140). Release build, fresh profile, start page.
 
 | Metric | Result |
 |---|---|
@@ -105,11 +134,12 @@ The release is small because the engine is not bundled: it uses the Qt and QtWeb
 | `Ctrl++`, `Ctrl+-`, `Ctrl+0` | Zoom in, out, reset |
 | `Ctrl+H` | History panel |
 | `Ctrl+Shift+K` | Passwords panel |
-| `Ctrl+Shift+E` | Ask this page panel |
-| `Ctrl+Shift+A` | Scam check panel |
+| `Ctrl+Shift+E` | Ask this page (DeepSeek) |
+| `Ctrl+Shift+A` | Scam check (TypeSafe) |
 | `Ctrl+P` | Save the page as a PDF |
-| `F11` / `Esc` | Full screen / leave full screen or close open panel |
-| `Ctrl+Q` | Quit |
+| `F11` | Full screen |
+| `Esc` | Leave full screen, close the find bar or the open side panel |
+| `Ctrl+Q` | Quit (asks first when many tabs are open) |
 
 ## Installation
 
@@ -138,9 +168,11 @@ install -Dm644 nodaysidle-browser.svg ~/.local/share/icons/hicolor/scalable/apps
 
 ### Build from source
 
-Needs Qt 6 (`qt6-base`, `qt6-declarative`, `qt6-webengine`, `qt6-wayland`), `openssl` and `libsecret`.
+This is the way to get what is on `master`. Needs Qt 6 (`qt6-base`, `qt6-declarative`, `qt6-webengine`, `qt6-wayland`), `openssl` and `libsecret`.
 
 ```sh
+git clone https://github.com/nodaysidle/nodaysidle-browser-linux.git
+cd nodaysidle-browser-linux
 ./bin/build                        # qmake6 + make, writes build/nodaysidle-browser
 ./bin/run [URL]                    # run it
 ./bin/install                      # makepkg -fsi: install the package so it shows in the launcher
@@ -152,24 +184,27 @@ Set it as your default browser with `xdg-settings set default-web-browser com.no
 
 ## How it works
 
-- **Platform.** `main.cpp` forces `QT_QPA_PLATFORM=wayland` and starts QtWebEngine with GPU rasterization and zero-copy. `--use-gl=egl` is deliberately not set: it forces GLES2 and crashes the in-process GPU thread on Wayland.
+- **Platform.** `main.cpp` forces `QT_QPA_PLATFORM=wayland` and starts QtWebEngine with GPU rasterization and zero-copy. `--use-gl=egl` is deliberately not set: it forces GLES2 and crashes the in-process GPU thread on Wayland. The Chromium renderer sandbox stays on.
 - **Profile.** A named, non-off-the-record profile with its own storage path keeps cookies and site data on disk; the default QtWebEngine profile is off the record and would forget every sign-in.
 - **Google sign-in.** Google rejects QtWebEngine ("This browser or app may not be secure"). The profile sends a plain Chrome user agent that matches the engine's major version, and `src/chrome_app.js` defines `window.chrome.app`, which QtWebEngine never provides. Both are needed.
-- **Passwords.** A login agent (`src/login.js`) runs in an isolated page world, so page scripts cannot see or forge it. It finds password fields, reports a submitted login and fills a saved one, and speaks to the browser through console lines that carry a random per-run nonce. `Vault` stores the logins in `passwords.vault` encrypted with AES-256-GCM; the key is a random 32 bytes held in the desktop keyring through `secret-tool`, so no readable secret is ever written to disk.
+- **Passwords.** A login agent (`src/login.js`) runs in an isolated page world, so page scripts cannot see or forge it. It finds password fields, reports a submitted login and fills a saved one after your click, and speaks to the browser through console lines that carry a random per-run nonce. `Vault` stores the logins in `passwords.vault` encrypted with AES-256-GCM; the key is a random 32 bytes held in the desktop keyring through `secret-tool`, so no readable secret is ever written to disk.
 - **Import.** `Importer` reads other browsers' profile folders directly. Their databases are copied first because they are locked while those browsers run. Chromium passwords are decrypted with the Safe Storage key from the keyring; Firefox-family passwords come in through the CSV export, since Firefox keeps them under its own key store.
-- **Theme.** `Theme` watches Omarchy's `colors.toml` (re-arming the watcher when a theme switch replaces files) and polls `hyprctl` for the corner radius.
+- **Theme.** `Theme` watches Omarchy's `colors.toml` (re-arming the watcher when a theme switch replaces files) and polls `hyprctl` for the corner radius. Text colors are adjusted until they reach WCAG AA contrast on the theme's panels.
 - **Ad blocker.** A `QWebEngineUrlRequestInterceptor` drops sub-resource requests whose host, or a parent domain, is on the list, off the UI thread.
-- **Scam check.** The backend posts the page's title, host and up to 12,000 characters of text to TypeSafe Jev and reads the three `noul` answers back. The key comes from the environment, then `~/.config/fish/secrets.fish`, then `~/.config/fish/fish_variables`: `TYPESAFE_API_KEY`. The app never writes it to disk. HTTP and JSON failures are mapped to plain wording (key rejected, out of credits, rate limited, server error) instead of Qt's generic message.
-- **Ask this page.** `Backend::askPage` streams the page's title, URL, the first 50,000 characters of visible text and the conversation to `https://api.deepseek.com/chat/completions` (`deepseek-flash`, thinking disabled), emitting `askChunk`, `askDone` and `askError`; `Backend::cancelAsk` stops an active stream. `DEEPSEEK_API_KEY` uses the same environment-then-fish-config lookup as `TYPESAFE_API_KEY` (`set -gx DEEPSEEK_API_KEY …` in `~/.config/fish/secrets.fish`, then `~/.config/fish/fish_variables`) and is never written to disk.
+- **Ask this page.** `Backend::askPage` posts the conversation to `https://api.deepseek.com/chat/completions` as a stream and emits each piece of the answer as it arrives (`askChunk`, then `askDone` or `askError`); `Backend::cancelAsk` stops it. A stream that stalls for 60 s fails with a message instead of hanging.
+- **Scam check.** The backend posts the page's title, host and text to TypeSafe Jev and reads the three `noul` answers back.
+- **AI errors.** HTTP and JSON failures from either service are mapped to plain wording (key rejected, out of credits or balance, rate limited, server busy) followed by the service's own message, instead of Qt's generic network error.
 
 ## Languages and size
 
+Non-blank lines, comment-only lines left out.
+
 | Language | Where | Lines |
 |---|---|---|
-| C++17 | backend, vault, importer, theme, ad blocker, startup | 1,750 |
-| QML | window, panels, bars, menus, icons | 1,989 |
-| JavaScript | login agent, `window.chrome.app` shim | 161 |
-| HTML / CSS | start page | 83 |
+| C++17 | backend, vault, importer, theme, ad blocker, startup | 1,931 |
+| QML | window, panels, bars, menus, icons | 2,510 |
+| JavaScript | login agent, `window.chrome.app` shim | 153 |
+| HTML / CSS | start page | 90 |
 
 ## Repository architecture
 
@@ -177,25 +212,28 @@ Set it as your default browser with `xdg-settings set default-web-browser com.no
 |---|---|
 | `nodaysidle-browser.pro` | qmake project: Qt modules, sources, `-lcrypto` |
 | `src/main.cpp` | Wayland setup, persistent profile, Chrome user agent, downloads, single instance, QML engine |
-| `src/backend.{h,cpp}` | Bookmarks, history, URL resolution, clipboard, DeepSeek Ask (`askPage`/`cancelAsk`) and TypeSafe Jev calls |
+| `src/backend.{h,cpp}` | Bookmarks, history, sessions, URL resolution, clipboard, API keys, the DeepSeek and TypeSafe calls |
 | `src/vault.{h,cpp}` | Encrypted saved logins and the keyring-held key |
 | `src/importer.{h,cpp}` | Imports from Chromium and Firefox family profiles and passwords CSV |
-| `src/theme.{h,cpp}` | Omarchy `colors.toml` watcher and Hyprland rounding |
+| `src/theme.{h,cpp}` | Omarchy `colors.toml` watcher, contrast adjustment, Hyprland rounding |
 | `src/adblock.h` | Hardcoded ad and tracker request blocker |
-| `src/Main.qml` | Window, tabs, toolbar, find, permission and save-login bars, History, Ask this page and Scam check panels |
+| `src/Main.qml` | Window, tabs, toolbar, find, permission, download and save-login bars; History, Ask this page and Scam check panels |
 | `src/PasswordsPanel.qml` | Saved logins and import panel |
 | `src/IconButton.qml`, `ThemedMenu*.qml` | Toolbar icons drawn on one grid, themed menus |
 | `src/login.js`, `src/chrome_app.js` | Login agent, Google sign-in shim |
 | `src/home.html` | Start page |
 | `pkgbuild/`, `bin/install` | Arch package for the Omarchy launcher |
-| `dev/` | Agent instructions, the product harness, roles and feature contract used while building the app |
+| `dev/` | The product harness, roles and feature contract used while building the app |
 | `bin/build`, `bin/run`, `scripts/` | Build, run, validate, per-user install |
 
 ## Privacy model
 
 - No analytics, no telemetry, no remote logging
+- Nothing goes to an AI service until you press a button in its panel:
+  - **Ask this page** sends DeepSeek (`api.deepseek.com`) the page title, URL, the first 50,000 characters of visible text and the conversation
+  - **Scam check** sends TypeSafe Jev (`api.typesafe.ai`) the page title, host and up to 12,000 characters of text
+- API keys are read from your environment or fish config and never written to disk
 - Passwords are encrypted at rest and the key lives in your keyring
-- Nothing is sent to an AI service until you ask: **Ask this page** sends the page title, URL, the first 50,000 characters of visible text and the conversation to DeepSeek (`api.deepseek.com`); **Scam check** sends the page title, host and up to 12,000 characters of text to TypeSafe Jev (`api.typesafe.ai`)
 - History, bookmarks and the vault are local files under `~/.local/share/nodaysidle-browser/`; history and the vault are mode 0600
 - A passwords CSV export is plain text. Delete it after importing
 
