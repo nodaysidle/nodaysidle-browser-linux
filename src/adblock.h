@@ -5,7 +5,6 @@
 #include <QUrl>
 #include <QWebEngineUrlRequestInfo>
 #include <QWebEngineUrlRequestInterceptor>
-#include <atomic>
 
 // Blocks sub-resource requests to well-known ad and tracking hosts.
 // Page navigations are never blocked, and a site's own requests to itself pass.
@@ -13,8 +12,6 @@ class AdBlocker : public QWebEngineUrlRequestInterceptor {
     Q_OBJECT
 public:
     explicit AdBlocker(QObject *parent = nullptr) : QWebEngineUrlRequestInterceptor(parent) {}
-
-    int blockedCount() const { return m_blocked.load(); }
 
     static bool isBlockedHost(const QString &host) {
         static const QSet<QString> domains = {
@@ -46,9 +43,5 @@ public:
         if (pageHost == host || pageHost.endsWith("." + host))
             return;
         info.block(true);
-        ++m_blocked;
     }
-
-private:
-    std::atomic<int> m_blocked{0};
 };

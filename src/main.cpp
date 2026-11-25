@@ -3,18 +3,14 @@
 #include <QLocalSocket>
 #include <memory>
 #include <unistd.h>
-#include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QStandardPaths>
 #include <QStyleHints>
 #include <QtWebEngineQuick/qtwebenginequickglobal.h>
-#include <QWebEngineProfile>
-#include <QWebEngineSettings>
 #include <QtWebEngineCore/qtwebenginecoreglobal.h>
 #include <QQuickWebEngineProfile>
-#include <QtWebEngineQuick/qquickwebenginedownloadrequest.h>
 
 #include "adblock.h"
 #include "backend.h"

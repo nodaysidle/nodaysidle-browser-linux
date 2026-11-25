@@ -19,7 +19,6 @@ constexpr const char *fallbackBackground = "#090A0C";
 constexpr const char *fallbackForeground = "#F8FAFC";
 constexpr const char *fallbackRed = "#F43F5E";
 constexpr const char *fallbackGreen = "#10B981";
-constexpr const char *fallbackYellow = "#FBBF24";
 
 QString defaultThemeDirectory() {
     const QString state = QDir::homePath() + "/.local/state/omarchy/current";
@@ -170,7 +169,6 @@ void Theme::reload() {
     const QString foregroundFallback = fallbackForeground;
     m_red = fallbackRed;
     m_green = fallbackGreen;
-    m_yellow = fallbackYellow;
 
     QString foreground = foregroundFallback;
     QString surface, chrome, text, muted, line;
@@ -189,7 +187,6 @@ void Theme::reload() {
         line = readColor(content, {"selection", "selection_background", "line"}, QString());
         m_red = readColor(content, {"red"}, fallbackRed);
         m_green = readColor(content, {"green"}, fallbackGreen);
-        m_yellow = readColor(content, {"yellow"}, fallbackYellow);
 
         const auto modeMatch = QRegularExpression(R"re(^\s*mode\s*=\s*"(\w+)")re",
                                                   QRegularExpression::MultilineOption)
@@ -205,7 +202,7 @@ void Theme::reload() {
     m_surface = surface.isEmpty() ? mix(bg, fg, 0.08).name() : surface;
     m_chrome = chrome.isEmpty() ? mix(bg, fg, 0.04).name() : chrome;
     m_text = text.isEmpty() ? mix(fg, bg, 0.35).name() : text;
-    m_muted = muted.isEmpty() ? mix(fg, bg, 0.55).name() : muted;
+    const QString mutedBase = muted.isEmpty() ? mix(fg, bg, 0.55).name() : muted;
     m_line = line.isEmpty() ? mix(bg, fg, 0.16).name() : line;
 
     // WCAG AA for body text on both panel surfaces, and 3:1 for the input edge.
@@ -213,13 +210,12 @@ void Theme::reload() {
     const QList<QColor> surfaceOnly{QColor(m_surface)};
     m_textStrong = ensureContrast(QColor(foreground), panels, 4.5).name();
     m_text = ensureContrast(QColor(m_text), panels, 4.5).name();
-    m_mutedText = ensureContrast(QColor(m_muted), panels, 4.5).name();
+    m_mutedText = ensureContrast(QColor(mutedBase), panels, 4.5).name();
     m_linkText = ensureContrast(QColor(m_accent), panels, 4.5).name();
     m_inputBorder = ensureContrast(QColor(m_line), surfaceOnly, 3.0).name();
     // The status colours are text too ("Delete", import errors, the scam verdict).
     m_red = ensureContrast(QColor(m_red), surfaceOnly, 4.5).name();
     m_green = ensureContrast(QColor(m_green), surfaceOnly, 4.5).name();
-    m_yellow = ensureContrast(QColor(m_yellow), surfaceOnly, 4.5).name();
 
     emit changed();
 }

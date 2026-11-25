@@ -9,11 +9,9 @@ Enforces independent evaluation contexts, git-anchored evidence, and repair caps
 import argparse
 import datetime
 import json
-import os
 import re
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 # The repository where harness is executed
@@ -210,7 +208,7 @@ def cmd_eval(interactive: bool = True):
         "CRITICAL: Do NOT rely on builder promises or self-ratings. You must independently verify.\n"
         "1. Read CONTRACT.md to inspect the required checks.\n"
         "2. Run the actual project test suite or inspection commands directly (e.g. `bash scripts/validate.sh`, then checks in the running app).\n"
-        "3. Save test evidence into artifacts/{run_id}/eval_evidence.txt.\n"
+        f"3. Save test evidence into artifacts/{run_id}/eval_evidence.txt.\n"
         "4. For each check in CONTRACT.md, determine: PASS, FAIL, or UNVERIFIED.\n"
         "5. If all checks pass with concrete evidence, update CONTRACT.md (Evidence column and completion) and FEATURES.json (status: 'done', code_revision: current hash).\n"
         "6. If any check fails, record the concrete reproduction steps and failures in HANDOFF.md and CONTRACT.md."

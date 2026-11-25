@@ -14,7 +14,6 @@ class Vault : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool available READ available NOTIFY changed)
     Q_PROPERTY(QString problem READ problem NOTIFY changed)
-    Q_PROPERTY(int count READ count NOTIFY changed)
     Q_PROPERTY(QString nonce READ nonce CONSTANT)
 
 public:
@@ -30,7 +29,6 @@ public:
 
     bool available() const { return m_available; }
     QString problem() const { return m_problem; }
-    int count() const { return m_logins.size(); }
     QString nonce() const { return m_nonce; }
 
     // scheme://host[:port] for http(s) URLs, empty for anything else.

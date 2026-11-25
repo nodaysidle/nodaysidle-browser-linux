@@ -50,11 +50,9 @@ ApplicationWindow {
             "'--bg':'" + theme.background + "'," +
             "'--surface':'" + theme.surface + "'," +
             "'--line':'" + theme.line + "'," +
-            "'--text':'" + theme.text + "'," +
             "'--strong':'" + theme.textStrong + "'," +
             "'--muted':'" + theme.mutedText + "'," +
-            "'--accent':'" + theme.accent + "'," +
-            "'--radius':'" + Math.max(theme.radius, 4) + "px'};"
+            "'--accent':'" + theme.accent + "'};"
     }]
     // Reactive handle on the visible tab's view; toolbar bindings depend on it.
     property var activeView: null
@@ -180,8 +178,6 @@ ApplicationWindow {
             title: "New Tab",
             url: url,
             loading: false,
-            canGoBack: false,
-            canGoForward: false,
             icon: ""
         });
         currentTabIndex = tabsModel.count - 1;
@@ -201,8 +197,6 @@ ApplicationWindow {
             title: "New Tab",
             url: "about:blank",
             loading: false,
-            canGoBack: false,
-            canGoForward: false,
             icon: ""
         });
         pendingOpenIn = request;
@@ -273,11 +267,9 @@ ApplicationWindow {
             "s.setProperty('--bg','" + theme.background + "');" +
             "s.setProperty('--surface','" + theme.surface + "');" +
             "s.setProperty('--line','" + theme.line + "');" +
-            "s.setProperty('--text','" + theme.text + "');" +
             "s.setProperty('--strong','" + theme.textStrong + "');" +
             "s.setProperty('--muted','" + theme.mutedText + "');" +
             "s.setProperty('--accent','" + theme.accent + "');" +
-            "s.setProperty('--radius','" + Math.max(theme.radius, 4) + "px');" +
             "})(document.documentElement.style)");
     }
 
@@ -660,7 +652,6 @@ ApplicationWindow {
                         HoverHandler { id: pillHover }
 
                         MouseArea {
-                            id: tabHover
                             anchors.fill: parent
                             acceptedButtons: Qt.LeftButton | Qt.MiddleButton
                             onClicked: function(mouse) {
@@ -951,7 +942,6 @@ ApplicationWindow {
                             }
 
                             Canvas {
-                                id: starCanvas
                                 anchors.centerIn: parent
                                 width: 14
                                 height: 14
@@ -1434,8 +1424,6 @@ ApplicationWindow {
                                 }
                                 if (index < tabsModel.count) {
                                     tabsModel.setProperty(index, "loading", loadRequest.status === WebEngineView.LoadStartedStatus);
-                                    tabsModel.setProperty(index, "canGoBack", canGoBack);
-                                    tabsModel.setProperty(index, "canGoForward", canGoForward);
                                 }
                             }
 
@@ -1780,7 +1768,6 @@ ApplicationWindow {
                 // Scam check side panel: TypeSafe Jev is the only AI integration left.
                 // The badge names the destination, because page text leaves the machine.
                 Rectangle {
-                    id: scamPanel
                     Layout.preferredWidth: scamVisible ? 360 : 0
                     Layout.fillHeight: true
                     visible: scamVisible
@@ -1917,7 +1904,6 @@ ApplicationWindow {
 
     // Ctrl+Q is easy to hit next to Ctrl+W, so many tabs ask first. Cancel keeps the default.
     FocusScope {
-        id: quitOverlay
         anchors.fill: parent
         visible: quitPromptVisible
         focus: quitPromptVisible

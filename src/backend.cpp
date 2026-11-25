@@ -111,7 +111,6 @@ void Backend::recordVisit(const QString &url, const QString &title) {
     if (m_history.size() > maxEntries)
         m_history = m_history.mid(m_history.size() - maxEntries);
     m_historySave.start();
-    emit historyChanged();
 }
 
 int Backend::addImportedHistory(const QVariantList &items) {
@@ -141,7 +140,6 @@ int Backend::addImportedHistory(const QVariantList &items) {
     if (m_history.size() > maxEntries)
         m_history = m_history.mid(m_history.size() - maxEntries);
     flushHistory();
-    emit historyChanged();
     return added;
 }
 
@@ -211,7 +209,6 @@ void Backend::clearHistory() {
     m_historyBackup = m_history;
     m_history.clear();
     flushHistory();
-    emit historyChanged();
 }
 
 void Backend::undoClearHistory() {
@@ -220,7 +217,6 @@ void Backend::undoClearHistory() {
     m_history = m_historyBackup;
     m_historyBackup.clear();
     flushHistory();
-    emit historyChanged();
 }
 
 QString Backend::homeUrl() const {

@@ -61,7 +61,6 @@ public:
     Q_INVOKABLE void checkScam(const QString &title, const QString &url, const QString &text);
 
 signals:
-    void historyChanged();
     void openRequested(const QString &url);
     void notice(const QString &text);
     void bookmarksChanged();
